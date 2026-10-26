@@ -25,7 +25,7 @@ export class RulesSuggestionProvider implements SuggestionProvider {
     const combinable = offer?.combinable ? " — and it can be combined with other discounts" : "";
     const offerText = offer ? `${offer.discountPercent}% off your next purchase with us${combinable}` : "";
 
-    let title: string, reasoning: string, sms: string, subject: string, emailBody: string;
+    let title: string, reasoning: string, sms: string, subject: string;
     if (campaign.type === "vip_thanks") {
       title = offer ? `Thank a VIP with ${offer.discountPercent}% off` : "Thank a VIP";
       reasoning = `${name} has spent ${money(c.lifetimeSpendCents)} with us. A personal thank-you${offer ? ` with ${offer.discountPercent}% off` : ""} keeps a top customer feeling valued.`;
@@ -42,7 +42,7 @@ export class RulesSuggestionProvider implements SuggestionProvider {
       sms = `Hi ${name}! Hope you're loving your ${last?.name ?? "recent pick"}. We just got new arrivals that pair perfectly with it. Stop by and take a look!`;
       subject = `New pieces to go with your ${last?.name ?? "recent purchase"}`;
     }
-    emailBody = `Hi ${name},\n\n${sms.replace(/^Hi [^!]+! /, "")}\n\nSee you soon,\n${businessName}`;
+    const emailBody = `Hi ${name},\n\n${sms.replace(/^Hi [^!]+! /, "")}\n\nSee you soon,\n${businessName}`;
     return {
       title, reasoning, channel, source: this.name,
       message: channel === "sms" ? sms : emailBody,
