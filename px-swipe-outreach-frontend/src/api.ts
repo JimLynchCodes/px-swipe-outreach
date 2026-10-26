@@ -1,32 +1,52 @@
-/**
- * Small typed API boundary. Confirm actual backend route names and payloads
- * before enabling these calls in the UI.
- */
-export type OutreachDecision = 'interested' | 'skip'
+import type { Channel, OutreachCard, SendResult, Suggestion } from './types'
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  if (!API_BASE_URL) throw new Error('Set VITE_API_BASE_URL before calling the backend.')
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
-  })
-  if (!response.ok) throw new Error(`API request failed (${response.status})`)
-  return response.json() as Promise<T>
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
 }
 
-// Adapt paths and DTOs to the backend's real contract.
-export async function getLeads<T>(): Promise<T[]> {
-  return request<T[]>('/api/leads')
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let res: Response
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      ...init,
+      headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+    })
+  } catch {
+    throw new ApiError('Cannot reach the outreach server. Is the backend running?', 0)
+  }
+  const text = await res.text()
+  const data = text ? safeJson(text) : null
+  if (!res.ok) {
+    const err = data && typeof data === 'object' && 'error' in data ? (data as { error: unknown }).error : null
+    const msg = typeof err === 'string' && err ? err : `Request failed (${res.status})`
+    throw new ApiError(msg, res.status)
+  }
+  return data as T
 }
 
-export async function recordDecision<T>(
-  leadId: string,
-  decision: OutreachDecision,
-): Promise<T> {
-  return request<T>(`/api/leads/${encodeURIComponent(leadId)}/decision`, {
-    method: 'POST',
-    body: JSON.stringify({ decision }),
-  })
+function safeJson(text: string): unknown {
+  try { return JSON.parse(text) } catch { return null }
+}
+
+export const api = {
+  queue: (limit = 50) => request<{ items: OutreachCard[]; total: number }>(`/api/outreach/queue?limit=${limit}`),
+  suggestion: (id: string, channel: Channel) =>
+    request<{ suggestion: Suggestion }>(`/api/outreach/${encodeURIComponent(id)}/suggestion`, {
+      method: 'POST', body: JSON.stringify({ channel }),
+    }).then(r => r.suggestion),
+  skip: (id: string) => request<{ ok: true }>(`/api/outreach/${encodeURIComponent(id)}/skip`, { method: 'POST' }),
+  send: (id: string, body: { channel: Channel; message: string; subject?: string | null; idempotencyKey: string }) =>
+    request<SendResult>(`/api/outreach/${encodeURIComponent(id)}/send`, {
+      method: 'POST', body: JSON.stringify({ ...body, subject: body.subject ?? undefined }),
+    }),
+  resetDemo: () => request<{ ok: true }>('/api/dev/reset', { method: 'POST' }),
+}
+
+export function newIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }

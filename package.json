@@ -1,0 +1,16 @@
+{
+  "name": "px-swipe-outreach",
+  "private": true,
+  "description": "Swipe-to-send customer outreach for retailers: React frontend + Fastify backend.",
+  "scripts": {
+    "install:all": "npm install && npm --prefix retail-outreach-backend install && npm --prefix px-swipe-outreach-frontend install",
+    "dev": "concurrently -k -n api,web -c cyan,magenta \"npm --prefix retail-outreach-backend run dev\" \"npm --prefix px-swipe-outreach-frontend run dev\"",
+    "build": "npm --prefix retail-outreach-backend run build && npm --prefix px-swipe-outreach-frontend run build",
+    "test": "npm --prefix retail-outreach-backend test && npm --prefix px-swipe-outreach-frontend test",
+    "typecheck": "npm --prefix retail-outreach-backend run typecheck && npm --prefix px-swipe-outreach-frontend run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": { "node": ">=20" }
+}
