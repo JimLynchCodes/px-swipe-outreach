@@ -12,6 +12,8 @@ import { loggerOptions } from "./logger.js";
 import type { SuggestionProvider } from "./providers/ai.js";
 import type { MessageProvider } from "./providers/messaging.js";
 import { StoreError, type OutreachStore } from "./store/types.js";
+import { ConsoleInviteMailer, SupabaseInviteMailer, type InviteMailer } from "./team/mailer.js";
+import { INVITE_ACCEPT_PATH, INVITE_PREVIEW_PATH, teamRoutes } from "./team/routes.js";
 import type { Actor } from "./types.js";
 
 declare module "fastify" {
@@ -29,6 +31,8 @@ export type AppDeps = {
   authenticator?: Authenticator;
   /** Present only in DELIVERY_MODE=queue. */
   enqueueDelivery?: (deliveryId: string) => Promise<void>;
+  /** Sends team invitations. Defaults from config (console in dev, Supabase Auth in production). */
+  inviteMailer?: InviteMailer;
   /** false disables logging (tests). */
   logger?: boolean;
 };
@@ -39,7 +43,9 @@ const channel = z.enum(["sms", "email"]);
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 const PUBLIC_PATHS = new Set(["/health", "/health/live", "/health/ready"]);
 /** Routes that need a user but not an org (e.g. to list orgs before choosing one). */
-const NO_ORG_PATHS = new Set(["/api/me"]);
+const NO_ORG_PATHS = new Set(["/api/me", INVITE_ACCEPT_PATH]);
+/** API routes reachable without a session (still rate limited per IP). */
+const ANON_PATHS = new Set([INVITE_PREVIEW_PATH]);
 
 /** Uniform error body: { error, code, requestId, details? }. */
 function sendError(reply: FastifyReply, status: number, code: string, error: string, details?: string[]) {
@@ -80,7 +86,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const anyOrigin = config.CORS_ORIGIN.includes("*");
   await app.register(cors, {
     origin: anyOrigin ? true : config.CORS_ORIGIN,
-    methods: ["GET", "POST", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Request-Id"],
     exposedHeaders: ["X-Request-Id", "Retry-After"],
     maxAge: 600
@@ -90,7 +96,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorateRequest("auth", null);
   app.addHook("onRequest", async (request, reply) => {
     const path = request.url.split("?")[0];
-    if (PUBLIC_PATHS.has(path) || request.method === "OPTIONS") return;
+    if (PUBLIC_PATHS.has(path) || ANON_PATHS.has(path) || request.method === "OPTIONS") return;
     try {
       const user = await authenticator.authenticate(request.headers.authorization);
       let org: OrgContext | null = null;
@@ -127,8 +133,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     if (error instanceof AuthError) return sendError(reply, error.status, error.code, error.message);
     if (error instanceof StoreError) {
-      const status = { not_found: 404, conflict: 409, suppressed: 422, forbidden: 403 }[error.code];
-      return sendError(reply, status, error.code, error.message);
+      const status = ({ not_found: 404, conflict: 409, suppressed: 422, forbidden: 403, gone: 410 } as const)[error.code];
+      return sendError(reply, status, error.reason ?? error.code, error.message);
     }
     const status: number = error.statusCode ?? 500;
     if (status === 429) return reply.code(429).send(error);
@@ -259,6 +265,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get("/api/metrics", async request => store.metrics(actorOf(request)));
+
+  // ── Team ────────────────────────────────────────────────────────────
+  const inviteMailer = deps.inviteMailer ?? (config.INVITE_MAILER === "supabase"
+    ? new SupabaseInviteMailer({ supabaseUrl: config.SUPABASE_URL!, serviceRoleKey: config.SUPABASE_SERVICE_ROLE_KEY! })
+    : new ConsoleInviteMailer((line, meta) => app.log.info(meta, line)));
+  await teamRoutes(app, { config, store, mailer: inviteMailer, actorOf, sendError });
 
   /** Development helper so the demo deck can be replayed. Config forbids it in production. */
   if (config.ENABLE_DEMO_RESET && config.NODE_ENV !== "production") {

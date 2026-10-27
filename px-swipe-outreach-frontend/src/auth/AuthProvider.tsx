@@ -13,8 +13,12 @@ interface AuthState {
   memberships: Membership[]
   orgId: string | null
   setOrgId: (id: string) => void
+  /** Role in the selected org. */
+  role: Membership['role'] | null
   client: SupabaseClient | null
   signOut: () => Promise<void>
+  /** Reload identity + memberships (e.g. after accepting an invitation). */
+  refresh: () => Promise<Membership[]>
 }
 
 const Ctx = createContext<AuthState | null>(null)
@@ -58,7 +62,8 @@ export function AuthProvider({ config, children }: { config: AuthConfig; childre
   useEffect(() => {
     if (!client) { if (config.mode === 'demo') setStatus('loading'); return }
     let alive = true
-    void client.auth.getSession().then(({ data }) => { if (alive) { setSession(data.session); if (!data.session) setStatus('signedOut') } })
+    void adoptHashSession(client).then(() => client.auth.getSession())
+      .then(({ data }) => { if (alive) { setSession(data.session); if (!data.session) setStatus('signedOut') } })
     const { data } = client.auth.onAuthStateChange((_event, s) => {
       setSession(s)
       if (!s) setStatus('signedOut')
@@ -87,11 +92,40 @@ export function AuthProvider({ config, children }: { config: AuthConfig; childre
     return () => { alive = false }
   }, [userKey, config.mode])
 
+  const refresh = useCallback(async () => {
+    const me = await api.me()
+    setEmail(me.user.email ?? null)
+    setMemberships(me.memberships)
+    return me.memberships
+  }, [])
+
+  // If the selected org disappears (e.g. you left it), fall back to another one.
+  useEffect(() => {
+    if (status === 'signedIn' && orgId && !memberships.some(m => m.orgId === orgId)) {
+      setOrgIdState(memberships[0]?.orgId ?? null)
+    }
+  }, [status, orgId, memberships])
+
   const setOrgId = useCallback((id: string) => { localStorage.setItem(ORG_KEY, id); setOrgIdState(id) }, [])
 
+  const role = memberships.find(m => m.orgId === orgId)?.role ?? null
   const value = useMemo<AuthState>(() => ({
-    mode: config.mode, status, error, email, memberships, orgId, setOrgId, client, signOut,
-  }), [config.mode, status, error, email, memberships, orgId, setOrgId, client, signOut])
+    mode: config.mode, status, error, email, memberships, orgId, setOrgId, role, client, signOut, refresh,
+  }), [config.mode, status, error, email, memberships, orgId, setOrgId, role, client, signOut, refresh])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
+}
+
+/**
+ * Supabase "invite user" and admin-sent magic links redirect with tokens in the URL hash (implicit flow),
+ * which a PKCE client refuses to read. Adopt them explicitly, then scrub them from the address bar.
+ */
+export async function adoptHashSession(client: SupabaseClient): Promise<void> {
+  const hash = window.location.hash.startsWith('#') ? window.location.hash.slice(1) : ''
+  if (!hash.includes('access_token=')) return
+  const p = new URLSearchParams(hash)
+  const access_token = p.get('access_token')
+  const refresh_token = p.get('refresh_token')
+  window.history.replaceState(null, '', window.location.pathname + window.location.search)
+  if (access_token && refresh_token) await client.auth.setSession({ access_token, refresh_token }).catch(() => undefined)
 }

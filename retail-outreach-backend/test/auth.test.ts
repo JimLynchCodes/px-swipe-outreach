@@ -100,7 +100,7 @@ describe("demo auth and org resolution", () => {
       { orgId: "a", orgName: "A", businessName: null, role: "owner" as const },
       { orgId: "b", orgName: "B", businessName: "Bee", role: "staff" as const }
     ];
-    expect(resolveOrg(ms, "b")).toEqual({ orgId: "b", role: "staff", businessName: "Bee" });
+    expect(resolveOrg(ms, "b")).toEqual({ orgId: "b", role: "staff", businessName: "Bee", orgName: "B" });
     expect(() => resolveOrg(ms, undefined)).toThrow(expect.objectContaining({ status: 400, code: "org_required" }));
     expect(() => resolveOrg(ms, "c")).toThrow(expect.objectContaining({ status: 403 }));
     expect(resolveOrg([ms[0]], undefined).orgId).toBe("a");

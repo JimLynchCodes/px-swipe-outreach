@@ -2,9 +2,27 @@ import type pg from "pg";
 import { createPool, type PoolOptions } from "../db/pool.js";
 import { ACTIONABLE_STATUSES } from "../domain.js";
 import type {
-  Actor, Channel, Delivery, DeliveryStatus, Membership, Metrics, Opportunity, Suggestion, SuppressionReason
+  Actor, Channel, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
+  Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
-import { StoreError, type NewDelivery, type OutreachStore } from "./types.js";
+import { assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
+import { StoreError, TEAM_ERRORS, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
+
+const INVITE_COLS = `id, org_id, email, role, invited_by, created_at, expires_at, last_sent_at, send_count, accepted_at, revoked_at`;
+function toInvitation(r: any): Invitation {
+  const status = r.revoked_at ? "revoked" : r.accepted_at ? "accepted" : new Date(r.expires_at).getTime() <= Date.now() ? "expired" : "pending";
+  return {
+    id: r.id, orgId: r.org_id, email: r.email, role: r.role, status, invitedBy: r.invited_by,
+    createdAt: new Date(r.created_at).toISOString(), expiresAt: new Date(r.expires_at).toISOString(),
+    lastSentAt: new Date(r.last_sent_at).toISOString(), sendCount: r.send_count
+  };
+}
+/** Translate `raise exception 'last_owner'` etc. into StoreErrors. */
+function mapTeamError(e: any): never {
+  if (e?.code === "P0001" && typeof e.message === "string" && e.message in TEAM_ERRORS) throw teamError(e.message);
+  if (e?.code === "42501") throw new StoreError("forbidden", "You don't have permission to do that", "insufficient_role");
+  throw e;
+}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: string) => UUID_RE.test(s);
@@ -47,10 +65,11 @@ export class PostgresStore implements OutreachStore {
    * exactly as PostgREST would. RLS policies therefore enforce org isolation even if a query here
    * forgot an org filter. Settings are transaction-local (safe with pgbouncer transaction pooling).
    */
-  async asUser<T>(userId: string, fn: (db: Db) => Promise<T>): Promise<T> {
+  async asUser<T>(userId: string, fn: (db: Db) => Promise<T>, email?: string | null): Promise<T> {
     return this.tx(async db => {
+      const claims = { sub: userId, role: "authenticated", ...(email ? { email } : {}) };
       await db.query(`select set_config('request.jwt.claims', $1, true), set_config('request.jwt.claim.sub', $2, true)`,
-        [JSON.stringify({ sub: userId, role: "authenticated" }), userId]);
+        [JSON.stringify(claims), userId]);
       await db.query("set local role authenticated");
       return fn(db);
     });
@@ -114,7 +133,7 @@ export class PostgresStore implements OutreachStore {
     return (await this.hydrate(db, r.rows))[0] ?? null;
   }
 
-  private async event(db: Db, actor: Actor | null, orgId: string, oppId: string, type: string, details: unknown = {}) {
+  private async event(db: Db, actor: Actor | null, orgId: string, oppId: string | null, type: string, details: unknown = {}) {
     await db.query(`insert into public.outreach_events (org_id, opportunity_id, actor_id, event_type, details)
       values ($1, $2, $3, $4, $5)`, [orgId, oppId, actor?.userId ?? null, type, JSON.stringify(details)]);
   }
@@ -277,6 +296,135 @@ export class PostgresStore implements OutreachStore {
         await this.event(db, null, org_id, opportunity_id, `delivery_${status}`, { deliveryId: id });
       }
     });
+  }
+
+  // ───────────────────────── Team management ─────────────────────────
+  private async myRole(db: Db, actor: Actor): Promise<MemberRole> {
+    const r = await db.query(`select role from public.memberships where org_id = $1 and user_id = $2`, [actor.orgId, actor.userId]);
+    if (!r.rows[0]) throw new StoreError("forbidden", "Not a member of this organization");
+    return r.rows[0].role;
+  }
+
+  async listMembers(actor: Actor): Promise<TeamMember[]> {
+    return this.asUser(actor.userId, async db => {
+      await this.myRole(db, actor);
+      const r = await db.query(`select * from public.list_org_members($1)`, [actor.orgId]);
+      return r.rows.map(x => ({ userId: x.user_id, email: x.email, role: x.role, joinedAt: new Date(x.joined_at).toISOString() }));
+    });
+  }
+
+  async listInvitations(actor: Actor) {
+    return this.asUser(actor.userId, async db => {
+      assertCanManage(await this.myRole(db, actor));
+      const r = await db.query(`select ${INVITE_COLS} from public.invitations
+        where org_id = $1 and accepted_at is null and revoked_at is null order by created_at desc`, [actor.orgId]);
+      return r.rows.map(toInvitation);
+    });
+  }
+
+  async createInvitation(actor: Actor, inv: NewInvitation) {
+    const email = inv.email.toLowerCase();
+    try {
+      return await this.asUser(actor.userId, async db => {
+        assertCanGrant(await this.myRole(db, actor), inv.role);
+        const member = await db.query(`select 1 from public.list_org_members($1) where lower(email) = $2`, [actor.orgId, email]);
+        if (member.rows[0]) throw new StoreError("conflict", "That person is already a member", "already_member");
+        const open = await db.query(`select id, expires_at from public.invitations
+          where org_id = $1 and email = $2 and accepted_at is null and revoked_at is null for update`, [actor.orgId, email]);
+        if (open.rows[0]) {
+          if (new Date(open.rows[0].expires_at).getTime() > Date.now()) {
+            throw new StoreError("conflict", "An invitation is already pending for that email", "already_invited");
+          }
+          await db.query(`update public.invitations set revoked_at = now(), revoked_by = $2 where id = $1`, [open.rows[0].id, actor.userId]);
+        }
+        const r = await db.query(`insert into public.invitations (org_id, email, role, token_hash, invited_by, expires_at)
+          values ($1,$2,$3,$4,$5,$6) returning ${INVITE_COLS}`, [actor.orgId, email, inv.role, inv.tokenHash, actor.userId, inv.expiresAt]);
+        await this.event(db, actor, actor.orgId, null, "invitation_created", { invitationId: r.rows[0].id, email, role: inv.role });
+        return toInvitation(r.rows[0]);
+      });
+    } catch (e: any) {
+      if (e?.code === "23505") throw new StoreError("conflict", "An invitation is already pending for that email", "already_invited");
+      mapTeamError(e);
+    }
+  }
+
+  private async lockOpenInvite(db: Db, actor: Actor, id: string) {
+    const role = await this.myRole(db, actor);
+    assertCanManage(role);
+    if (!isUuid(id)) throw new StoreError("not_found", "Invitation not found");
+    const r = await db.query(`select ${INVITE_COLS} from public.invitations
+      where org_id = $1 and id = $2 and accepted_at is null and revoked_at is null for update`, [actor.orgId, id]);
+    if (!r.rows[0]) throw new StoreError("not_found", "Invitation not found");
+    assertCanGrant(role, r.rows[0].role);
+    return r.rows[0];
+  }
+
+  async refreshInvitation(actor: Actor, id: string, next: { tokenHash: string; expiresAt: Date; cooldownSeconds: number }) {
+    return this.asUser(actor.userId, async db => {
+      const row = await this.lockOpenInvite(db, actor, id);
+      if (Date.now() - new Date(row.last_sent_at).getTime() < next.cooldownSeconds * 1000) {
+        throw new StoreError("conflict", "This invitation was just sent. Try again in a minute.", "resend_cooldown");
+      }
+      const r = await db.query(`update public.invitations set token_hash = $2, expires_at = $3, last_sent_at = now(), send_count = send_count + 1
+        where id = $1 returning ${INVITE_COLS}`, [id, next.tokenHash, next.expiresAt]);
+      await this.event(db, actor, actor.orgId, null, "invitation_resent", { invitationId: id, email: row.email, sendCount: r.rows[0].send_count });
+      return toInvitation(r.rows[0]);
+    }).catch(mapTeamError);
+  }
+
+  async revokeInvitation(actor: Actor, id: string) {
+    await this.asUser(actor.userId, async db => {
+      const row = await this.lockOpenInvite(db, actor, id);
+      await db.query(`update public.invitations set revoked_at = now(), revoked_by = $2 where id = $1`, [id, actor.userId]);
+      await this.event(db, actor, actor.orgId, null, "invitation_revoked", { invitationId: id, email: row.email });
+    }).catch(mapTeamError);
+  }
+
+  private async targetRole(db: Db, actor: Actor, userId: string): Promise<MemberRole> {
+    if (!isUuid(userId)) throw new StoreError("not_found", "Member not found");
+    const r = await db.query(`select role from public.memberships where org_id = $1 and user_id = $2`, [actor.orgId, userId]);
+    if (!r.rows[0]) throw new StoreError("not_found", "Member not found");
+    return r.rows[0].role;
+  }
+
+  async changeMemberRole(actor: Actor, userId: string, role: MemberRole) {
+    await this.asUser(actor.userId, async db => {
+      const mine = await this.myRole(db, actor);
+      const current = await this.targetRole(db, actor, userId);
+      assertCanModify(mine, current);
+      assertCanGrant(mine, role);
+      if (current === role) return;
+      const r = await db.query(`update public.memberships set role = $3 where org_id = $1 and user_id = $2`, [actor.orgId, userId, role]);
+      if (r.rowCount !== 1) throw new StoreError("forbidden", "You don't have permission to do that", "insufficient_role");
+      await this.event(db, actor, actor.orgId, null, "member_role_changed", { userId, from: current, to: role });
+    }).catch(mapTeamError);
+  }
+
+  async removeMember(actor: Actor, userId: string) {
+    await this.asUser(actor.userId, async db => {
+      const mine = await this.myRole(db, actor);
+      const current = await this.targetRole(db, actor, userId);
+      const self = userId === actor.userId;
+      if (!self) assertCanModify(mine, current);
+      // Audit first: after a self-removal the actor can no longer write events for this org under RLS.
+      await this.event(db, actor, actor.orgId, null, self ? "member_left" : "member_removed", { userId, role: current });
+      const r = await db.query(`delete from public.memberships where org_id = $1 and user_id = $2`, [actor.orgId, userId]);
+      if (r.rowCount !== 1) throw new StoreError("forbidden", "You don't have permission to do that", "insufficient_role");
+    }).catch(mapTeamError);
+  }
+
+  async acceptInvitation(user: { id: string; email: string | null }, tokenHash: string) {
+    if (!isUuid(user.id)) throw teamError("invitation_invalid");
+    return this.asUser(user.id, async db => {
+      const r = await db.query(`select * from public.accept_invitation($1)`, [tokenHash]);
+      return { orgId: r.rows[0].org_id, role: r.rows[0].role, alreadyMember: r.rows[0].already_member };
+    }, user.email?.toLowerCase()).catch(mapTeamError);
+  }
+
+  async previewInvitation(tokenHash: string): Promise<InvitationPreview | null> {
+    const r = await this.pool.query(`select * from public.preview_invitation($1)`, [tokenHash]);
+    const x = r.rows[0];
+    return x ? { orgName: x.org_name, email: x.email, role: x.role, status: x.status, expiresAt: new Date(x.expires_at).toISOString() } : null;
   }
 
   async close() { await this.pool.end(); }

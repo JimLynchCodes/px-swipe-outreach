@@ -44,12 +44,28 @@ const schema = z.object({
   SMS_PROVIDER: z.enum(["console"]).default("console"),
   EMAIL_PROVIDER: z.enum(["console"]).default("console"),
   BUSINESS_NAME: z.string().default("our store"),
-  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000)
+  SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+
+  /** Public URL of the frontend; invite links point at `${APP_URL}/invite/accept?token=...`. */
+  APP_URL: z.string().url().default("http://localhost:5173"),
+  /** console = log the invite link (dev); supabase = Supabase Auth sends the email (needs the service role key). */
+  INVITE_MAILER: z.enum(["console", "supabase"]).default("console"),
+  /** BACKEND SECRET. Only used to call the Supabase Auth admin API for invites. Never expose to the frontend. */
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
+  INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(168),
+  INVITE_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
+  INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60)
 }).superRefine((c, ctx) => {
   const issue = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
   if (c.AUTH_MODE === "supabase" && !c.SUPABASE_URL) issue("SUPABASE_URL", "required when AUTH_MODE=supabase");
   if (c.DATA_STORE === "postgres" && !c.DATABASE_URL) issue("DATABASE_URL", "required when DATA_STORE=postgres");
+  if (c.INVITE_MAILER === "supabase") {
+    if (!c.SUPABASE_URL) issue("SUPABASE_URL", "required when INVITE_MAILER=supabase");
+    if (!c.SUPABASE_SERVICE_ROLE_KEY) issue("SUPABASE_SERVICE_ROLE_KEY", "required when INVITE_MAILER=supabase");
+  }
   if (c.NODE_ENV === "production") {
+    if (c.INVITE_MAILER !== "supabase") issue("INVITE_MAILER", "must be 'supabase' in production (console logs invite links)");
+    if (!/^https:\/\//.test(c.APP_URL)) issue("APP_URL", "must be an https:// URL in production");
     if (c.AUTH_MODE !== "supabase") issue("AUTH_MODE", "must be 'supabase' in production (demo auth is dev-only)");
     if (c.DATA_STORE !== "postgres") issue("DATA_STORE", "must be 'postgres' in production");
     if (c.ENABLE_DEMO_RESET) issue("ENABLE_DEMO_RESET", "must not be enabled in production");
@@ -60,6 +76,7 @@ const schema = z.object({
   ...c,
   ENABLE_DEMO_RESET: c.ENABLE_DEMO_RESET ?? c.NODE_ENV !== "production",
   SUPABASE_URL: c.SUPABASE_URL?.replace(/\/+$/, ""),
+  APP_URL: c.APP_URL.replace(/\/+$/, ""),
   DATABASE_CA_CERT: c.DATABASE_CA_CERT && !c.DATABASE_CA_CERT.includes("BEGIN CERTIFICATE")
     ? readFileSync(c.DATABASE_CA_CERT, "utf8") : c.DATABASE_CA_CERT
 }));

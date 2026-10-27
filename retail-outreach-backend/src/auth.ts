@@ -6,7 +6,7 @@ import type { Membership, MemberRole } from "./types.js";
 export type AuthUser = { id: string; email: string | null };
 
 /** Org context for a request, resolved from the user's memberships. */
-export type OrgContext = { orgId: string; role: MemberRole; businessName: string | null };
+export type OrgContext = { orgId: string; role: MemberRole; businessName: string | null; orgName?: string };
 
 export class AuthError extends Error {
   constructor(public status: 400 | 401 | 403, public code: string, message: string) { super(message); this.name = "AuthError"; }
@@ -85,11 +85,11 @@ export function resolveOrg(memberships: Membership[], requested: string | undefi
   if (requested) {
     const m = memberships.find(x => x.orgId === requested);
     if (!m) throw new AuthError(403, "not_a_member", "You are not a member of this organization");
-    return { orgId: m.orgId, role: m.role, businessName: m.businessName };
+    return { orgId: m.orgId, role: m.role, businessName: m.businessName, orgName: m.orgName };
   }
   if (memberships.length === 1) {
     const [m] = memberships;
-    return { orgId: m.orgId, role: m.role, businessName: m.businessName };
+    return { orgId: m.orgId, role: m.role, businessName: m.businessName, orgName: m.orgName };
   }
   if (memberships.length === 0) throw new AuthError(403, "no_membership", "Your account is not a member of any organization yet");
   throw new AuthError(400, "org_required", "Select an organization (X-Org-Id header)");
