@@ -23,10 +23,13 @@ This works out of the box with **no infrastructure**:
 
 ### With Postgres (and optionally Redis)
 
+The schema lives in [`../supabase/migrations`](../supabase/migrations) and is shared with the Supabase CLI. See [docs/SUPABASE_SETUP.md](../docs/SUPABASE_SETUP.md).
+
 ```bash
-docker compose up -d                  # Postgres 16 + Redis 7
-export DATA_STORE=postgres DATABASE_URL=postgres://outreach:outreach@localhost:5432/outreach
-npm run db:migrate                    # applies src/db/schema.sql and upserts demo data (--no-seed to skip)
+# plain local Postgres (creates stand-ins for Supabase's roles + auth schema first)
+export DATA_STORE=postgres DATABASE_URL=postgres://postgres:postgres@localhost:5432/outreach
+npm run db:migrate:local
+npm run db:seed -- --demo-user        # demo org owned by the demo user (AUTH_MODE=demo)
 npm run dev
 
 # optional: queue mode
@@ -34,35 +37,50 @@ export DELIVERY_MODE=queue REDIS_URL=redis://localhost:6379
 npm run worker                        # in a second terminal
 ```
 
+Against Supabase: `npm run db:migrate` (or `supabase db push`), then `npm run db:seed -- --owner-email you@example.com`.
+
 In queue mode, `POST /send` returns `202 {status:"queued"}` and the BullMQ worker delivers the message. Retries use exponential backoff.
 
 | Script | |
 | --- | --- |
 | `npm run dev` | Watch mode via tsx |
-| `npm run build` / `npm start` | Compiles to `dist/` (and copies `schema.sql`), then runs it |
-| `npm test` / `npm run test:watch` | Vitest |
-| `npm run typecheck` | `tsc --noEmit` |
-| `npm run db:migrate` | Applies the schema and seeds demo data (Postgres only) |
+| `npm run build` / `npm start` | Compiles to `dist/`, then runs it |
+| `npm test` / `npm run test:watch` | Vitest (unit + API) |
+| `npm run test:db` | RLS/tenancy integration tests. Needs `TEST_DATABASE_URL` (**wipes that database**) |
+| `npm run lint` / `npm run typecheck` | ESLint / `tsc --noEmit` |
+| `npm run db:migrate` / `db:migrate:local` / `db:migrate:prod` | Apply migrations (Supabase / plain PG / from `dist`) |
+| `npm run db:seed` | `--demo-user` or `--owner-email <email>` |
 | `npm run worker` | BullMQ delivery worker (queue mode only) |
 
 ## Environment variables
 
-Empty values count as unset.
+See [`.env.example`](.env.example) for the full annotated list. Empty values count as unset. With `NODE_ENV=production` the server **refuses to boot** unless `AUTH_MODE=supabase`, `DATA_STORE=postgres`, and `CORS_ORIGIN` lists https origins.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `NODE_ENV` | `development` | In `production`, demo auth and `/api/dev/*` are refused |
-| `HOST` / `PORT` | `0.0.0.0` / `3000` | |
-| `CORS_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated list. `*` allows any origin |
+| `AUTH_MODE` | `demo` | `demo` (dev only) or `supabase` |
+| `SUPABASE_URL` | – | Required for `supabase`. Tokens are verified via the project JWKS |
+| `SUPABASE_JWT_SECRET` | – | Only for legacy HS256 projects |
+| `SUPABASE_JWT_AUDIENCE` | `authenticated` | |
 | `DATA_STORE` | `memory` | `memory` or `postgres` |
-| `DATABASE_URL` | – | Required when `DATA_STORE=postgres` |
-| `DELIVERY_MODE` | `inline` | `inline` or `queue`. `queue` needs Postgres and Redis |
-| `REDIS_URL` | – | Required when `DELIVERY_MODE=queue` |
-| `OPENAI_API_KEY` | – | If set, suggestions come from OpenAI, falling back to rules on any error |
-| `OPENAI_MODEL` | `gpt-4.1-mini` | |
+| `DATABASE_URL` | – | Required when `DATA_STORE=postgres`. Backend secret |
+| `DATABASE_POOL_MAX` / `DATABASE_CA_CERT` | `10` / – | CA cert as PEM text or a file path |
+| `CORS_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated allowlist |
+| `TRUST_PROXY` | `false` | Set `true` behind a load balancer |
+| `RATE_LIMIT_PER_MINUTE` / `SEND_RATE_LIMIT_PER_MINUTE` | `300` / `30` | Per user (or IP when unauthenticated) |
+| `ENABLE_DEMO_RESET` | on outside production | `POST /api/dev/reset` (owner/admin only) |
+| `DELIVERY_MODE` / `REDIS_URL` | `inline` / – | `queue` needs Postgres and Redis |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4.1-mini` | Rules-based suggestions when unset |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
-| `BUSINESS_NAME` | `our store` | Used in message copy |
-| `DEV_USER_ID` / `DEV_TENANT_ID` | `demo-user` / `demo-retailer` | Demo identity attached to every request |
+| `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
+| `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |
+| `SUPABASE_SERVICE_ROLE_KEY` | – | Required for `INVITE_MAILER=supabase`. Backend secret, only used to send invite emails |
+| `INVITE_TTL_HOURS` / `INVITE_RATE_LIMIT_PER_HOUR` / `INVITE_RESEND_COOLDOWN_SECONDS` | `168` / `30` / `60` | |
+| `LOG_LEVEL` / `SHUTDOWN_TIMEOUT_MS` | `info` / `10000` | |
+
+## Auth
+
+Every `/api/*` request needs `Authorization: Bearer <supabase access token>` (not in demo mode) and, except for `GET /api/me`, an `X-Org-Id` header naming an org the user belongs to. If the header is omitted and the user has exactly one org, that org is used. `GET /api/me` returns the user and their memberships. Errors look like `{error, code, requestId, details?}`. Health endpoints: `/health/live`, `/health/ready` (`/health` = ready).
 
 ## Architecture
 
@@ -79,7 +97,7 @@ src/
 ├── providers/messaging.ts # MessageProvider: Console, ChannelRouter
 ├── delivery.ts          # processDelivery(): shared by inline mode and the worker
 ├── queue.ts / worker.ts # BullMQ
-└── db/                  # schema.sql, pool, migrate, seed
+└── db/                  # pool, migrate (applies ../supabase/migrations), seed
 ```
 
 How the pieces fit together:
@@ -90,7 +108,7 @@ How the pieces fit together:
 
 ## API reference
 
-All `/api/*` routes run as the demo tenant. Errors look like `{ "error": string, "details"?: ... }`.
+In demo mode all `/api/*` routes run as the demo tenant. Errors look like `{ "error": string, "details"?: ... }`.
 
 | Method & path | Body | Response |
 | --- | --- | --- |
@@ -103,6 +121,15 @@ All `/api/*` routes run as the demo tenant. Errors look like `{ "error": string,
 | `GET /api/outreach/:id/deliveries` | – | `{deliveries: [...]}`, with recipients masked |
 | `GET /api/metrics` | – | Counts by opportunity status and delivery status/channel |
 | `POST /api/dev/reset` | – | Re-seeds demo data (not available in production) |
+| `GET /api/team/members` | – | `{members: [{userId, email, role, joinedAt}], me: {userId, role}}` |
+| `GET /api/team/invitations` | – | `{invitations}` pending (and expired) invites. Owner/admin |
+| `POST /api/team/invitations` | `{email, role}` | `201 {invitation, emailSent, acceptUrl?}`. `acceptUrl` only with the console mailer outside production. `409 already_invited` / `already_member` |
+| `POST /api/team/invitations/:id/resend` | – | Rotates the token and re-sends. `429` during the cooldown |
+| `DELETE /api/team/invitations/:id` | – | Revokes |
+| `PATCH /api/team/members/:userId` | `{role}` | Changes a role. `409 last_owner` |
+| `DELETE /api/team/members/:userId` | – | Removes a member (or yourself = leave) |
+| `GET /api/invitations/preview?token=` | – | Public. `{invitation: {orgName, email, role, status, expiresAt}}` |
+| `POST /api/invitations/accept` | `{token}` | Signed in, no `X-Org-Id` needed. `{orgId, role, alreadyMember}`. `403 email_mismatch`, `410 invitation_expired/revoked/used` |
 
 Status codes:
 
@@ -155,4 +182,6 @@ curl -XPOST localhost:3000/api/outreach/opp_0001/send -H 'content-type: applicat
 * The rules provider for every seeded campaign, and the OpenAI → rules fallback.
 * Domain helpers.
 
-`PostgresStore` was verified by hand against a real Postgres 16 instance (migrate → queue → suggestion → send/duplicate → skip → metrics → reset). Automated tests for it are a good next step, for example with Testcontainers.
+Auth (JWKS/HS256 verification, issuer/audience/role checks, org resolution), hardening (CORS, headers, request IDs, rate limits, validation, error shape, log redaction) and opt-out enforcement are covered in `test/auth.test.ts` and `test/hardening.test.ts`.
+
+`npm run test:db` applies the real migrations to a scratch Postgres and checks RLS directly: cross-org isolation for every table, membership role rules, the suppression trigger, delivery uniqueness and the append-only event log.

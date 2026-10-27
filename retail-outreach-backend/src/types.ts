@@ -25,7 +25,8 @@ export type Customer = {
   email: string | null;
   smsConsent: boolean;
   emailConsent: boolean;
-  optedOut: boolean;
+  /** Channels on which this customer's contact value is on the org's suppression (do-not-contact) list. */
+  suppressed: Channel[];
   lifetimeSpendCents: number;
   lastPurchaseAt: string | null;
   itemsPurchased: number;
@@ -37,7 +38,7 @@ export type Offer = { id: string; name: string; discountPercent: number; combina
 
 export type Opportunity = {
   id: string;
-  tenantId: string;
+  orgId: string;
   status: OpportunityStatus;
   campaign: { id: string; type: string; name: string };
   score: number;
@@ -59,7 +60,7 @@ export type DeliveryStatus = "queued" | "sending" | "sent" | "delivered" | "fail
 
 export type Delivery = {
   id: string;
-  tenantId: string;
+  orgId: string;
   opportunityId: string;
   channel: Channel;
   recipient: string;
@@ -76,3 +77,24 @@ export type Metrics = {
   opportunities: Array<{ status: string; count: number }>;
   deliveries: Array<{ status: string; channel: string; count: number }>;
 };
+
+export type MemberRole = "owner" | "admin" | "staff";
+
+export type Membership = { orgId: string; orgName: string; businessName: string | null; role: MemberRole };
+
+/** Who is acting, and in which organization. Every user-facing store call is scoped by this. */
+export type Actor = { userId: string; orgId: string };
+
+export type SuppressionReason = "opt_out" | "bounce" | "complaint" | "manual";
+
+export type TeamMember = { userId: string; email: string | null; role: MemberRole; joinedAt: string };
+
+export type InvitationStatus = "pending" | "expired" | "accepted" | "revoked";
+
+/** An invitation as shown to owners/admins (never includes the token or its hash). */
+export type Invitation = {
+  id: string; orgId: string; email: string; role: MemberRole; status: InvitationStatus;
+  invitedBy: string | null; createdAt: string; expiresAt: string; lastSentAt: string; sendCount: number;
+};
+
+export type InvitationPreview = { orgName: string; email: string; role: MemberRole; status: InvitationStatus; expiresAt: string };

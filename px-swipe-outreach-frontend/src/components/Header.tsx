@@ -1,6 +1,10 @@
-import { Sparkles } from 'lucide-react'
+import { LogOut, Sparkles, Users } from 'lucide-react'
+import { navigate, ROUTES } from '../router'
+import { useOptionalAuth } from '../auth/AuthProvider'
 
 export function Header() {
+  const auth = useOptionalAuth()
+  const orgs = auth?.memberships ?? []
   return (
     <header className="header">
       <div className="brand">
@@ -10,7 +14,25 @@ export function Header() {
           <p>Turn past customers into future sales</p>
         </div>
       </div>
-      <span className="pill"><Sparkles size={14} aria-hidden /> AI Powered</span>
+      <div className="header-right">
+        <span className="pill"><Sparkles size={14} aria-hidden /> AI Powered</span>
+        {auth && orgs.length > 1 && (
+          <select aria-label="Organization" className="org-select" value={auth.orgId ?? ''} onChange={e => auth.setOrgId(e.target.value)}>
+            {orgs.map(m => <option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}
+          </select>
+        )}
+        {auth?.orgId && (
+          <a className="icon-btn" href={ROUTES.team} aria-label="Team" title="Team"
+            onClick={e => { e.preventDefault(); navigate(ROUTES.team) }}>
+            <Users size={18} />
+          </a>
+        )}
+        {auth?.mode === 'supabase' && (
+          <button className="icon-btn" onClick={() => void auth.signOut()} aria-label="Sign out" title={auth.email ?? 'Sign out'}>
+            <LogOut size={18} />
+          </button>
+        )}
+      </div>
     </header>
   )
 }

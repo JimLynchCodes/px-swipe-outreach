@@ -1,8 +1,9 @@
 import React from 'react'
 import { createRoot } from 'react-dom/client'
-import App from './App'
+import Root from './Root'
+import { resolveAuthConfig } from './auth/supabase'
 import './styles.css'
 
 createRoot(document.getElementById('root')!).render(
-  <React.StrictMode><App /></React.StrictMode>,
+  <React.StrictMode><Root config={resolveAuthConfig()} /></React.StrictMode>,
 )

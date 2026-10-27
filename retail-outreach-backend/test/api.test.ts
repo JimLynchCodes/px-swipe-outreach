@@ -52,7 +52,7 @@ describe("outreach API", () => {
     ({ app } = await makeApp());
     const r = await app.inject({ method: "POST", url: "/api/outreach/opp_0001/suggestion", payload: { channel: "fax" } });
     expect(r.statusCode).toBe(400);
-    expect(r.json().error).toBe("Invalid request");
+    expect(r.json()).toMatchObject({ error: "Invalid request", code: "invalid_request" });
   });
 
   it("skips a card and removes it from the deck; second skip conflicts", async () => {

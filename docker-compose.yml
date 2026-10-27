@@ -1,0 +1,60 @@
+# Local production-like stack. Plain Postgres stands in for Supabase's database;
+# auth runs in demo mode unless you point it at a real Supabase project (see docs/SUPABASE_SETUP.md).
+#   docker compose up --build
+#   docker compose run --rm migrate   # first run: schema + RLS + demo seed
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: postgres, POSTGRES_PASSWORD: postgres, POSTGRES_DB: outreach }
+    ports: ["5432:5432"]
+    volumes: [outreach_pg:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, retries: 10 }
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+  migrate:
+    build: { context: ., dockerfile: retail-outreach-backend/Dockerfile }
+    command: ["sh", "-c", "node dist/db/migrate.js --bootstrap-plain-postgres && node dist/db/seed.js --demo-user"]
+    environment: { DATABASE_URL: "postgres://postgres:postgres@postgres:5432/outreach" }
+    depends_on: { postgres: { condition: service_healthy } }
+    profiles: [tools]
+  api:
+    build: { context: ., dockerfile: retail-outreach-backend/Dockerfile }
+    environment:
+      NODE_ENV: development            # demo auth is refused in production
+      AUTH_MODE: ${AUTH_MODE:-demo}
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      INVITE_MAILER: ${INVITE_MAILER:-console}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      DATA_STORE: postgres
+      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/outreach"
+      DELIVERY_MODE: queue
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: http://localhost:8080
+      TRUST_PROXY: "true"
+    ports: ["3000:3000"]
+    depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
+  worker:
+    build: { context: ., dockerfile: retail-outreach-backend/Dockerfile }
+    command: ["node", "dist/worker.js"]
+    environment:
+      NODE_ENV: development
+      DATA_STORE: postgres
+      DATABASE_URL: "postgres://postgres:postgres@postgres:5432/outreach"
+      DELIVERY_MODE: queue
+      REDIS_URL: redis://redis:6379
+    depends_on: [api]
+  web:
+    build:
+      context: .
+      dockerfile: px-swipe-outreach-frontend/Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_DEMO_MODE: ${VITE_DEMO_MODE:-true}
+    environment: { API_UPSTREAM: "http://api:3000" }
+    ports: ["8080:8080"]
+    depends_on: [api]
+volumes:
+  outreach_pg: {}
