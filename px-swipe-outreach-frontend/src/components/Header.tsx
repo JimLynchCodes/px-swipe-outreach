@@ -1,4 +1,5 @@
-import { LogOut, Sparkles } from 'lucide-react'
+import { LogOut, Sparkles, Users } from 'lucide-react'
+import { navigate, ROUTES } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
 
 export function Header() {
@@ -19,6 +20,12 @@ export function Header() {
           <select aria-label="Organization" className="org-select" value={auth.orgId ?? ''} onChange={e => auth.setOrgId(e.target.value)}>
             {orgs.map(m => <option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}
           </select>
+        )}
+        {auth?.orgId && (
+          <a className="icon-btn" href={ROUTES.team} aria-label="Team" title="Team"
+            onClick={e => { e.preventDefault(); navigate(ROUTES.team) }}>
+            <Users size={18} />
+          </a>
         )}
         {auth?.mode === 'supabase' && (
           <button className="icon-btn" onClick={() => void auth.signOut()} aria-label="Sign out" title={auth.email ?? 'Sign out'}>

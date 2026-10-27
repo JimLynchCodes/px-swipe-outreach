@@ -6,17 +6,32 @@ import { RulesSuggestionProvider, type SuggestionProvider } from "../src/provide
 import { ConsoleMessageProvider, type MessageProvider } from "../src/providers/messaging.js";
 import { MemoryStore } from "../src/store/memory.js";
 import type { OutreachStore } from "../src/store/types.js";
+import type { InviteEmail, InviteMailer } from "../src/team/mailer.js";
+
+/** Records invite emails; set `fail` to simulate a provider outage. */
+export class FakeInviteMailer implements InviteMailer {
+  readonly name = "supabase" as const;
+  sent: InviteEmail[] = [];
+  fail = false;
+  async send(m: InviteEmail) {
+    if (this.fail) throw new Error("smtp down");
+    this.sent.push(m);
+    return { method: "invite" as const };
+  }
+  /** Raw token from the most recent email's link. */
+  lastToken() { return new URL(this.sent.at(-1)!.acceptUrl).searchParams.get("token")!; }
+}
 
 export async function makeApp(overrides: {
   suggestions?: SuggestionProvider; messenger?: MessageProvider; authenticator?: Authenticator;
-  store?: OutreachStore; env?: Record<string, string>;
+  store?: OutreachStore; env?: Record<string, string>; inviteMailer?: InviteMailer;
 } = {}) {
   const config = loadConfig({ NODE_ENV: "test", ...overrides.env });
   const store = overrides.store ?? new MemoryStore();
   const messenger = overrides.messenger ?? new ConsoleMessageProvider(() => {});
   const app = await buildApp({
     config, store, suggestions: overrides.suggestions ?? new RulesSuggestionProvider(), messenger,
-    authenticator: overrides.authenticator, logger: false
+    authenticator: overrides.authenticator, inviteMailer: overrides.inviteMailer, logger: false
   });
   return { app, store, messenger, config };
 }

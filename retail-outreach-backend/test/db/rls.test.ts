@@ -12,6 +12,7 @@ import { PostgresStore } from "../../src/store/postgres.js";
 import { processDelivery } from "../../src/delivery.js";
 import { ConsoleMessageProvider } from "../../src/providers/messaging.js";
 import { StoreError } from "../../src/store/types.js";
+import { hashInviteToken, newInviteToken } from "../../src/team/tokens.js";
 
 const url = process.env.TEST_DATABASE_URL;
 const ORG_A = "aaaaaaaa-0000-4000-8000-00000000000a";
@@ -164,5 +165,113 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     await expect(store.reset({ userId: STAFF, orgId: ORG_A })).rejects.toMatchObject({ code: "forbidden" });
     await store.reset({ userId: ALICE, orgId: ORG_A });
     expect((await store.listQueue({ userId: ALICE, orgId: ORG_A }, 1)).total).toBe(20);
+  });
+
+  // ───────────────────────── Team management ─────────────────────────
+  describe("team invitations & memberships", () => {
+    const ADMIN = "ad000000-0000-4000-8000-000000000004";
+    const NEWU = "0e000000-0000-4000-8000-000000000005";
+    const A = { userId: ALICE, orgId: ORG_A };
+    const inTwoDays = () => new Date(Date.now() + 2 * 86_400_000);
+    const reason = (p: Promise<unknown>) => p.then(() => "ok", (e: any) => e instanceof StoreError ? e.reason ?? e.code : String(e?.message));
+
+    beforeAll(async () => {
+      await admin.query(`insert into auth.users (id, email) values ($1,'admin@a.test'),($2,'new@a.test') on conflict do nothing`, [ADMIN, NEWU]);
+      await admin.query(`insert into public.memberships (org_id, user_id, role) values ($1,$2,'admin') on conflict do nothing`, [ORG_A, ADMIN]);
+    });
+
+    it("roster includes emails for members only", async () => {
+      const ms = await store.listMembers(A);
+      expect(ms.map(m => [m.email, m.role])).toEqual(expect.arrayContaining([["alice@a.test", "owner"], ["admin@a.test", "admin"], ["staff@a.test", "staff"]]));
+      expect((await asUser(BOB, `select * from public.list_org_members($1)`, [ORG_A])).rowCount).toBe(0);
+      await expect(reason(store.listMembers({ userId: BOB, orgId: ORG_A }))).resolves.toBe("forbidden");
+    });
+
+    it("RLS: only owners/admins see or create invites; admins can't invite owners; no deletes", async () => {
+      const h = hashInviteToken(newInviteToken());
+      const ins = (user: string, role: string) => asUser(user,
+        `insert into public.invitations (org_id, email, role, token_hash, invited_by, expires_at) values ($1,'x@x.test',$2,$3,$4, now() + interval '1 day')`,
+        [ORG_A, role, h, user]);
+      await expect(ins(STAFF, "staff")).rejects.toThrow(/row-level security/);
+      await expect(ins(ADMIN, "owner")).rejects.toThrow(/row-level security/);
+      await expect(ins(BOB, "staff")).rejects.toThrow(/row-level security/);
+      await expect(ins(ADMIN, "admin")).resolves.toBeTruthy();
+      // invited_by must be the caller
+      await expect(asUser(ADMIN, `insert into public.invitations (org_id, email, role, token_hash, invited_by, expires_at)
+        values ($1,'y@x.test','staff',$2,$3, now() + interval '1 day')`, [ORG_A, h, ALICE])).rejects.toThrow(/row-level security/);
+      const inv = await store.createInvitation(A, { email: "seen@a.test", role: "staff", tokenHash: hashInviteToken(newInviteToken()), expiresAt: inTwoDays() });
+      expect((await asUser(STAFF, `select * from public.invitations`)).rowCount).toBe(0);
+      expect((await asUser(BOB, `select * from public.invitations`)).rowCount).toBe(0);
+      expect((await asUser(ADMIN, `select * from public.invitations where id = $1`, [inv.id])).rowCount).toBe(1);
+      await expect(asUser(ALICE, `delete from public.invitations where id = $1`, [inv.id])).rejects.toThrow(/permission denied/);
+      await expect(asUser(ALICE, `select token_hash from public.invitations limit 1`)).resolves.toBeTruthy();
+    });
+
+    it("store: invite → duplicate/member conflicts → resend rotates → accept with matching email", async () => {
+      const raw = newInviteToken();
+      const inv = await store.createInvitation({ userId: ADMIN, orgId: ORG_A }, { email: "New@A.test", role: "admin", tokenHash: hashInviteToken(raw), expiresAt: inTwoDays() });
+      expect(inv).toMatchObject({ email: "new@a.test", role: "admin", status: "pending" });
+      await expect(reason(store.createInvitation(A, { email: "new@a.test", role: "staff", tokenHash: hashInviteToken(newInviteToken()), expiresAt: inTwoDays() }))).resolves.toBe("already_invited");
+      await expect(reason(store.createInvitation(A, { email: "staff@a.test", role: "staff", tokenHash: hashInviteToken(newInviteToken()), expiresAt: inTwoDays() }))).resolves.toBe("already_member");
+      await expect(reason(store.refreshInvitation(A, inv.id, { tokenHash: hashInviteToken(newInviteToken()), expiresAt: inTwoDays(), cooldownSeconds: 60 }))).resolves.toBe("resend_cooldown");
+      const raw2 = newInviteToken();
+      expect((await store.refreshInvitation(A, inv.id, { tokenHash: hashInviteToken(raw2), expiresAt: inTwoDays(), cooldownSeconds: 0 })).sendCount).toBe(2);
+      expect(await store.previewInvitation(hashInviteToken(raw))).toBeNull();
+      expect(await store.previewInvitation(hashInviteToken(raw2))).toMatchObject({ orgName: "Org A", status: "pending", role: "admin" });
+
+      await expect(reason(store.acceptInvitation({ id: NEWU, email: "other@a.test" }, hashInviteToken(raw2)))).resolves.toBe("invitation_email_mismatch");
+      await expect(reason(store.acceptInvitation({ id: NEWU, email: null }, hashInviteToken(raw2)))).resolves.toBe("invitation_email_mismatch");
+      await expect(reason(store.acceptInvitation({ id: NEWU, email: "new@a.test" }, hashInviteToken(raw)))).resolves.toBe("invitation_invalid");
+      expect(await store.acceptInvitation({ id: NEWU, email: "NEW@a.test" }, hashInviteToken(raw2))).toEqual({ orgId: ORG_A, role: "admin", alreadyMember: false });
+      expect((await store.acceptInvitation({ id: NEWU, email: "new@a.test" }, hashInviteToken(raw2))).alreadyMember).toBe(true);
+      await expect(reason(store.acceptInvitation({ id: BOB, email: "new@a.test" }, hashInviteToken(raw2)))).resolves.toBe("invitation_used");
+      expect((await store.listMemberships(NEWU)).map(m => m.orgId)).toEqual([ORG_A]);
+      const ev = await admin.query(`select event_type, actor_id from public.outreach_events where org_id = $1 and opportunity_id is null order by created_at`, [ORG_A]);
+      expect(ev.rows.map(r => r.event_type)).toEqual(expect.arrayContaining(["invitation_created", "invitation_resent", "invitation_accepted"]));
+    });
+
+    it("expired and revoked invites can't be accepted; an expired one is replaced on re-invite", async () => {
+      const raw = newInviteToken();
+      const inv = await store.createInvitation(A, { email: "late@a.test", role: "staff", tokenHash: hashInviteToken(raw), expiresAt: inTwoDays() });
+      await admin.query(`update public.invitations set created_at = now() - interval '3 days', expires_at = now() - interval '1 second' where id = $1`, [inv.id]);
+      await expect(reason(store.acceptInvitation({ id: NEWU, email: "late@a.test" }, hashInviteToken(raw)))).resolves.toBe("invitation_expired");
+      const again = await store.createInvitation(A, { email: "late@a.test", role: "staff", tokenHash: hashInviteToken(newInviteToken()), expiresAt: inTwoDays() });
+      expect(again.id).not.toBe(inv.id);
+      await store.revokeInvitation(A, again.id);
+      expect((await store.listInvitations(A)).some(i => i.email === "late@a.test")).toBe(false);
+      await expect(reason(store.revokeInvitation(A, again.id))).resolves.toBe("not_found");
+      await expect(reason(store.listInvitations({ userId: STAFF, orgId: ORG_A }))).resolves.toBe("insufficient_role");
+    });
+
+    it("role changes follow owner/admin rules and the last owner is protected everywhere", async () => {
+      await expect(reason(store.changeMemberRole({ userId: ADMIN, orgId: ORG_A }, STAFF, "owner"))).resolves.toBe("insufficient_role");
+      await expect(reason(store.changeMemberRole({ userId: ADMIN, orgId: ORG_A }, ALICE, "staff"))).resolves.toBe("insufficient_role");
+      await expect(reason(store.removeMember({ userId: STAFF, orgId: ORG_A }, ADMIN))).resolves.toBe("insufficient_role");
+      await expect(reason(store.changeMemberRole(A, ALICE, "admin"))).resolves.toBe("last_owner");
+      await expect(reason(store.removeMember(A, ALICE))).resolves.toBe("last_owner");
+      // Even a privileged connection can't strand the org.
+      await expect(admin.query(`delete from public.memberships where org_id = $1 and user_id = $2`, [ORG_A, ALICE])).rejects.toThrow(/last_owner/);
+      // RLS: staff can't promote themselves via raw SQL.
+      expect((await asUser(STAFF, `update public.memberships set role = 'admin' where org_id = $1 and user_id = $2`, [ORG_A, STAFF])).rowCount).toBe(0);
+
+      await store.changeMemberRole(A, NEWU, "owner");
+      await store.changeMemberRole(A, ALICE, "admin");
+      await store.changeMemberRole({ userId: NEWU, orgId: ORG_A }, ALICE, "owner");
+      await store.removeMember({ userId: NEWU, orgId: ORG_A }, NEWU); // owner leaves; Alice is still owner
+      expect((await store.listMemberships(NEWU))).toEqual([]);
+      const ev = await admin.query(`select event_type from public.outreach_events where org_id = $1 and event_type like 'member_%'`, [ORG_A]);
+      expect(ev.rows.map(r => r.event_type)).toEqual(expect.arrayContaining(["member_role_changed", "member_left"]));
+    });
+
+    it("deleting an organization still cascades through the last-owner guard", async () => {
+      const ORG_C = "cccccccc-0000-4000-8000-00000000000c";
+      const c = await admin.connect();
+      await seedOrg(c, { orgId: ORG_C, name: "Org C", slug: "org-c", businessName: "Org C", ownerId: BOB });
+      c.release();
+      await store.createInvitation({ userId: BOB, orgId: ORG_C }, { email: "z@c.test", role: "staff", tokenHash: hashInviteToken(newInviteToken()), expiresAt: inTwoDays() });
+      await admin.query(`delete from public.organizations where id = $1`, [ORG_C]);
+      expect((await admin.query(`select 1 from public.memberships where org_id = $1`, [ORG_C])).rowCount).toBe(0);
+      expect((await admin.query(`select 1 from public.invitations where org_id = $1`, [ORG_C])).rowCount).toBe(0);
+    });
   });
 });

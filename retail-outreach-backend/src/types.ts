@@ -86,3 +86,15 @@ export type Membership = { orgId: string; orgName: string; businessName: string 
 export type Actor = { userId: string; orgId: string };
 
 export type SuppressionReason = "opt_out" | "bounce" | "complaint" | "manual";
+
+export type TeamMember = { userId: string; email: string | null; role: MemberRole; joinedAt: string };
+
+export type InvitationStatus = "pending" | "expired" | "accepted" | "revoked";
+
+/** An invitation as shown to owners/admins (never includes the token or its hash). */
+export type Invitation = {
+  id: string; orgId: string; email: string; role: MemberRole; status: InvitationStatus;
+  invitedBy: string | null; createdAt: string; expiresAt: string; lastSentAt: string; sendCount: number;
+};
+
+export type InvitationPreview = { orgName: string; email: string; role: MemberRole; status: InvitationStatus; expiresAt: string };

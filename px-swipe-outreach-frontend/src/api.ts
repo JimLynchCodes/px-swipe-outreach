@@ -2,7 +2,17 @@ import type { Channel, OutreachCard, SendResult, Suggestion } from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
-export interface Membership { orgId: string; orgName: string; businessName: string; role: 'owner' | 'admin' | 'member' }
+export type Role = 'owner' | 'admin' | 'staff'
+export interface Membership { orgId: string; orgName: string; businessName: string | null; role: Role }
+export interface TeamMember { userId: string; email: string | null; role: Role; joinedAt: string }
+export type InvitationStatus = 'pending' | 'expired' | 'accepted' | 'revoked'
+export interface Invitation {
+  id: string; orgId: string; email: string; role: Role; status: InvitationStatus; invitedBy: string | null
+  createdAt: string; expiresAt: string; lastSentAt: string; sendCount: number
+}
+export interface InvitationPreview { orgName: string; email: string; role: Role; status: InvitationStatus; expiresAt: string }
+/** emailSent=false means the invite exists but the email didn't go out; acceptUrl is only present in dev (console mailer). */
+export interface InviteResult { invitation: Invitation; emailSent: boolean; acceptUrl?: string }
 
 interface ApiHooks {
   getToken: () => Promise<string | null>
@@ -20,10 +30,11 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, opts: RequestInit & { noOrg?: boolean; anonymous?: boolean } = {}): Promise<T> {
+  const { noOrg, anonymous, ...init } = opts
   let res: Response
-  const token = await hooks.getToken()
-  const orgId = hooks.getOrgId()
+  const token = anonymous ? null : await hooks.getToken()
+  const orgId = noOrg || anonymous ? null : hooks.getOrgId()
   try {
     res = await fetch(`${BASE}${path}`, {
       ...init,
@@ -67,6 +78,25 @@ export const api = {
     request<SendResult>(`/api/outreach/${encodeURIComponent(id)}/send`, {
       method: 'POST', body: JSON.stringify({ ...body, subject: body.subject ?? undefined }),
     }),
+  team: {
+    members: () => request<{ members: TeamMember[]; me: { userId: string; role: Role } }>('/api/team/members'),
+    invitations: () => request<{ invitations: Invitation[] }>('/api/team/invitations').then(r => r.invitations),
+    invite: (email: string, role: Role) =>
+      request<InviteResult>('/api/team/invitations', { method: 'POST', body: JSON.stringify({ email, role }) }),
+    resend: (id: string) => request<InviteResult>(`/api/team/invitations/${encodeURIComponent(id)}/resend`, { method: 'POST' }),
+    revoke: (id: string) => request<{ ok: true }>(`/api/team/invitations/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+    changeRole: (userId: string, role: Role) =>
+      request<{ ok: true }>(`/api/team/members/${encodeURIComponent(userId)}`, { method: 'PATCH', body: JSON.stringify({ role }) }),
+    remove: (userId: string) => request<{ ok: true }>(`/api/team/members/${encodeURIComponent(userId)}`, { method: 'DELETE' }),
+  },
+  invitations: {
+    preview: (token: string) =>
+      request<{ invitation: InvitationPreview }>(`/api/invitations/preview?token=${encodeURIComponent(token)}`, { anonymous: true }).then(r => r.invitation),
+    accept: (token: string) =>
+      request<{ ok: true; orgId: string; role: Role; alreadyMember: boolean; memberships: Membership[] }>('/api/invitations/accept', {
+        method: 'POST', body: JSON.stringify({ token }), noOrg: true,
+      }),
+  },
   resetDemo: () => request<{ ok: true }>('/api/dev/reset', { method: 'POST' }),
 }
 

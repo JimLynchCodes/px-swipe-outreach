@@ -3,7 +3,7 @@
 ## Secrets
 | Secret | Where it lives | Never in |
 |---|---|---|
-| Supabase `service_role` / `sb_secret_` key | not used by this app | anywhere in the frontend |
+| Supabase `service_role` / `sb_secret_` key (`SUPABASE_SERVICE_ROLE_KEY`) | backend env, only when `INVITE_MAILER=supabase`; used only for the Auth invite/magic-link endpoints, never for data queries | frontend, git, logs |
 | `DATABASE_URL` (DB password) | backend/worker env | frontend, git, logs |
 | `SUPABASE_JWT_SECRET` (legacy HS256 only) | backend env | frontend |
 | `OPENAI_API_KEY`, SMS/email provider keys | backend env | frontend |
@@ -16,9 +16,11 @@ Only `VITE_SUPABASE_URL` and the anon/publishable key are shipped to browsers. T
 - `AUTH_MODE=demo` (a fixed demo user) exists for local development and is refused when `NODE_ENV=production`.
 
 ## Authorization and tenancy
-- Every row has `org_id`. Users access an org only through `memberships` (`owner`, `admin`, `member`).
+- Every row has `org_id`. Users access an org only through `memberships` (`owner`, `admin`, `staff`).
 - The API checks the requested `X-Org-Id` against memberships, **and** each query runs as the `authenticated` role with the user's JWT claims, so Postgres RLS enforces tenancy independently.
 - RLS is enabled on every table. Delivery records cannot be updated by users, and the event log is append-only.
+- Team management: only owners/admins can invite or change roles; only owners can grant, change or remove `owner`; a trigger keeps at least one owner per org. These checks run in the API and again in RLS policies and triggers.
+- Invitations store only a SHA-256 hash of a 256-bit token. Links expire (7 days by default), are single-use, are rotated on resend, and can only be accepted by a signed-in user whose email matches the invitation. The public preview endpoint is rate-limited per IP and returns only org name, role, email and status. Invites are rate-limited per org (`INVITE_RATE_LIMIT_PER_HOUR`) with a resend cooldown.
 - Destructive operations (demo reset) require `owner`/`admin` and are disabled in production.
 
 ## Messaging safety

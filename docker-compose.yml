@@ -24,6 +24,9 @@ services:
       NODE_ENV: development            # demo auth is refused in production
       AUTH_MODE: ${AUTH_MODE:-demo}
       SUPABASE_URL: ${SUPABASE_URL:-}
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      INVITE_MAILER: ${INVITE_MAILER:-console}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
       DATA_STORE: postgres
       DATABASE_URL: "postgres://postgres:postgres@postgres:5432/outreach"
       DELIVERY_MODE: queue

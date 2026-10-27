@@ -79,7 +79,7 @@ These pieces are still stubbed:
 
 * **POS integration.** Replace the seed data with a sync from Shopify, Square, Lightspeed or Clover into the Postgres schema.
 * **Real delivery.** Add `MessageProvider`s for Twilio (SMS) and SendGrid or Postmark (email). This also needs opt-out (STOP) handling, quiet hours and per-customer frequency caps.
-* **Team management.** Invite and role-management UI (memberships are seeded or created via SQL today).
+* **Team management.** Done: invites, roles and removal at `/team` (see [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md#team-invitations)). Still to do: org creation/self-serve onboarding and ownership-transfer UX.
 * **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. Prompt tuning, brand voice and evals still need work.
 * **Analytics.** Track send → redeem → revenue attribution.
 * **Inbound STOP handling.** Wire provider webhooks into `suppressions`.

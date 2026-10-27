@@ -10,7 +10,8 @@ afterEach(async () => { await app?.close(); });
 
 const PROD_OK = {
   NODE_ENV: "production", AUTH_MODE: "supabase", SUPABASE_URL: "https://abc.supabase.co",
-  DATA_STORE: "postgres", DATABASE_URL: "postgres://u:p@db:5432/postgres", CORS_ORIGIN: "https://app.example.com"
+  DATA_STORE: "postgres", DATABASE_URL: "postgres://u:p@db:5432/postgres", CORS_ORIGIN: "https://app.example.com",
+  APP_URL: "https://app.example.com/", INVITE_MAILER: "supabase", SUPABASE_SERVICE_ROLE_KEY: "service-role-key-for-tests-only"
 };
 
 describe("config validation (fail fast)", () => {
@@ -18,6 +19,7 @@ describe("config validation (fail fast)", () => {
     const c = loadConfig(PROD_OK);
     expect(c.ENABLE_DEMO_RESET).toBe(false);
     expect(c.CORS_ORIGIN).toEqual(["https://app.example.com"]);
+    expect(c.APP_URL).toBe("https://app.example.com");
   });
 
   it.each([
@@ -28,7 +30,10 @@ describe("config validation (fail fast)", () => {
     [{ ENABLE_DEMO_RESET: "true" }, "ENABLE_DEMO_RESET"],
     [{ SUPABASE_URL: "" }, "SUPABASE_URL"],
     [{ DATABASE_URL: "" }, "DATABASE_URL"],
-    [{ SUPABASE_JWT_SECRET: "short" }, "SUPABASE_JWT_SECRET"]
+    [{ SUPABASE_JWT_SECRET: "short" }, "SUPABASE_JWT_SECRET"],
+    [{ INVITE_MAILER: "console" }, "INVITE_MAILER"],
+    [{ SUPABASE_SERVICE_ROLE_KEY: "" }, "SUPABASE_SERVICE_ROLE_KEY"],
+    [{ APP_URL: "http://app.example.com" }, "APP_URL"]
   ])("rejects unsafe production config %j", (patch, field) => {
     expect(() => loadConfig({ ...PROD_OK, ...patch })).toThrow(ConfigError);
     expect(() => loadConfig({ ...PROD_OK, ...patch })).toThrow(field);

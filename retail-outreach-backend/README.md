@@ -72,6 +72,10 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `DELIVERY_MODE` / `REDIS_URL` | `inline` / – | `queue` needs Postgres and Redis |
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4.1-mini` | Rules-based suggestions when unset |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
+| `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
+| `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |
+| `SUPABASE_SERVICE_ROLE_KEY` | – | Required for `INVITE_MAILER=supabase`. Backend secret, only used to send invite emails |
+| `INVITE_TTL_HOURS` / `INVITE_RATE_LIMIT_PER_HOUR` / `INVITE_RESEND_COOLDOWN_SECONDS` | `168` / `30` / `60` | |
 | `LOG_LEVEL` / `SHUTDOWN_TIMEOUT_MS` | `info` / `10000` | |
 
 ## Auth
@@ -104,7 +108,7 @@ How the pieces fit together:
 
 ## API reference
 
-All `/api/*` routes run as the demo tenant. Errors look like `{ "error": string, "details"?: ... }`.
+In demo mode all `/api/*` routes run as the demo tenant. Errors look like `{ "error": string, "details"?: ... }`.
 
 | Method & path | Body | Response |
 | --- | --- | --- |
@@ -117,6 +121,15 @@ All `/api/*` routes run as the demo tenant. Errors look like `{ "error": string,
 | `GET /api/outreach/:id/deliveries` | – | `{deliveries: [...]}`, with recipients masked |
 | `GET /api/metrics` | – | Counts by opportunity status and delivery status/channel |
 | `POST /api/dev/reset` | – | Re-seeds demo data (not available in production) |
+| `GET /api/team/members` | – | `{members: [{userId, email, role, joinedAt}], me: {userId, role}}` |
+| `GET /api/team/invitations` | – | `{invitations}` pending (and expired) invites. Owner/admin |
+| `POST /api/team/invitations` | `{email, role}` | `201 {invitation, emailSent, acceptUrl?}`. `acceptUrl` only with the console mailer outside production. `409 already_invited` / `already_member` |
+| `POST /api/team/invitations/:id/resend` | – | Rotates the token and re-sends. `429` during the cooldown |
+| `DELETE /api/team/invitations/:id` | – | Revokes |
+| `PATCH /api/team/members/:userId` | `{role}` | Changes a role. `409 last_owner` |
+| `DELETE /api/team/members/:userId` | – | Removes a member (or yourself = leave) |
+| `GET /api/invitations/preview?token=` | – | Public. `{invitation: {orgName, email, role, status, expiresAt}}` |
+| `POST /api/invitations/accept` | `{token}` | Signed in, no `X-Org-Id` needed. `{orgId, role, alreadyMember}`. `403 email_mismatch`, `410 invitation_expired/revoked/used` |
 
 Status codes:
 

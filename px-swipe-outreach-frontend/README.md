@@ -38,6 +38,10 @@ npm run dev        # http://localhost:5173. Needs the backend on :3000 (see ../R
 
 `src/auth/` contains the Supabase client, `AuthProvider` (session tracking with auto-refresh, `/api/me` memberships, org selection persisted in localStorage) and `LoginPage` (password, magic link, sign-up). `Root.tsx` gates the app: login → loading → "no store access" → the deck. The API client adds `Authorization` and `X-Org-Id` headers and signs out on any `401`. Users with several orgs get an org switcher in the header.
 
+### Team
+
+`/team` (the people icon in the header) lists members and, for owners/admins, an invite form and pending invitations with resend/revoke. `/invite/accept?token=…` is where invitation emails land: it previews the invite, lets a signed-out invitee sign in or create an account with the invited email, then joins the org and switches to it. Routing is a tiny `history`-based helper in `src/router.ts`; the host must serve `index.html` for unknown paths (the bundled nginx config and Vite dev server do).
+
 ## Structure
 
 ```
@@ -48,6 +52,8 @@ src/
 ├── types.ts                   # Card / Suggestion shapes (mirror the backend DTOs)
 ├── components/Header.tsx      # logo, tagline, "AI Powered" pill
 ├── components/CustomerCard.tsx# the card itself
+├── team/                      # TeamPage, AcceptInvitePage, role helpers + tests
+├── router.ts                  # pushState navigation
 ├── lib/format.ts              # money / days / char count
 └── styles.css
 ```
