@@ -2,8 +2,19 @@ import type { Channel, OutreachCard, SendResult, Suggestion } from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
+export interface Membership { orgId: string; orgName: string; businessName: string; role: 'owner' | 'admin' | 'member' }
+
+interface ApiHooks {
+  getToken: () => Promise<string | null>
+  getOrgId: () => string | null
+  onUnauthorized: () => void
+}
+let hooks: ApiHooks = { getToken: async () => null, getOrgId: () => null, onUnauthorized: () => {} }
+/** Called by AuthProvider so every request carries the session token + selected org. */
+export function configureApi(h: ApiHooks): void { hooks = h }
+
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number) {
+  constructor(message: string, readonly status: number, readonly code?: string, readonly requestId?: string) {
     super(message)
     this.name = 'ApiError'
   }
@@ -11,10 +22,17 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res: Response
+  const token = await hooks.getToken()
+  const orgId = hooks.getOrgId()
   try {
     res = await fetch(`${BASE}${path}`, {
       ...init,
-      headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers },
+      headers: {
+        ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(orgId ? { 'X-Org-Id': orgId } : {}),
+        ...init.headers,
+      },
     })
   } catch {
     throw new ApiError('Cannot reach the outreach server. Is the backend running?', 0)
@@ -22,9 +40,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const text = await res.text()
   const data = text ? safeJson(text) : null
   if (!res.ok) {
-    const err = data && typeof data === 'object' && 'error' in data ? (data as { error: unknown }).error : null
-    const msg = typeof err === 'string' && err ? err : `Request failed (${res.status})`
-    throw new ApiError(msg, res.status)
+    const body = (data && typeof data === 'object' ? data : {}) as { error?: unknown; code?: unknown; requestId?: unknown }
+    const msg = typeof body.error === 'string' && body.error ? body.error : `Request failed (${res.status})`
+    if (res.status === 401) hooks.onUnauthorized()
+    throw new ApiError(msg, res.status, typeof body.code === 'string' ? body.code : undefined,
+      typeof body.requestId === 'string' ? body.requestId : undefined)
   }
   return data as T
 }
@@ -34,6 +54,9 @@ function safeJson(text: string): unknown {
 }
 
 export const api = {
+  me: () => request<{ user: { id: string; email: string | null }; memberships: Membership[]; authMode: string }>('/api/me'),
+  optOut: (id: string, channel: Channel | 'all' = 'all') =>
+    request<{ ok: true }>(`/api/outreach/${encodeURIComponent(id)}/opt-out`, { method: 'POST', body: JSON.stringify({ channel }) }),
   queue: (limit = 50) => request<{ items: OutreachCard[]; total: number }>(`/api/outreach/queue?limit=${limit}`),
   suggestion: (id: string, channel: Channel) =>
     request<{ suggestion: Suggestion }>(`/api/outreach/${encodeURIComponent(id)}/suggestion`, {

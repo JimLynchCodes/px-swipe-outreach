@@ -16,7 +16,17 @@ npm run install:all   # installs the root, backend and frontend
 npm run dev           # backend on :3000 and frontend on :5173 together
 ```
 
-Then open http://localhost:5173.
+Then open http://localhost:5173. With no Supabase config this runs in **demo mode** (no login, in-memory data).
+
+## Production setup
+
+Production uses **Supabase** for auth (email + password, magic links) and Postgres, with multi-tenant orgs and RLS on every table.
+
+* [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md): create the project, apply migrations, configure auth, and create the first org.
+* [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): Docker images, the production checklist, and compose.
+* [docs/SECURITY.md](docs/SECURITY.md): secrets, auth, tenancy/RLS, opt-out and HTTP hardening.
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and build for both projects, RLS integration tests against Postgres, and Docker builds.
 
 Other root scripts:
 
@@ -25,6 +35,7 @@ Other root scripts:
 | `npm run build` | Builds both projects (`dist/` in each) |
 | `npm test` | Runs the backend tests (Vitest + `fastify.inject`), then the frontend tests (Vitest + Testing Library) |
 | `npm run typecheck` | Type-checks both projects |
+| `npm run lint` | ESLint for both projects |
 
 ## Architecture
 
@@ -54,8 +65,12 @@ See each project's README for its env vars, API reference and internals.
 ```
 .
 ├── package.json                    # root scripts (concurrently)
-├── retail-outreach-backend/        # API, seed data, providers, Postgres schema, worker
-└── px-swipe-outreach-frontend/     # swipe UI
+├── docker-compose.yml              # local production-like stack
+├── .github/workflows/ci.yml
+├── docs/                           # Supabase setup, deployment, security
+├── supabase/                       # migrations (schema + RLS), config.toml, plain-PG bootstrap for tests
+├── retail-outreach-backend/        # API, auth, providers, worker, migrate/seed scripts
+└── px-swipe-outreach-frontend/     # swipe UI + Supabase Auth
 ```
 
 ## Roadmap
@@ -64,6 +79,7 @@ These pieces are still stubbed:
 
 * **POS integration.** Replace the seed data with a sync from Shopify, Square, Lightspeed or Clover into the Postgres schema.
 * **Real delivery.** Add `MessageProvider`s for Twilio (SMS) and SendGrid or Postmark (email). This also needs opt-out (STOP) handling, quiet hours and per-customer frequency caps.
-* **Auth.** Replace the dev user and tenant in `auth.ts` with real sessions or JWT (for example Clerk, Auth0 or Supabase).
+* **Team management.** Invite and role-management UI (memberships are seeded or created via SQL today).
 * **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. Prompt tuning, brand voice and evals still need work.
-* **Deployment and analytics.** Containerize, add CI, and track send → redeem → revenue attribution.
+* **Analytics.** Track send → redeem → revenue attribution.
+* **Inbound STOP handling.** Wire provider webhooks into `suppressions`.

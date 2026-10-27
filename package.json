@@ -7,10 +7,13 @@
     "dev": "concurrently -k -n api,web -c cyan,magenta \"npm --prefix retail-outreach-backend run dev\" \"npm --prefix px-swipe-outreach-frontend run dev\"",
     "build": "npm --prefix retail-outreach-backend run build && npm --prefix px-swipe-outreach-frontend run build",
     "test": "npm --prefix retail-outreach-backend test && npm --prefix px-swipe-outreach-frontend test",
-    "typecheck": "npm --prefix retail-outreach-backend run typecheck && npm --prefix px-swipe-outreach-frontend run typecheck"
+    "typecheck": "npm --prefix retail-outreach-backend run typecheck && npm --prefix px-swipe-outreach-frontend run typecheck",
+    "lint": "npm --prefix retail-outreach-backend run lint && npm --prefix px-swipe-outreach-frontend run lint"
   },
   "devDependencies": {
     "concurrently": "^9.1.0"
   },
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }

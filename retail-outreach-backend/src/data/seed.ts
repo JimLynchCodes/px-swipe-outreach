@@ -2,7 +2,11 @@
  * Demo dataset shared by the in-memory store and the Postgres migration.
  * Dates are relative to "now" so the demo always looks fresh.
  */
-export const DEMO_TENANT = "demo-retailer";
+/** Fixed identifiers for the demo organization and its owner (used by demo auth and the seed script). */
+export const DEMO_ORG_ID = "00000000-0000-4000-8000-000000000101";
+export const DEMO_ORG = { id: DEMO_ORG_ID, name: "Demo Retailer", slug: "demo-retailer", businessName: "our store" };
+export const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
+export const DEMO_USER_EMAIL = "demo@px-outreach.local";
 
 export type SeedProduct = { id: string; name: string; category: string; priceCents: number; imageUrl: string | null };
 export type SeedCustomer = {

@@ -120,6 +120,19 @@ export default function App() {
     } finally { setBusy(null) }
   }, [current, draft, busy, advance])
 
+  const optOut = useCallback(async () => {
+    if (!current || busy) return
+    if (!window.confirm(`Stop all outreach to ${current.customer.firstName}? They will be added to the do-not-contact list.`)) return
+    setBusy('skip')
+    try {
+      await api.optOut(current.id, 'all')
+      setToast({ kind: 'ok', text: `${current.customer.firstName} won't be contacted again` })
+      advance('left')
+    } catch (e) {
+      setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+    } finally { setBusy(null) }
+  }, [current, busy, advance])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
@@ -205,6 +218,9 @@ export default function App() {
             <span>{busy === 'send' ? 'Sending…' : 'Send'}</span><span className="circle"><ArrowRight size={22} /></span>
           </button>
         </footer>
+      )}
+      {load.state === 'ready' && current && (
+        <button className="link optout" onClick={() => void optOut()} disabled={!!busy}>Customer opted out? Stop contacting them</button>
       )}
       {load.state === 'ready' && current && (
         <div className="dots" aria-hidden>

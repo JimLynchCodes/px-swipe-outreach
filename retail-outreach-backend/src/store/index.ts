@@ -4,7 +4,7 @@ import type { OutreachStore } from "./types.js";
 export async function createStore(config: AppConfig): Promise<OutreachStore> {
   if (config.DATA_STORE === "postgres") {
     const { PostgresStore } = await import("./postgres.js");
-    return new PostgresStore(config.DATABASE_URL);
+    return new PostgresStore(config.DATABASE_URL!, { caCert: config.DATABASE_CA_CERT, max: config.DATABASE_POOL_MAX });
   }
   const { MemoryStore } = await import("./memory.js");
   return new MemoryStore();

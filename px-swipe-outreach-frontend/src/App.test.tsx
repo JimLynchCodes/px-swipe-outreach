@@ -76,3 +76,21 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Is the backend running?')
   })
 })
+
+describe('opt-out', () => {
+  it('posts an opt-out for the current customer and advances', async () => {
+    vi.stubGlobal('confirm', () => true)
+    const base = (globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>)
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (url.endsWith('/opt-out')) { calls.push({ url, init }); return json({ ok: true }) }
+      return base(url, init)
+    }))
+    render(<App />)
+    expect(await screen.findByText('Sarah M.')).toBeInTheDocument()
+    fireEvent.click(screen.getByText(/Stop contacting them/))
+    expect(await screen.findByText('Maya M.')).toBeInTheDocument()
+    const call = calls.find(c => c.url.endsWith('/opt-out'))!
+    expect(call.url).toContain('/api/outreach/opp_1/opt-out')
+    expect(JSON.parse(String(call.init?.body))).toEqual({ channel: 'all' })
+  })
+})

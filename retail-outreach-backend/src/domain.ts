@@ -17,7 +17,7 @@ export function isValidEmail(email: string | null): boolean {
 }
 
 export function canContact(customer: Customer, channel: Channel): boolean {
-  if (customer.optedOut) return false;
+  if (customer.suppressed.includes(channel)) return false;
   return channel === "sms"
     ? customer.smsConsent && isValidPhone(customer.phone)
     : customer.emailConsent && isValidEmail(customer.email);
@@ -29,6 +29,23 @@ export function preferredChannel(customer: Customer): Channel | null {
 
 export function recipientFor(customer: Customer, channel: Channel): string | null {
   return channel === "sms" ? customer.phone : customer.email;
+}
+
+/** Canonical contact value for suppression matching. Mirrors public.normalize_contact() in SQL. */
+export function normalizeContact(channel: Channel, value: string | null): string | null {
+  if (!value) return null;
+  if (channel === "sms") {
+    const digits = value.replace(/\D/g, "");
+    return digits ? `+${digits}` : null;
+  }
+  return value.trim().toLowerCase() || null;
+}
+
+/** "+15555550001" -> "+15***01", "sarah@example.com" -> "sa***@example.com". Safe for logs and API responses. */
+export function maskRecipient(value: string): string {
+  const at = value.indexOf("@");
+  if (at > 0) return `${value.slice(0, Math.min(2, at))}***${value.slice(at)}`;
+  return value.length <= 5 ? "***" : `${value.slice(0, 3)}***${value.slice(-2)}`;
 }
 
 export const ACTIONABLE_STATUSES = ["pending", "drafted"] as const;
