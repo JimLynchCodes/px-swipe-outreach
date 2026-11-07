@@ -3,6 +3,7 @@ import { Ban, Layers, LogOut, Menu, MessageCircle, Settings, Sparkles, Users, X 
 import { navigate, ROUTES, usePathname } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
 import { useUnreadCount } from '../replies/useUnread'
+import { PineappleLogo } from './PineappleLogo'
 
 const LINKS = [
   { to: ROUTES.home, label: 'Outreach deck', icon: Layers },
@@ -53,7 +54,7 @@ export function Header() {
             )}
           </div>
         )}
-        <img src="/flame.svg" alt="" className="brand-logo" width={36} height={36} />
+        <PineappleLogo size={36} />
         <div>
           <h1>Outreach</h1>
           <p>Turn past customers into future sales</p>

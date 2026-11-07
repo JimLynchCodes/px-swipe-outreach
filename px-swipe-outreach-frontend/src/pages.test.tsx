@@ -178,3 +178,12 @@ describe('Replies', () => {
     expect(relativeTime('2026-10-01T12:00:00Z', t)).toMatch(/Oct/)
   })
 })
+
+describe('brand', () => {
+  it('renders the pineapple logo in the header', async () => {
+    const { PineappleLogo } = await import('./components/PineappleLogo')
+    const { container } = render(<PineappleLogo title="Pineapple" />)
+    expect(screen.getByRole('img', { name: 'Pineapple' })).toBeInTheDocument()
+    expect(container.querySelectorAll('path').length).toBeGreaterThanOrEqual(4)
+  })
+})

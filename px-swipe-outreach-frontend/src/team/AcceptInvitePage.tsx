@@ -1,3 +1,4 @@
+import { PineappleLogo } from '../components/PineappleLogo'
 import { useEffect, useState } from 'react'
 import { CheckCircle2, MailWarning } from 'lucide-react'
 import { api, ApiError, type InvitationPreview } from '../api'
@@ -99,7 +100,7 @@ export function AcceptInvitePage() {
     <div className="login">
       <div className="login-card">
         <div className="brand">
-          <img src="/flame.svg" alt="" className="brand-logo" width={36} height={36} />
+          <PineappleLogo size={36} />
           <div><h1>Join {inv.orgName}</h1><p>Team invitation</p></div>
         </div>
         <p>{intro}</p>

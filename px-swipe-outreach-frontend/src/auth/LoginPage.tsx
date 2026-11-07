@@ -1,3 +1,4 @@
+import { PineappleLogo } from '../components/PineappleLogo'
 import { useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -50,7 +51,7 @@ export function LoginPage({ client, redirectTo: redirect, email: fixedEmail, all
     <div className="login">
       <form className="login-card" onSubmit={submit} aria-label="Sign in">
         <div className="brand">
-          <img src="/flame.svg" alt="" className="brand-logo" width={36} height={36} />
+          <PineappleLogo size={36} />
           <div><h1>{title ?? 'Outreach'}</h1><p>{subtitle ?? (mode === 'signup' ? 'Create your account' : 'Sign in to continue')}</p></div>
         </div>
         <label>Email

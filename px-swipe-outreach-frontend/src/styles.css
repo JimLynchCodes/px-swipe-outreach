@@ -241,3 +241,4 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .composer-foot { display: flex; justify-content: space-between; align-items: center; }
 .btn-send { display: inline-flex; gap: 6px; align-items: center; background: var(--green); color: #fff; border: 0; border-radius: 999px; padding: 8px 16px; font-weight: 600; }
 .notice { display: flex; align-items: center; gap: 8px; background: var(--red-soft); color: var(--red-ink); border: 1px solid var(--red-line); border-radius: 12px; padding: 10px 12px; }
+.brand-logo { color: #000; flex: none; }
