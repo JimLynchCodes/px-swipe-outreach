@@ -137,10 +137,12 @@ export interface ModelCost {
   model: string; label: string; aiCalls: number; inputTokens: number; outputTokens: number; costUsd: number
   smsSent: number; emailSent: number; messagesSent: number
 }
+/** Twilio SMS spend; costUsd includes numberFeesUsd. estimatedTexts are still priced at the configured estimate. */
+export interface TwilioCost { costUsd: number; texts: number; segments: number; estimatedTexts: number; numberFeesUsd: number }
 export interface CostReport {
-  year: number; priceTableVersion: string; demo: boolean
-  ytd: { costUsd: number; messagesSent: number; aiCalls: number; byModel: ModelCost[] }
-  months: Array<{ month: string; models: ModelCost[]; total: Omit<ModelCost, 'model' | 'label'> }>
+  year: number; priceTableVersion: string; demo: boolean; numberMonthlyFeeUsd: number
+  ytd: { costUsd: number; messagesSent: number; aiCalls: number; byModel: ModelCost[]; twilio: TwilioCost; combinedUsd: number }
+  months: Array<{ month: string; models: ModelCost[]; total: Omit<ModelCost, 'model' | 'label'>; twilio: TwilioCost; combinedUsd: number }>
 }
 export type Period = 'today' | 'week' | 'month' | 'all'
 export interface LeaderRow {

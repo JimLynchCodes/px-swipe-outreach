@@ -114,6 +114,11 @@ async function seedDemoMetrics(db: pg.PoolClient, orgId: string, id: (n: string)
       [orgId, x.userLabel, id(`customer:${x.customerId}`), x.channel, dealUuid(x.dealId), x.dealTitle, x.dealCategories,
         x.dealProductIds.map(p => id(`product:${p}`)), x.model, x.createdAt]);
   }
+  for (const c of m.smsCosts) {
+    await db.query(`insert into public.sms_costs (org_id, provider, message_sid, segments, price_usd, estimated, status, is_demo, created_at, updated_at)
+      values ($1,$2,$3,$4,$5,$6,$7,true,$8,$8) on conflict (message_sid) do nothing`,
+      [orgId, c.provider, `${c.messageSid}-${orgId.slice(0, 8)}`, c.segments, c.priceUsd, c.estimated, c.status, c.createdAt]);
+  }
   for (const [i, p] of m.purchases.entries()) {
     const purchaseId = id(`demo-purchase:${i}`);
     await db.query(`insert into public.purchases (id, org_id, customer_id, purchased_at, total_cents, is_demo) values ($1,$2,$3,$4,$5,true)

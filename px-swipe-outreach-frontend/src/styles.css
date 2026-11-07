@@ -306,3 +306,10 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .pill.data-source { padding: 2px 8px; font-size: 11px; order: 3; }
 .pill.data-source.demo { background: #fff4d6; color: #8a5a00; }
 .pill.data-source.supabase { background: #e6f4ea; color: #1e7b34; }
+
+.spend-lines { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 10px 0 0; font-variant-numeric: tabular-nums; }
+.spend-lines div { display: flex; gap: 6px; align-items: baseline; }
+.spend-lines dt { color: var(--muted); font-size: 13px; }
+.spend-lines dd { margin: 0; font-weight: 600; }
+.spend-lines .total { margin-left: auto; }
+.pill.est { margin-left: 6px; background: #fff4e5; color: #9a5b00; padding: 1px 7px; border-radius: 999px; font-size: 11px; }

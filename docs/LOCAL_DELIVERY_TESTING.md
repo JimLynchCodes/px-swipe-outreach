@@ -109,3 +109,7 @@ check.
 - **log provider** output.
 
 `test/hardening.test.ts` covers startup validation (missing SMTP/Twilio vars, bad number format, and `log` refused in production).
+
+## Twilio spend tracking
+
+With `SMS_PROVIDER=twilio` and a tunnel `PUBLIC_API_URL`, each text sets a StatusCallback to `<tunnel>/webhooks/twilio/status/<orgId>`. You don't need to configure anything in the Twilio console. Cost metrics shows the text as an estimate at first, then switches to Twilio's actual price once it's delivered. On localhost without a tunnel, the reconcile job (every `TWILIO_RECONCILE_MINUTES`) fills in prices instead. See [OUTREACH_FEATURES.md](OUTREACH_FEATURES.md#twilio-spend).

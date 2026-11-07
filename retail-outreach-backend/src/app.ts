@@ -1,3 +1,6 @@
+import { applyTwilioMessage, CostTrackingMessenger, type MessageFetcher } from "./metrics/smsCost.js";
+import { ChannelRouter, TwilioSmsProvider, TWILIO_STATUS_PREFIX } from "./providers/messaging.js";
+import { verifyTwilioSignature } from "./optout/twilio.js";
 import { randomUUID } from "node:crypto";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
@@ -44,6 +47,8 @@ export type AppDeps = {
   inviteMailer?: InviteMailer;
   /** false disables logging (tests). */
   logger?: boolean;
+  /** Fetches a Twilio message (price) for the status callback. Defaults to the Twilio SMS provider's, if any. */
+  fetchTwilioMessage?: MessageFetcher;
 };
 
 const idParams = z.object({ id: z.string().min(1).max(100) });
@@ -54,7 +59,7 @@ const PUBLIC_PATHS = new Set(["/health", "/health/live", "/health/ready"]);
 const NO_ORG_PATHS = new Set(["/api/me", INVITE_ACCEPT_PATH]);
 /** API routes reachable without a session (still rate limited per IP). */
 const ANON_PATHS = new Set([INVITE_PREVIEW_PATH, UNSUBSCRIBE_PATH, RESUBSCRIBE_PATH, REOPTIN_PATH]);
-const isAnon = (path: string) => ANON_PATHS.has(path) || path === INBOUND_EMAIL_PATH || path.startsWith(TWILIO_WEBHOOK_PREFIX);
+const isAnon = (path: string) => ANON_PATHS.has(path) || path === INBOUND_EMAIL_PATH || path.startsWith(TWILIO_WEBHOOK_PREFIX) || path.startsWith(TWILIO_STATUS_PREFIX);
 
 /** Uniform error body: { error, code, requestId, details? }. */
 function sendError(reply: FastifyReply, status: number, code: string, error: string, details?: string[]) {
@@ -67,7 +72,7 @@ function actorOf(req: { auth: { user: AuthUser; org: OrgContext | null } | null 
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const { config, store, suggestions, messenger } = deps;
+  const { config, store, suggestions } = deps;
   const authenticator = deps.authenticator ?? createAuthenticator(config);
   if (config.NODE_ENV === "production" && authenticator.mode !== "supabase") {
     throw new Error("Refusing to start: demo authentication in production");
@@ -83,6 +88,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return typeof incoming === "string" && REQUEST_ID_RE.test(incoming) ? incoming : randomUUID();
     }
   });
+  // Every outbound SMS (deliveries, replies, re-opt-in texts) gets a Twilio spend row; never blocks a send.
+  const messenger = new CostTrackingMessenger(deps.messenger, store, { estimatePerSegment: config.TWILIO_SMS_PRICE_ESTIMATE, log: app.log });
+  const fetchTwilioMessage = deps.fetchTwilioMessage ?? twilioFetcherOf(deps.messenger);
 
   app.addHook("onRequest", async (request, reply) => { reply.header("x-request-id", request.id); });
 
@@ -345,8 +353,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const actor = actorOf(request);
     const now = new Date();
     const since = new Date(now.getFullYear(), 0, 1).toISOString();
-    const [usage, sends] = await Promise.all([store.listAiUsage(actor, since), store.listSends(actor, since)]);
-    return costReport(usage, sends, now);
+    const [usage, sends, sms] = await Promise.all([store.listAiUsage(actor, since), store.listSends(actor, since), store.listSmsCosts(actor, since)]);
+    return costReport(usage, sends, now, { smsCosts: sms, numberMonthlyFeeUsd: config.SMS_PROVIDER === "twilio" ? config.TWILIO_NUMBER_MONTHLY_FEE : 0 });
   });
 
   // ── Promotions & settings ───────────────────────────────────────────
@@ -367,6 +375,33 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   } as any);
   await replyRoutes(app, { config, store, messenger, actorOf, sendError });
 
+  /**
+   * Twilio StatusCallback (set on each outbound SMS when PUBLIC_API_URL is public). Signature-checked against
+   * PUBLIC_API_URL + path. On a final status we fetch the message for its actual price (callbacks don't carry it).
+   */
+  app.post(`${TWILIO_STATUS_PREFIX}:orgId`, { config: { rateLimit: { max: 600, timeWindow: "1 minute" } } }, async (request, reply) => {
+    const params = (request.body && typeof request.body === "object" ? request.body : {}) as Record<string, string>;
+    if (config.TWILIO_AUTH_TOKEN) {
+      if (!verifyTwilioSignature(config.TWILIO_AUTH_TOKEN, `${config.PUBLIC_API_URL}${request.url}`, params, request.headers["x-twilio-signature"])) {
+        request.log.warn("rejected Twilio status callback: bad signature");
+        return sendError(reply, 403, "invalid_signature", "Invalid signature");
+      }
+    } else if (config.NODE_ENV === "production") {
+      return sendError(reply, 503, "not_configured", "Twilio is not configured");
+    }
+    const sid = typeof params.MessageSid === "string" && /^(SM|MM)[0-9a-zA-Z]{8,62}$/.test(params.MessageSid) ? params.MessageSid : null;
+    const status = typeof params.MessageStatus === "string" ? params.MessageStatus.slice(0, 32) : undefined;
+    if (!sid) return reply.code(204).send();
+    const final = status && ["sent", "delivered", "undelivered", "failed"].includes(status);
+    try {
+      if (final && fetchTwilioMessage) await applyTwilioMessage(store, await fetchTwilioMessage(sid));
+      else await store.updateSmsCost(sid, { ...(status ? { status } : {}) });
+    } catch (e) {
+      request.log.warn({ err: e, sid }, "Twilio price fetch failed; reconcile job will retry");
+    }
+    return reply.code(204).send();
+  });
+
   // ── Team ────────────────────────────────────────────────────────────
   const inviteMailer = deps.inviteMailer ?? (config.INVITE_MAILER === "supabase"
     ? new SupabaseInviteMailer({ supabaseUrl: config.SUPABASE_URL!, serviceRoleKey: config.SUPABASE_SERVICE_ROLE_KEY! })
@@ -382,4 +417,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   }
 
   return app;
+}
+
+/** The Twilio provider's message fetcher, if SMS goes through Twilio. */
+export function twilioFetcherOf(m: MessageProvider): MessageFetcher | undefined {
+  const sms = m instanceof ChannelRouter ? m.sms : m;
+  return sms instanceof TwilioSmsProvider ? sid => sms.fetchMessage(sid) : undefined;
 }

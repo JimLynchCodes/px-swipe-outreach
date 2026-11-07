@@ -3,7 +3,7 @@
  * `now`. Deterministic (seeded PRNG) so tests are stable. Every row has isDemo=true and staff are suffixed "(demo)".
  */
 import { costUsd, PRICE_TABLE_VERSION } from "../ai/models.js";
-import type { AiUsageRow, PurchaseRow, SendRow } from "../metrics/types.js";
+import type { AiUsageRow, PurchaseRow, SendRow, SmsCostRow } from "../metrics/types.js";
 import * as seed from "./seed.js";
 
 export const DEMO_STAFF = ["Maya R. (demo)", "Leo T. (demo)", "Ava K. (demo)", "Sam P. (demo)"] as const;
@@ -21,6 +21,7 @@ export function buildDemoMetrics(now = new Date(), days = 150, idOf: (kind: stri
   const usage: AiUsageRow[] = [];
   const sends: SendRow[] = [];
   const purchases: PurchaseRow[] = [];
+  const smsCosts: SmsCostRow[] = [];
   const weekly = seed.deals.filter(d => d.schedule === "weekly" && d.active);
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - days);
   const nowMs = now.getTime();
@@ -48,6 +49,14 @@ export function buildDemoMetrics(now = new Date(), days = 150, idOf: (kind: stri
       sends.push({ id: idOf("send", sends.length), deliveryId: null, userId: null, userLabel: DEMO_STAFF[staff], customerId: cust.id, channel,
         dealId, dealTitle: deal?.title ?? null, dealCategories: deal?.categories ?? [], dealProductIds: deal?.productIds ?? [], model,
         isDemo: true, createdAt: at.toISOString() });
+      if (channel === "sms") {
+        // Twilio US long code: $0.0083/segment + carrier fee ($0.0035–$0.0050). Sends from the last hour are still estimated.
+        const segments = r() < 0.85 ? 1 : 2;
+        const perSegment = 0.0083 + [0.0035, 0.0045, 0.005, 0.0042][Math.floor(r() * 4)];
+        const estimated = nowMs - at.getTime() < 3_600_000;
+        smsCosts.push({ id: idOf("sms", smsCosts.length), provider: "twilio", messageSid: `SMdemo${String(smsCosts.length).padStart(26, "0")}`, segments,
+          priceUsd: Number((segments * (estimated ? 0.0125 : perSegment)).toFixed(4)), estimated, status: estimated ? "sent" : "delivered", isDemo: true, createdAt: at.toISOString() });
+      }
       if (r() < STAFF_SKILL[staff] + (deal ? 0.06 : 0)) {
         const when = new Date(at.getTime() + (0.3 + r() * 6) * 86_400_000);
         if (when.getTime() > nowMs) continue;
@@ -58,5 +67,5 @@ export function buildDemoMetrics(now = new Date(), days = 150, idOf: (kind: stri
       }
     }
   }
-  return { usage, sends, purchases };
+  return { usage, sends, purchases, smsCosts };
 }

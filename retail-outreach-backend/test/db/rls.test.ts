@@ -449,6 +449,21 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       expect((await store.listAiUsage(A, "2000-01-01")).at(-1)).toMatchObject({ ledToSend: true, sentChannel: "sms", costUsd: 0.000195 });
       expect((await store.listSends(B, "2000-01-01")).some(s => s.userId === STAFF)).toBe(false);
     });
+
+    it("sms_costs: demo Twilio costs seeded; owner/admin read only; written only by the backend; estimate → actual price", async () => {
+      expect((await store.listSmsCosts(A, "2000-01-01")).filter(c => c.isDemo && c.provider === "twilio").length).toBeGreaterThan(100);
+      await expect(store.listSmsCosts(S, "2000-01-01")).rejects.toMatchObject({ code: "forbidden" });
+      expect((await asUser(STAFF, `select count(*)::int n from public.sms_costs`)).rows[0].n).toBe(0);
+      expect((await asUser(BOB, `select count(*)::int n from public.sms_costs where org_id = $1`, [ORG_A])).rows[0].n).toBe(0);
+      await expect(asUser(ALICE, `insert into public.sms_costs (org_id, provider) values ($1,'twilio')`, [ORG_A])).rejects.toThrow();
+      await expect(asUser(ALICE, `update public.sms_costs set price_usd = 0`)).rejects.toThrow();
+      await store.recordSmsCost(ORG_A, { provider: "twilio", messageSid: "SMdbtest000000000001", segments: 2, priceUsd: 0.025, estimated: true });
+      await admin.query(`update public.sms_costs set created_at = now() - interval '10 minutes' where message_sid = 'SMdbtest000000000001'`);
+      expect((await store.listEstimatedSmsCosts({ olderThanIso: new Date().toISOString(), newerThanIso: "2000-01-01", limit: 10 })).map(x => x.messageSid)).toContain("SMdbtest000000000001");
+      expect(await store.updateSmsCost("SMdbtest000000000001", { priceUsd: -0.0236, status: "delivered" })).toBe(true);
+      expect(await store.updateSmsCost("SMnope", { status: "x" })).toBe(false);
+      expect((await store.listSmsCosts(A, "2000-01-01")).find(c => c.messageSid === "SMdbtest000000000001")).toMatchObject({ priceUsd: 0.0236, estimated: false, segments: 2, status: "delivered" });
+    });
   });
 
   describe("approval gate", () => {

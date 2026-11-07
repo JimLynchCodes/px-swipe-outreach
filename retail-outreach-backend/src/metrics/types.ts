@@ -14,3 +14,9 @@ export type SendRow = SendInput & { id: string; userId: string | null; isDemo: b
 
 /** A purchase line used for attribution (one row per item). */
 export type PurchaseRow = { customerId: string; purchaseId: string; purchasedAt: string; priceCents: number; category: string | null; productId: string | null; isDemo: boolean };
+
+/** Provider cost of one outbound SMS (Twilio spend). priceUsd is positive; estimated until Twilio reports the price. */
+export type SmsCostInput = {
+  provider: "log" | "twilio"; messageSid: string | null; segments: number; priceUsd: number; estimated: boolean; status?: string | null;
+};
+export type SmsCostRow = SmsCostInput & { id: string; isDemo: boolean; createdAt: string };

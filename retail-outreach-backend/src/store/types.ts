@@ -97,6 +97,14 @@ export interface OutreachStore {
   listAiUsage(actor: Actor, sinceIso: string): Promise<import("../metrics/types.js").AiUsageRow[]>;
   recordSend(actor: Actor, s: import("../metrics/types.js").SendInput): Promise<void>;
   listSends(actor: Actor, sinceIso: string): Promise<import("../metrics/types.js").SendRow[]>;
+  /** System (no actor): one row per outbound SMS, written by the send path. */
+  recordSmsCost(orgId: string, c: import("../metrics/types.js").SmsCostInput): Promise<void>;
+  /** System: apply Twilio's actual price/status (status callback or reconcile). No-op for unknown SIDs. */
+  updateSmsCost(messageSid: string, patch: { priceUsd?: number; segments?: number; status?: string }): Promise<boolean>;
+  /** System: Twilio rows still on an estimate, created between the two times (oldest first). */
+  listEstimatedSmsCosts(opts: { olderThanIso: string; newerThanIso: string; limit: number }): Promise<Array<{ messageSid: string }>>;
+  /** Owner/admin. */
+  listSmsCosts(actor: Actor, sinceIso: string): Promise<import("../metrics/types.js").SmsCostRow[]>;
   listPurchaseRows(actor: Actor, sinceIso: string): Promise<import("../metrics/types.js").PurchaseRow[]>;
   listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }): Promise<{ items: OptOutEntry[]; total: number }>;
 

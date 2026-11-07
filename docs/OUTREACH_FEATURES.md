@@ -244,6 +244,28 @@ months newest first with per-model rows (messages sent, AI calls, tokens in/out,
 sub-cent precision (`$0.000585`). Staff get 403; RLS only lets owners/admins select `ai_usage`, and members mark a call as
 sent through the narrow `mark_ai_usage_sent()` definer function.
 
+### Twilio spend
+
+Every outbound SMS writes one `sms_costs` row (migration `20261107240000_sms_costs.sql`). This covers deck sends, replies and re-opt-in texts. Each row has the provider, the Twilio message SID, the segment count, `price_usd` (positive USD), `estimated` and `status`.
+
+| When | Price stored |
+|---|---|
+| `SMS_PROVIDER=log` | $0, never estimated (nothing is sent) |
+| Twilio returns a price at send (rare) | Twilio's price |
+| Otherwise | segments × `TWILIO_SMS_PRICE_ESTIMATE`, flagged `estimated` |
+
+The estimate defaults to **$0.0125 per segment**. Twilio's US page (October 2026) lists $0.0083 per outbound segment *plus* a carrier fee of $0.0035 (AT&T) to $0.0050 (Verizon), or $0.0042 for other carriers. $0.0083 on its own would undercount by about a third.
+
+The actual price replaces the estimate in two ways:
+1. **StatusCallback.** Each Twilio send sets `StatusCallback = <PUBLIC_API_URL>/webhooks/twilio/status/<orgId>`, but only when `PUBLIC_API_URL` isn't localhost. `X-Twilio-Signature` is verified against that public URL. Callbacks don't carry the price, so on a final status (`sent`, `delivered`, `undelivered`, `failed`) the backend fetches the message and stores `|price|` when `price_unit` is USD.
+2. **Reconcile job.** The API server runs this every `TWILIO_RECONCILE_MINUTES` (default 10; 0 = off). It fetches messages still on an estimate that are 2 minutes to 30 days old, which covers missed callbacks and messages Twilio hasn't priced yet.
+
+**Number fee (decision):** off by default. Set `TWILIO_NUMBER_MONTHLY_FEE` (e.g. `1.15` for a US long code) to add that flat amount to each month that has Twilio texts. It's opt-in because the fee is billed whether or not you send, it may be shared with other apps, and it isn't per org.
+
+**RLS:** owners and admins can select. No insert or update policies exist, so rows are written only by the backend's privileged connection (send path, callback, reconcile).
+
+**UI:** the YTD cards (2×3) add *Total Twilio spend* (e.g. "1,135 texts · $0.0124/text", with an "includes estimates" pill while any price is pending) and *Combined spend*. Each month card shows *AI spend · Twilio (texts, estimates) · Total*. Demo data includes plausible Twilio costs ($0.0118–$0.0133 per segment, about 15% of texts at 2 segments).
+
 ## Performance metrics (☰ → Performance metrics, all members)
 
 **Attribution:** a purchase counts as a conversion for the *most recent* send to the same customer made within **N days**

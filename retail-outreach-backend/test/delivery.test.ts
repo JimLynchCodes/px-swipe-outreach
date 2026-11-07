@@ -113,7 +113,7 @@ describe("SMS_PROVIDER=twilio (official SDK)", () => {
   it("sends from the number, or via a Messaging Service when set", async () => {
     const a = fake();
     const p = new TwilioSmsProvider({ accountSid: "AC1", authToken: "t", fromNumber: "+15550001111" }, a.client);
-    expect(await p.send({ channel: "sms", recipient: "+15555550001", message: "Hi" })).toEqual({ providerMessageId: "SM123" });
+    expect(await p.send({ channel: "sms", recipient: "+15555550001", message: "Hi" })).toEqual({ providerMessageId: "SM123", provider: "twilio", segments: 1, priceUsd: null });
     expect(a.calls[0]).toEqual({ to: "+15555550001", body: "Hi", from: "+15550001111" });
     const b = fake();
     await new TwilioSmsProvider({ accountSid: "AC1", authToken: "t", fromNumber: "+15550001111", messagingServiceSid: "MGx" }, b.client).send({ channel: "sms", recipient: "+1", message: "x" });

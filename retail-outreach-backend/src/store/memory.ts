@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { newReplyToken } from "../replies/tokens.js";
 import * as seed from "../data/seed.js";
 import { buildDemoMetrics } from "../data/demoMetrics.js";
-import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow } from "../metrics/types.js";
+import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCostInput, SmsCostRow } from "../metrics/types.js";
 import { daysSince, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Customer, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
@@ -115,6 +115,7 @@ export class MemoryStore implements OutreachStore {
   private aiUsage: Array<AiUsageRow & { orgId: string }> = [];
   private sendLedger: Array<SendRow & { orgId: string }> = [];
   private demoPurchases: Array<PurchaseRow & { orgId: string }> = [];
+  private smsCosts: Array<SmsCostRow & { orgId: string; updatedAt: string }> = [];
   private seededMetrics = new Set<string>();
   private seedDemoMetricsOnce(orgId: string) {
     if (this.seededMetrics.has(orgId)) return;
@@ -126,6 +127,7 @@ export class MemoryStore implements OutreachStore {
     this.aiUsage.push(...m.usage.map(u => ({ ...u, orgId })));
     this.sendLedger.push(...m.sends.map(x => ({ ...x, orgId })));
     this.demoPurchases.push(...m.purchases.map(x => ({ ...x, orgId })));
+    this.smsCosts.push(...m.smsCosts.map(x => ({ ...x, orgId, updatedAt: x.createdAt })));
   }
   private consent: Array<ConsentEvent & { orgId: string; value: string }> = [];
   private reoptins: Array<ReoptInRequest & { value: string; customerId: string | null; requestedBy: string }> = [];
@@ -344,6 +346,28 @@ export class MemoryStore implements OutreachStore {
     this.assertMember(actor);
     assertCanManageConsent(this.roleIn(actor.userId, actor.orgId), "view costs");
     return structuredClone(this.aiUsage.filter(u => u.orgId === actor.orgId && u.createdAt >= sinceIso)).map(({ orgId: _o, ...u }) => u);
+  }
+  async recordSmsCost(orgId: string, c: SmsCostInput) {
+    const now = new Date().toISOString();
+    this.smsCosts.push({ ...c, status: c.status ?? null, id: randomUUID(), orgId, isDemo: false, createdAt: now, updatedAt: now });
+  }
+  async updateSmsCost(messageSid: string, patch: { priceUsd?: number; segments?: number; status?: string }) {
+    const row = this.smsCosts.find(x => x.messageSid === messageSid);
+    if (!row) return false;
+    if (patch.priceUsd !== undefined) { row.priceUsd = Math.abs(patch.priceUsd); row.estimated = false; }
+    if (patch.segments) row.segments = patch.segments;
+    if (patch.status) row.status = patch.status;
+    row.updatedAt = new Date().toISOString();
+    return true;
+  }
+  async listEstimatedSmsCosts(o: { olderThanIso: string; newerThanIso: string; limit: number }) {
+    return this.smsCosts.filter(x => x.estimated && x.provider === "twilio" && x.messageSid && !x.isDemo && x.createdAt <= o.olderThanIso && x.createdAt >= o.newerThanIso)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, o.limit).map(x => ({ messageSid: x.messageSid! }));
+  }
+  async listSmsCosts(actor: Actor, sinceIso: string) {
+    this.assertMember(actor);
+    assertCanManageConsent(this.roleIn(actor.userId, actor.orgId), "view costs");
+    return structuredClone(this.smsCosts.filter(x => x.orgId === actor.orgId && x.createdAt >= sinceIso)).map(({ orgId: _o, updatedAt: _u, ...x }) => x);
   }
   async recordSend(actor: Actor, s: SendInput) {
     this.assertMember(actor);

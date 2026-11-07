@@ -25,13 +25,16 @@ afterEach(() => { vi.unstubAllGlobals(); localStorage.clear(); window.history.re
 const SETTINGS = { storeName: 'Cloud 9', emailSignature: '', smsSignature: '-C9', defaultChannel: null, maxDiscountPercent: 25, aiModel: 'gpt-4o-mini' }
 const m = (model: string, label: string, o: Partial<CostReport['ytd']['byModel'][number]> = {}) =>
   ({ model, label, aiCalls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, smsSent: 0, emailSent: 0, messagesSent: 0, ...o })
+const TW = (o: object = {}) => ({ costUsd: 0, texts: 0, segments: 0, estimatedTexts: 0, numberFeesUsd: 0, ...o })
 const COSTS: CostReport = {
-  year: 2026, priceTableVersion: '2026-11-01', demo: true,
-  ytd: { costUsd: 0.4321, messagesSent: 900, aiCalls: 1100, byModel: [m('gpt-4o-mini', 'GPT-4o mini', { aiCalls: 800, costUsd: 0.2, messagesSent: 600 }), m('rules', 'None', { aiCalls: 300, messagesSent: 300 })] },
+  year: 2026, priceTableVersion: '2026-11-01', demo: true, numberMonthlyFeeUsd: 0,
+  ytd: { costUsd: 0.4321, messagesSent: 900, aiCalls: 1100, twilio: TW({ costUsd: 14.11, texts: 1135, segments: 1300, estimatedTexts: 3 }), combinedUsd: 14.5421, byModel: [m('gpt-4o-mini', 'GPT-4o mini', { aiCalls: 800, costUsd: 0.2, messagesSent: 600 }), m('rules', 'None', { aiCalls: 300, messagesSent: 300 })] },
   months: [
     { month: '2026-11', models: [m('gpt-4o-mini', 'GPT-4o mini', { aiCalls: 3, inputTokens: 2100, outputTokens: 450, costUsd: 0.000585, messagesSent: 2 })],
-      total: { aiCalls: 3, inputTokens: 2100, outputTokens: 450, costUsd: 0.000585, smsSent: 2, emailSent: 0, messagesSent: 2 } },
-    { month: '2026-10', models: [], total: { aiCalls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, smsSent: 0, emailSent: 0, messagesSent: 0 } },
+      total: { aiCalls: 3, inputTokens: 2100, outputTokens: 450, costUsd: 0.000585, smsSent: 2, emailSent: 0, messagesSent: 2 },
+      twilio: TW({ costUsd: 0.0251, texts: 2, segments: 2, estimatedTexts: 1 }), combinedUsd: 0.025685 },
+    { month: '2026-10', models: [], total: { aiCalls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, smsSent: 0, emailSent: 0, messagesSent: 0 },
+      twilio: TW({ costUsd: 13.2, texts: 1000, segments: 1100 }), combinedUsd: 13.2 },
   ],
 }
 const row = (name: string, o: object) => ({ userKey: name, name, isMe: false, sends: 10, conversions: 2, conversionRate: 0.2, revenueCents: 5000, streakDays: 0, onFire: false, ...o })
@@ -64,7 +67,12 @@ describe('Cost metrics', () => {
     backend({ 'GET /api/metrics/costs': () => json(COSTS) })
     go('/cost-metrics')
     const ytd = await screen.findByRole('region', { name: 'Year to date' })
-    expect(ytd.querySelectorAll(".metric-grid > .metric-card")).toHaveLength(4)
+    expect(ytd.querySelectorAll(".metric-grid > .metric-card")).toHaveLength(6)
+    const twCard = within(ytd).getByText('Total Twilio spend').closest('.metric-card') as HTMLElement
+    expect(within(twCard).getByText('$14.11')).toBeInTheDocument()
+    expect(twCard).toHaveTextContent('1,135 texts · $0.0124/text')
+    expect(within(twCard).getByText('includes estimates')).toBeInTheDocument()
+    expect(within(ytd).getByText('Combined spend').closest('.metric-card')).toHaveTextContent('$14.54')
     expect(within(ytd).getByText("Total AI spend")).toHaveClass("metric-label")
     expect(within(ytd).getByText('$0.4321')).toBeInTheDocument()
     expect(within(ytd).getByText('1,100')).toBeInTheDocument()
@@ -73,8 +81,12 @@ describe('Cost metrics', () => {
     const headings = screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent)
     expect(headings).toEqual(['Year to date', 'November 2026', 'October 2026'])
     const nov = screen.getByRole('region', { name: 'November 2026' })
-    expect(within(nov).getAllByText('$0.000585')).toHaveLength(2) // row + month total
+    expect(within(nov).getAllByText('$0.000585')).toHaveLength(3) // row + month total + AI spend line
     expect(within(nov).getByText('Month total')).toBeInTheDocument()
+    const lines = nov.querySelector('.spend-lines') as HTMLElement
+    expect(lines).toHaveTextContent('Twilio$0.0251 2 texts · includes estimates')
+    expect(lines).toHaveTextContent('Total$0.0257')
+    expect(screen.getByRole('region', { name: 'October 2026' }).querySelector('.spend-lines')).toHaveTextContent('Twilio$13.20 1,000 texts')
   })
 
   it('is hidden from staff (menu and page)', async () => {

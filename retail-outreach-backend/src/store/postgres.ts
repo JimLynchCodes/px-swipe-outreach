@@ -7,7 +7,7 @@ import type {
   Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
-import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow } from "../metrics/types.js";
+import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCostInput, SmsCostRow } from "../metrics/types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
 import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
@@ -511,6 +511,31 @@ export class PostgresStore implements OutreachStore {
         deal_id, deal_title, deal_categories, deal_product_ids, model) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [actor.orgId, s.deliveryId && isUuid(s.deliveryId) ? s.deliveryId : null, actor.userId, s.userLabel.slice(0, 100), s.customerId, s.channel,
         s.dealId && isUuid(s.dealId) ? s.dealId : null, s.dealTitle, s.dealCategories, s.dealProductIds.filter(isUuid), s.model]));
+  }
+  async recordSmsCost(orgId: string, c: SmsCostInput) {
+    await this.pool.query(`insert into public.sms_costs (org_id, provider, message_sid, segments, price_usd, estimated, status)
+      values ($1,$2,$3,$4,$5,$6,$7) on conflict (message_sid) do nothing`,
+      [orgId, c.provider, c.messageSid, Math.max(1, Math.min(20, c.segments)), Math.abs(c.priceUsd), c.estimated, c.status ?? null]);
+  }
+  async updateSmsCost(messageSid: string, patch: { priceUsd?: number; segments?: number; status?: string }) {
+    const r = await this.pool.query(`update public.sms_costs set
+        price_usd = coalesce($2, price_usd), estimated = case when $2::numeric is null then estimated else false end,
+        segments = coalesce($3, segments), status = coalesce($4, status), updated_at = now()
+      where message_sid = $1`, [messageSid, patch.priceUsd === undefined ? null : Math.abs(patch.priceUsd), patch.segments ?? null, patch.status ?? null]);
+    return (r.rowCount ?? 0) > 0;
+  }
+  async listEstimatedSmsCosts(o: { olderThanIso: string; newerThanIso: string; limit: number }) {
+    const r = await this.pool.query(`select message_sid from public.sms_costs where estimated and provider = 'twilio' and message_sid is not null
+      and not is_demo and created_at <= $1 and created_at >= $2 order by created_at limit $3`, [o.olderThanIso, o.newerThanIso, o.limit]);
+    return r.rows.map(x => ({ messageSid: x.message_sid as string }));
+  }
+  async listSmsCosts(actor: Actor, sinceIso: string): Promise<SmsCostRow[]> {
+    return this.asUser(actor.userId, async db => {
+      assertCanManageConsent(await this.role(db, actor), "view costs");
+      const r = await db.query(`select * from public.sms_costs where org_id = $1 and created_at >= $2 order by created_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ id: x.id, provider: x.provider, messageSid: x.message_sid, segments: x.segments, priceUsd: Number(x.price_usd),
+        estimated: x.estimated, status: x.status, isDemo: x.is_demo, createdAt: new Date(x.created_at).toISOString() }));
+    });
   }
   async listSends(actor: Actor, sinceIso: string): Promise<SendRow[]> {
     return this.asUser(actor.userId, async db => {

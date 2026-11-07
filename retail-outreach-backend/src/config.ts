@@ -60,6 +60,14 @@ const schema = z.object({
   TWILIO_FROM_NUMBER: z.string().regex(/^\+[1-9]\d{6,14}$/, "must be an E.164 number like +15551234567").optional(),
   /** Twilio Messaging Service SID (MG…); takes precedence over TWILIO_FROM_NUMBER. */
   TWILIO_MESSAGING_SERVICE_SID: z.string().regex(/^MG[0-9a-f]{32}$/i, "must look like MG…").optional(),
+  /** Per-segment USD estimate used until Twilio reports the actual price ($0.0083 Twilio + ~$0.0042 carrier fee, US long code, Oct 2026). */
+  TWILIO_SMS_PRICE_ESTIMATE: z.coerce.number().min(0).max(1).default(0.0125),
+  /** Optional flat monthly phone-number fee (USD) added to each month with Twilio sends. 0 = off. Long code ≈ $1.15. */
+  TWILIO_NUMBER_MONTHLY_FEE: z.coerce.number().min(0).max(1000).default(0),
+  /** Ask Twilio to POST status callbacks (we then fetch the final price). Needs a public PUBLIC_API_URL. */
+  TWILIO_STATUS_CALLBACKS: z.preprocess(v => v === undefined ? undefined : !["false", "0", "no", ""].includes(String(v).toLowerCase()), z.boolean().default(true)),
+  /** Minutes between price reconcile runs (fetches prices still on an estimate). 0 = off. */
+  TWILIO_RECONCILE_MINUTES: z.coerce.number().int().min(0).max(1440).default(10),
   BUSINESS_NAME: z.string().default("our store"),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 
