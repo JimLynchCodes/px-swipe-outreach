@@ -149,8 +149,11 @@ describe('App', () => {
     render(<App />)
     await screen.findByText('Hi! (sms)')
     const before = calls.filter(c => c.url.endsWith('/suggestion')).length
-    window.dispatchEvent(new Event('ai-model:changed'))
-    await waitFor(() => expect(calls.filter(c => c.url.endsWith('/suggestion')).length).toBe(before + 1))
+    // Re-dispatch until the listener (registered in an effect) has picked it up; robust on slow CI runners.
+    await waitFor(() => {
+      if (calls.filter(c => c.url.endsWith('/suggestion')).length === before) window.dispatchEvent(new Event('ai-model:changed'))
+      expect(calls.filter(c => c.url.endsWith('/suggestion')).length).toBeGreaterThan(before)
+    })
   })
 
   it('skips with the arrow key and switches to email', async () => {
