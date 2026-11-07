@@ -28,6 +28,7 @@
     "sync:email": "tsx src/sync/cli.ts email",
     "sync:quickvee:rewards": "tsx src/sync/cli.ts quickvee-rewards",
     "sync:quickvee:orders": "tsx src/sync/cli.ts quickvee-orders",
+    "scrape:quickvee:orders": "tsx src/orders/scrapeCli.ts",
     "quickvee:mock": "tsx test/fixtures/quickveePortal.ts"
   },
   "dependencies": {

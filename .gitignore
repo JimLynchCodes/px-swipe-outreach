@@ -155,3 +155,6 @@ vite.config.ts.timestamp-*
 # Quickvee sync: session cookies and raw snapshots (customer PII). Never commit.
 .quickvee/
 **/.quickvee/
+
+# Scraped order exports contain customer PII
+retail-outreach-backend/*.csv

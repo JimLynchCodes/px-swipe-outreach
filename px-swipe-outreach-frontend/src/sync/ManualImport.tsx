@@ -3,7 +3,7 @@ import { Upload } from 'lucide-react'
 import { api } from '../api'
 import { Modal } from '../components/Modal'
 import { money } from '../lib/format'
-import type { ImportConsent, ImportPreview } from '../types'
+import type { ImportPreview } from '../types'
 
 const MAX_BYTES = 5 * 1024 * 1024
 type Step =
@@ -18,7 +18,6 @@ export function ManualImport() {
   const input = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>({ kind: 'idle' })
   const [err, setErr] = useState<string | null>(null)
-  const [consent, setConsent] = useState<ImportConsent>({ smsConsent: false, emailConsent: false, ageVerified: false })
 
   async function onFile(file: File | undefined) {
     if (input.current) input.current.value = '' // same file can be picked again
@@ -30,7 +29,6 @@ export function ManualImport() {
     try {
       const csv = await file.text()
       const preview = await api.customers.preview(csv)
-      setConsent({ smsConsent: false, emailConsent: false, ageVerified: false })
       setStep({ kind: 'preview', csv, fileName: file.name, preview })
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setStep({ kind: 'idle' }) }
   }
@@ -39,7 +37,7 @@ export function ManualImport() {
     if (step.kind !== 'preview') return
     setStep({ ...step, kind: 'saving' }); setErr(null)
     try {
-      const r = await api.customers.import(step.csv, consent)
+      const r = await api.customers.import(step.csv)
       setStep({ kind: 'done', inserted: r.inserted, existing: r.existing })
     } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setStep({ ...step, kind: 'preview' }) }
   }
@@ -59,7 +57,7 @@ export function ManualImport() {
           <h3><Upload size={17} aria-hidden /> Customers from a file</h3>
           <p className="muted small">Upload a customer CSV (e.g. Quickvee's customer export). Only customers who aren't already here (by customer ID, phone or email) are added.</p>
         </div>
-        <button className="btn-secondary" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
+        <button className="btn-secondary" aria-label="Manually add customers" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
           {step.kind === 'reading' ? 'Reading…' : 'Manually add'}
         </button>
         <input ref={input} type="file" accept=".csv,text/csv" hidden aria-label="Customer CSV file" onChange={e => void onFile(e.target.files?.[0])} />
@@ -91,14 +89,7 @@ export function ManualImport() {
               <ul>{p.invalid.slice(0, 50).map(r => <li key={r.row}>Row {r.row}: {r.reason}</li>)}</ul>
             </details>
           )}
-          {p.newCustomers.length > 0 && (
-            <fieldset className="consent" disabled={step.kind === 'saving'}>
-              <legend className="small">Only check what's true. Without consent, the deck won't text or email these customers.</legend>
-              <label className="check"><input type="checkbox" checked={consent.smsConsent} onChange={e => setConsent({ ...consent, smsConsent: e.target.checked })} /> They agreed to receive marketing texts</label>
-              <label className="check"><input type="checkbox" checked={consent.emailConsent} onChange={e => setConsent({ ...consent, emailConsent: e.target.checked })} /> They agreed to receive marketing emails</label>
-              <label className="check"><input type="checkbox" checked={consent.ageVerified} onChange={e => setConsent({ ...consent, ageVerified: e.target.checked })} /> ID checked: all are 21+</label>
-            </fieldset>
-          )}
+          {p.newCustomers.length > 0 && <p className="muted small">They'll be added as opted in to texts and email and verified 21+ (checked at in-store signup). The consent history records this as an in-store signup via import.</p>}
           {err && <p className="error" role="alert">{err}</p>}
         </Modal>
       )}

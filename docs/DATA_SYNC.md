@@ -73,6 +73,28 @@ The real portal's markup isn't documented. Every selector and path lives in `src
 
 Try the scraper locally against the mock: `npm run quickvee:mock` (http://localhost:4799, `demo@store.test` / `correct-horse`; `MFA=1` and `CSV=0` switch modes), then point `QUICKVEE_BASE_URL` at it.
 
+### Order history to CSV (`scrape:quickvee:orders`)
+
+`npm run scrape:quickvee:orders -- --from 2026-01-01 --to 2026-11-07 --out orders.csv` (run from `retail-outreach-backend`):
+
+- It logs into Quickvee with the same Playwright scraper as the `quickvee-orders` sync job: CSV export first, table crawl fallback, saved session, MFA stop, rate limit, and `QUICKVEE_CHUNK_DAYS` windows.
+- It writes the order history to a CSV in exactly the format **Data sync → Manually add (order history)** accepts. Nothing is written to the database; upload the file to import it.
+- Flags:
+  - `--from` defaults to 30 days before `--to`
+  - `--to` defaults to today
+  - `--out` defaults to `quickvee-orders-<from>_<to>.csv`
+  - `--tz` is the store timezone for portal dates (default `America/New_York`)
+  - `--headed` shows the browser
+- Credentials come from the environment, e.g. `npx tsx --env-file=.env.local src/orders/scrapeCli.ts …`, or put `QUICKVEE_EMAIL`, `QUICKVEE_PASSWORD` and `QUICKVEE_BASE_URL` in your shell.
+- **First run on the real portal (headed calibration):**
+  1. Run `npm run scrape:quickvee:orders -- --from 2026-11-01 --to 2026-11-07 --out test.csv --headed` with `QUICKVEE_MIN_DELAY_MS=3000` on a machine with a display.
+  2. Complete MFA if asked; the session is saved in `QUICKVEE_STATE_DIR`.
+  3. If login or the orders page stalls, fix `src/sync/quickvee/selectors.ts` as described in *Calibrating Quickvee selectors* above.
+  4. Repeat until `test.csv` has the expected orders.
+  5. Later runs can be headless.
+- **Try it against the mock:** run `npm run quickvee:mock`, then `QUICKVEE_BASE_URL=http://localhost:4799 QUICKVEE_EMAIL=demo@store.test QUICKVEE_PASSWORD=correct-horse npm run scrape:quickvee:orders -- --from 2026-09-01 --to 2026-11-07 --out orders.csv`. `test/scrape-orders.test.ts` covers both the CSV export and crawl modes, checks the output is accepted by the import, and runs the CLI.
+- The output contains customer PII. Keep it out of git (`*.csv` in the backend is gitignored except test fixtures).
+
 ### Runtime
 
 - Playwright runs through `playwright-core` with a system Chromium. There's no browser download.

@@ -1,0 +1,7 @@
+Order ID,Date,Customer ID,Customer name,Phone,Email,Item,SKU,Category,Brand,Qty,Unit price,Item discount,Order discount,Subtotal,Total,Payment
+A-1001,2026-11-01T19:30:00.000Z,,Jamal Carter,+15555550002,,Padrón 1964 Maduro,PAD64,cigars,Padrón,2,18.00,0.00,0.00,36.00,38.52,Card
+A-1001,2026-11-01T19:30:00.000Z,,Jamal Carter,+15555550002,,Cutter,CUT1,accessories,Xikar,1,9.99,0.00,0.00,36.00,38.52,Card
+A-1002,11/03/2026 3:04 PM,900111,Riley Newcomer,6095550199,riley@example.com,Koi CBD Gummies 20ct,KOI20,cbd,Koi,1,"1,000.00",0.00,5.00,"1,000.00",995.00,Cash
+A-1003,11/04/2026,,,,,Lighter,LT1,accessories,Bic,1,2.00,0.00,0.00,2.00,2.14,Cash
+,11/04/2026,,Nobody,6095550100,,Lighter,LT1,accessories,Bic,1,2.00,0.00,0.00,2.00,2.14,Cash
+A-1004,not a date,,Nobody,6095550100,,Lighter,LT1,accessories,Bic,1,2.00,0.00,0.00,2.00,2.14,Cash

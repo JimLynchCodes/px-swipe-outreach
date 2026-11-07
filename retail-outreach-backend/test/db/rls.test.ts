@@ -6,6 +6,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import pg from "pg";
+import { readFileSync } from "node:fs";
+import { parseOrderCsv } from "../../src/orders/csvImport.js";
 import { migrate } from "../../src/db/migrate.js";
 import { seedOrg, seedUuid } from "../../src/db/seed.js";
 import { PostgresStore } from "../../src/store/postgres.js";
@@ -513,7 +515,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
   });
   describe("customer import + registered users", () => {
     const row = (n: number, phone: string, email: string) => ({ row: n, externalId: `ext-${n}`, firstName: `Imp${n}`, lastName: "Test", phone, email, location: "Burlington",
-      age: null, lastPurchaseAt: null, lifetimeSpendCents: 1000, rewardsPoints: 5, customerSince: "2025-01-01" });
+      age: null, lastPurchaseAt: null, lifetimeSpendCents: 1000, rewardsPoints: 5, lifetimeOrders: 12, customerSince: "2025-01-01" });
     it("owner/admin import with dedupe under RLS; staff can't import but can open a card; other orgs see nothing", async () => {
       const A = { userId: ALICE, orgId: ORG_A }, S = { userId: STAFF, orgId: ORG_A };
       const rows = [row(1, "+16095550901", "imp1@example.com"), row(2, "+15555550002", "dupe@example.com") /* Jamal's phone */];
@@ -529,10 +531,35 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       const cid = list.items[0].id;
       const oppId = await store.openCustomerCard(S, cid);
       const o = await store.getOpportunity(S, oppId!);
-      expect(o).toMatchObject({ status: "pending", campaign: { id: "manual" }, customer: { smsConsent: true, emailConsent: false, ageVerified: true } });
+      expect(o).toMatchObject({ status: "pending", campaign: { id: "manual" }, customer: { smsConsent: true, emailConsent: false, ageVerified: true, lifetimeOrders: 12 } });
+      const ev = await admin.query(`select channel, value, event, source, actor_id from public.consent_events where org_id = $1 and source = 'import_signup'`, [ORG_A]);
+      expect(ev.rows).toEqual([{ channel: "sms", value: "+16095550901", event: "opt_in", source: "import_signup", actor_id: ALICE }]);
+      // Staff can't forge an import_signup opt-in directly.
+      await expect(asUser(STAFF, `insert into public.consent_events (org_id, channel, value, event, source, actor_id) values ($1,'sms','+1','opt_in','import_signup',$2)`, [ORG_A, STAFF]))
+        .rejects.toThrow(/row-level security/);
       expect(await store.openCustomerCard(S, cid)).toBe(oppId); // reuses the open card
       await expect(store.openCustomerCard({ userId: BOB, orgId: ORG_A }, cid)).rejects.toMatchObject({ code: "forbidden" });
       expect(await store.openCustomerCard(S, "00000000-0000-4000-8000-000000000999")).toBeNull();
+    });
+  });
+  describe("order history import", () => {
+    it("imports new orders under RLS into purchases, dedupes by order id, links/creates customers, refreshes profiles", async () => {
+      const A = { userId: ALICE, orgId: ORG_A }, S = { userId: STAFF, orgId: ORG_A };
+      const { orders } = parseOrderCsv(readFileSync(new URL("../fixtures/orders-import.csv", import.meta.url), "utf8"));
+      await expect(store.importOrders(S, orders)).rejects.toMatchObject({ code: "forbidden" });
+      expect(await store.importOrders(A, orders)).toEqual({ inserted: 2, existing: 0, customersCreated: 1, unlinked: 1 });
+      expect(await store.importOrders(A, orders)).toEqual({ inserted: 0, existing: 2, customersCreated: 0, unlinked: 1 });
+      expect([...(await store.existingOrderIds(S, ["A-1001", "A-1002", "A-1003"]))].sort()).toEqual(["A-1001", "A-1002"]);
+      const jamal = await store.getOpportunity(S, opp(ORG_A, "cust_0002"));
+      expect(jamal!.customer.purchases[0]).toMatchObject({ name: "Padrón 1964 Maduro", category: "cigars", brand: "Padrón" });
+      const riley = (await store.listCustomers(S, { search: "riley", limit: 5, offset: 0 })).items[0];
+      expect(riley).toMatchObject({ name: "Riley Newcomer", source: "csv", lifetimeSpendCents: 99500 });
+      const items = await admin.query(`select pi.quantity, pi.unit_price_cents from public.purchase_items pi join public.purchases p on p.id = pi.purchase_id
+        where p.org_id = $1 and p.external_id = 'qv:A-1001' order by pi.unit_price_cents desc`, [ORG_A]);
+      expect(items.rows).toEqual([{ quantity: 2, unit_price_cents: 1800 }, { quantity: 1, unit_price_cents: 999 }]);
+      const ev = await admin.query(`select count(*)::int n from public.consent_events where org_id = $1 and source = 'import_signup' and value = '+16095550199'`, [ORG_A]);
+      expect(ev.rows[0].n).toBe(1);
+      expect(await store.existingOrderIds({ userId: BOB, orgId: ORG_A }, ["A-1001"])).toEqual(new Set());
     });
   });
 });

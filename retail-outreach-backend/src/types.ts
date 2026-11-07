@@ -40,6 +40,8 @@ export type Customer = {
   rewards?: Rewards | null;
   /** Last successful outreach send from this app, per channel (ISO); null = never. */
   lastSmsAt?: string | null;
+  /** Lifetime order count reported by the POS (e.g. CSV import), when purchase history isn't loaded. */
+  lifetimeOrders?: number | null;
   /** POS identifier (`qv:<id>` for Quickvee). */
   externalId?: string | null;
   lastEmailAt?: string | null;
@@ -185,7 +187,8 @@ export type OptOutSource = "sms_stop" | "email_unsubscribe" | "manual" | "provid
 /** How a re-subscribe arrived. */
 export type OptInSource = "sms_start" | "email_resubscribe" | "reoptin_link";
 export type ConsentEventType = "opt_out" | "opt_in" | "reoptin_requested";
-export type ConsentSource = OptOutSource | OptInSource | "store_request";
+/** import_signup: opted in at in-store signup (POS), recorded when the customer is imported from a CSV. */
+export type ConsentSource = OptOutSource | OptInSource | "store_request" | "import_signup";
 /** Who/what caused a consent change: a team member (actorId) and/or the HTTP request that carried it. */
 export type ConsentMeta = { actorId?: string | null; requestId?: string | null };
 export type ConsentEvent = {

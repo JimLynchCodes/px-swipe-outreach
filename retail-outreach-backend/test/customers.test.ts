@@ -14,7 +14,7 @@ describe("customer CSV parsing (Quickvee export columns)", () => {
   it("maps columns and splits full names in 'First name'", () => {
     expect(p.customers.map(c => [c.firstName, c.lastName])).toEqual([["Avery", "Testwood"], ["Blake", ""], ["Jamal", "Carter"]]);
     expect(p.customers[0]).toMatchObject({ externalId: "900001", phone: "+16095550101", email: "avery.test@example.com", location: "Burlington",
-      lifetimeSpendCents: 129424, rewardsPoints: 43, customerSince: "2025-05-12", age: null });
+      lifetimeSpendCents: 129424, rewardsPoints: 43, lifetimeOrders: 18, customerSince: "2025-05-12", age: null });
     expect(p.customers[1]).toMatchObject({ phone: "+16095550102", age: 36 });
     expect(p.customers[0].lastPurchaseAt).toMatch(/^2026-09-19/);
   });
@@ -43,7 +43,8 @@ describe("customer import API", () => {
     expect(JSON.stringify(body)).not.toContain("6095550101"); // masked
 
     const before = (await app.inject("/api/outreach/queue?limit=100")).json().total;
-    const imp = await post("/api/customers/import", { csv: CSV, smsConsent: true, emailConsent: true, ageVerified: true });
+    expect((await post("/api/customers/import", { csv: CSV, smsConsent: false })).statusCode).toBe(400); // consent isn't a client choice
+    const imp = await post("/api/customers/import", { csv: CSV });
     expect(imp.statusCode).toBe(201);
     expect(imp.json()).toMatchObject({ inserted: 2, existing: 1, invalid: 3 });
     expect((await app.inject("/api/outreach/queue?limit=100")).json().total).toBe(before + 2);
@@ -55,13 +56,21 @@ describe("customer import API", () => {
     expect(list.items).toEqual([expect.objectContaining({ name: "Avery Testwood", source: "csv", phone: expect.stringContaining("***") })]);
   });
 
-  it("imported customers without consent can't be contacted", async () => {
-    ({ app } = await makeApp());
+  it("imported customers are opted in and 21+ (in-store signup), recorded in the consent history", async () => {
+    let store: any;
+    ({ app, store } = await makeApp());
     await post("/api/customers/import", { csv: CSV });
+    const ev = store.consent.filter((e: any) => e.source === "import_signup");
+    expect(ev.map((e: any) => `${e.channel}:${e.value}:${e.event}`).sort()).toEqual([
+      "email:avery.test@example.com:opt_in", "email:blake.test@example.com:opt_in", "sms:+16095550101:opt_in", "sms:+16095550102:opt_in"]);
+    const avery = (await app.inject("/api/customers?search=avery")).json().items[0].id; // no birth date on file
+    const averyCard = (await app.inject(`/api/outreach/${(await post(`/api/customers/${avery}/open`, {})).json().opportunityId}`)).json();
+    expect(averyCard.customer.contact).toMatchObject({ sms: true, email: true, blockedReason: null });
     const id = (await app.inject("/api/customers?search=blake")).json().items[0].id;
     const opp = (await post(`/api/customers/${id}/open`, {})).json().opportunityId;
     const card = (await app.inject(`/api/outreach/${opp}`)).json();
-    expect(card.customer.contact).toMatchObject({ sms: false, email: false });
+    expect(card.customer.contact).toMatchObject({ sms: true, email: true, blockedReason: null });
+    expect(card.customer).toMatchObject({ ageVerified: true, lifetimeOrders: 18 });
   });
 
   it("validates input and errors gracefully", async () => {

@@ -11,6 +11,9 @@ import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCost
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
 import { isExisting, phoneKey, emailKey, type ImportConsent, type ImportCustomer } from "../customers/csvImport.js";
 import { IMPORT_RATIONALE, toSummary } from "../customers/summary.js";
+import { refreshProfiles } from "../sync/pgRepo.js";
+import { splitName } from "../sync/quickvee/normalize.js";
+import type { Order } from "../sync/types.js";
 import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type Cooldowns, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 const INVITE_COLS = `id, org_id, email, role, invited_by, created_at, expires_at, last_sent_at, send_count, accepted_at, revoked_at`;
@@ -38,7 +41,7 @@ const ACTIONABLE = `('${ACTIONABLE_STATUSES.join("','")}')`;
  * channel is cooling down and no channel is both reachable (consent, contact, not suppressed, 21+) and outside its window.
  */
 const reachable = (ch: Channel) => `(cu.${ch === "sms" ? "sms_consent and cu.phone" : "email_consent and cu.email"} is not null
-  and cu.age_verified and coalesce(cu.age, 0) >= ${Number(MIN_AGE)}
+  and cu.age_verified and (cu.age is null or cu.age >= ${Number(MIN_AGE)})
   and not exists (select 1 from public.suppressions s where s.org_id = o.org_id and s.channel = '${ch}'
     and s.value = public.normalize_contact('${ch}', cu.${ch === "sms" ? "phone" : "email"})))`;
 const cooling = (col: string, p: number) => `($${p}::int > 0 and cu.${col} > now() - make_interval(days => $${p}::int))`;
@@ -54,7 +57,7 @@ const OPP_SELECT = `
     cu.id as customer_id, cu.first_name, cu.last_name, cu.age, cu.gender, cu.location,
     cu.phone, cu.email, cu.sms_consent, cu.email_consent, cu.lifetime_spend_cents, cu.last_purchase_at,
     cu.age_verified, cu.favorite_categories, cu.favorite_brands, cu.visits_per_month, cu.avg_basket_cents,
-    cu.preferred_day, cu.preferred_time, cu.rewards_member, cu.rewards_points, cu.rewards_joined_at, cu.last_sms_at, cu.last_email_at,
+    cu.preferred_day, cu.preferred_time, cu.rewards_member, cu.rewards_points, cu.rewards_joined_at, cu.last_sms_at, cu.last_email_at, cu.lifetime_orders,
     array(select ch::text from unnest(array['sms','email']::public.outreach_channel[]) ch
       where exists (select 1 from public.suppressions s where s.org_id = o.org_id and s.channel = ch
         and s.value = public.normalize_contact(ch, case when ch = 'sms' then cu.phone else cu.email end))
@@ -220,6 +223,7 @@ export class PostgresStore implements OutreachStore {
           lastPurchaseAt: r.last_purchase_at ? new Date(r.last_purchase_at).toISOString() : null,
           itemsPurchased: purchases.length, purchases,
           ageVerified: r.age_verified,
+          lifetimeOrders: r.lifetime_orders ?? null,
           lastSmsAt: r.last_sms_at ? new Date(r.last_sms_at).toISOString() : null,
           lastEmailAt: r.last_email_at ? new Date(r.last_email_at).toISOString() : null,
           rewards: r.rewards_member ? { member: true, points: r.rewards_points, joinedAt: r.rewards_joined_at ? new Date(r.rewards_joined_at).toISOString().slice(0, 10) : null } : null,
@@ -460,11 +464,15 @@ export class PostgresStore implements OutreachStore {
       for (const r of rows) {
         if (isExisting(r, keys)) { existing++; continue; }
         const c = await db.query(`insert into public.customers (org_id, external_id, first_name, last_name, age, location, phone, email, sms_consent, email_consent,
-            lifetime_spend_cents, last_purchase_at, age_verified, rewards_member, rewards_points, rewards_joined_at, source)
-          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'csv') returning id`,
+            lifetime_spend_cents, last_purchase_at, age_verified, rewards_member, rewards_points, rewards_joined_at, lifetime_orders, source)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'csv') returning id`,
           [actor.orgId, r.externalId ? `qv:${r.externalId}` : null, r.firstName, r.lastName, r.age, r.location, r.phone, r.email,
             consent.smsConsent && !!r.phone, consent.emailConsent && !!r.email, r.lifetimeSpendCents, r.lastPurchaseAt, consent.ageVerified,
-            r.rewardsPoints !== null, r.rewardsPoints, r.rewardsPoints !== null ? r.customerSince : null]);
+            r.rewardsPoints !== null, r.rewardsPoints, r.rewardsPoints !== null ? r.customerSince : null, r.lifetimeOrders]);
+        for (const [ch, contact, ok] of [["sms", r.phone, consent.smsConsent], ["email", r.email, consent.emailConsent]] as const) {
+          if (contact && ok) await db.query(`insert into public.consent_events (org_id, channel, value, event, source, actor_id)
+            values ($1, $2, public.normalize_contact($2::public.outreach_channel, $3), 'opt_in', 'import_signup', $4)`, [actor.orgId, ch, contact, actor.userId]);
+        }
         await db.query(`insert into public.outreach_opportunities (org_id, customer_id, campaign_id, score, rationale) values ($1,$2,$3,50,$4)`,
           [actor.orgId, c.rows[0].id, campaign, IMPORT_RATIONALE]);
         if (r.externalId) keys.externalIds.add(`qv:${r.externalId}`);
@@ -474,6 +482,60 @@ export class PostgresStore implements OutreachStore {
       }
       await this.event(db, actor, actor.orgId, null, "customers_imported", { inserted, existing });
       return { inserted, existing };
+    }).catch(mapTeamError);
+  }
+  async existingOrderIds(actor: Actor, ids: string[]) {
+    if (!ids.length) return new Set<string>();
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select substr(external_id, 4) as id from public.purchases where org_id = $1 and external_id = any($2::text[])`,
+        [actor.orgId, ids.map(id => `qv:${id}`)]);
+      return new Set<string>(r.rows.map(x => x.id));
+    });
+  }
+  async importOrders(actor: Actor, orders: Order[]) {
+    return this.asUser(actor.userId, async db => {
+      assertCanEditDeals(await this.role(db, actor));
+      await db.query(`select pg_advisory_xact_lock(hashtext('order_import:' || $1))`, [actor.orgId]);
+      const r = { inserted: 0, existing: 0, customersCreated: 0, unlinked: 0 };
+      const touched = new Set<string>();
+      let campaign: string | null = null;
+      for (const o of orders) {
+        const ext = `qv:${o.externalId}`;
+        if ((await db.query(`select 1 from public.purchases where org_id = $1 and external_id = $2`, [actor.orgId, ext])).rowCount) { r.existing++; continue; }
+        const found = await db.query(`select id from public.customers where org_id = $1 and (
+            ($2::text is not null and external_id = $2) or
+            ($3::text is not null and right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = right(regexp_replace($3, '\\D', '', 'g'), 10)) or
+            ($4::text is not null and lower(email) = lower($4)))
+          order by (external_id = $2) desc nulls last, created_at limit 1`, [actor.orgId, o.customer.externalId ? `qv:${o.customer.externalId}` : null, o.customer.phone, o.customer.email]);
+        let cid: string | null = found.rows[0]?.id ?? null;
+        if (!cid) {
+          if (!o.customer.phone && !o.customer.email) { r.unlinked++; continue; }
+          const [first, last] = splitName(o.customer.name ?? undefined);
+          cid = (await db.query(`insert into public.customers (org_id, external_id, first_name, last_name, phone, email, sms_consent, email_consent, age_verified, source)
+            values ($1,$2,$3,$4,$5,$6,$7,$8,true,'csv') returning id`, [actor.orgId, o.customer.externalId ? `qv:${o.customer.externalId}` : null,
+            (first ?? "Customer").slice(0, 100), (last ?? "").slice(0, 100), o.customer.phone, o.customer.email, !!o.customer.phone, !!o.customer.email])).rows[0].id as string;
+          for (const [ch, contact] of [["sms", o.customer.phone], ["email", o.customer.email]] as const) {
+            if (contact) await db.query(`insert into public.consent_events (org_id, channel, value, event, source, actor_id)
+              values ($1, $2, public.normalize_contact($2::public.outreach_channel, $3), 'opt_in', 'import_signup', $4)`, [actor.orgId, ch, contact, actor.userId]);
+          }
+          campaign ??= (await db.query(`select public.manual_campaign_id($1) as id`, [actor.orgId])).rows[0].id;
+          await db.query(`insert into public.outreach_opportunities (org_id, customer_id, campaign_id, score, rationale) values ($1,$2,$3,50,$4)`,
+            [actor.orgId, cid, campaign, IMPORT_RATIONALE]);
+          r.customersCreated++;
+        }
+        const pid = (await db.query(`insert into public.purchases (org_id, customer_id, external_id, purchased_at, total_cents, discount_cents, payment_method, source)
+          values ($1,$2,$3,$4,$5,$6,$7,'csv') returning id`, [actor.orgId, cid, ext, o.at, Math.max(0, o.totalCents), Math.max(0, o.discountCents), o.paymentMethod?.slice(0, 40) ?? null])).rows[0].id;
+        for (const i of o.items) {
+          await db.query(`insert into public.purchase_items (org_id, purchase_id, product_id, product_name, quantity, unit_price_cents, category, brand, discount_cents)
+            values ($1, $2, (select id from public.products where org_id = $1 and ((sku is not null and sku = $3) or lower(name) = lower($4)) limit 1), $4, $5, $6, $7, $8, $9)`,
+          [actor.orgId, pid, i.sku, i.name.slice(0, 200), i.quantity, i.unitPriceCents, i.category?.slice(0, 100) ?? null, i.brand?.slice(0, 100) ?? null, i.discountCents]);
+        }
+        touched.add(cid);
+        r.inserted++;
+      }
+      if (touched.size) await refreshProfiles(db, actor.orgId, [...touched]);
+      await this.event(db, actor, actor.orgId, null, "orders_imported", r);
+      return r;
     }).catch(mapTeamError);
   }
   private async customerKeysTx(db: Db, orgId: string) {

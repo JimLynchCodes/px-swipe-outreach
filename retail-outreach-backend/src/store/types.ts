@@ -158,6 +158,16 @@ export interface OutreachStore {
   /** Any member. The customer's actionable opportunity, creating a pending one if needed (explicit pick from Registered users). Null = unknown customer. */
   openCustomerCard(actor: Actor, customerId: string): Promise<string | null>;
 
+  /** Which of these order ids (POS ids, without the `qv:` prefix) are already in purchase history. */
+  existingOrderIds(actor: Actor, orderIds: string[]): Promise<Set<string>>;
+  /**
+   * Owner/admin. Adds orders not already in purchase history (deduped by order id inside the transaction) to the same
+   * purchases/purchase_items tables the Quickvee sync uses. Links each to its customer (POS id → phone → email), creating
+   * missing customers (in-store signup consent, like the customer import); walk-ins with no contact are skipped as unlinked.
+   * Buying profiles are recomputed for every touched customer.
+   */
+  importOrders(actor: Actor, orders: import("../sync/types.js").Order[]): Promise<{ inserted: number; existing: number; customersCreated: number; unlinked: number }>;
+
   // System operations (no user context).
   /** Idempotent per (org, channel, contact). Audited. Returns created=false when already opted out. */
   addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource, meta?: ConsentMeta): Promise<{ created: boolean }>;
