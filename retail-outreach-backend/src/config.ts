@@ -1,3 +1,4 @@
+import { MODEL_IDS } from "./ai/models.js";
 import "dotenv/config";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
@@ -39,9 +40,16 @@ const schema = z.object({
   /** inline = send in the request; queue = BullMQ + `npm run worker` (needs Redis). */
   DELIVERY_MODE: z.enum(["inline", "queue"]).default("inline"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
+  /** BACKEND SECRET. OpenRouter (default AI provider when set): OpenAI-compatible API at https://openrouter.ai/api/v1. */
+  OPENROUTER_API_KEY: z.string().min(10).optional(),
+  /** BACKEND SECRET. Direct OpenAI: optional fallback provider (or primary with AI_PROVIDER=openai). */
   OPENAI_API_KEY: z.string().optional(),
+  /** openrouter | openai. Default: openrouter when OPENROUTER_API_KEY is set, else openai when OPENAI_API_KEY is set, else rules only. */
+  AI_PROVIDER: z.enum(["openrouter", "openai"]).optional(),
   /** Fallback model when an org has none set (orgs pick theirs in Settings / the header). */
-  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+  OPENAI_MODEL: z.string().default("openai/gpt-4o-mini"),
+  /** OpenRouter attribution (HTTP-Referer / X-Title headers). HTTP-Referer defaults to APP_URL. */
+  OPENROUTER_APP_NAME: z.string().max(100).default("PX Swipe Outreach"),
   /** log = print only (dev); smtp = real email via Nodemailer. "console" is accepted as an alias for log. */
   EMAIL_PROVIDER: z.preprocess(v => (v === "console" ? "log" : v), z.enum(["log", "smtp"]).default("log")),
   /** log = print to the console/log only; twilio = real SMS via the official Twilio SDK. "console" is an alias for log. */
@@ -109,6 +117,9 @@ const schema = z.object({
     if (!c.SMTP_FROM) issue("SMTP_FROM", "required when EMAIL_PROVIDER=smtp");
     if (c.SMTP_USER && !c.SMTP_PASS) issue("SMTP_PASS", "required when SMTP_USER is set");
   }
+  if (c.AI_PROVIDER === "openrouter" && !c.OPENROUTER_API_KEY) issue("OPENROUTER_API_KEY", "required when AI_PROVIDER=openrouter");
+  if (c.AI_PROVIDER === "openai" && !c.OPENAI_API_KEY) issue("OPENAI_API_KEY", "required when AI_PROVIDER=openai");
+  if (!MODEL_IDS.includes(c.OPENAI_MODEL)) issue("OPENAI_MODEL", `must be one of: ${MODEL_IDS.join(", ")}`);
   if (c.SMS_PROVIDER === "twilio") {
     if (!c.TWILIO_ACCOUNT_SID) issue("TWILIO_ACCOUNT_SID", "required when SMS_PROVIDER=twilio");
     if (!c.TWILIO_AUTH_TOKEN) issue("TWILIO_AUTH_TOKEN", "required when SMS_PROVIDER=twilio");

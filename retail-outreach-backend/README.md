@@ -76,7 +76,10 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `RATE_LIMIT_PER_MINUTE` / `SEND_RATE_LIMIT_PER_MINUTE` | `300` / `30` | Per user (or IP when unauthenticated) |
 | `ENABLE_DEMO_RESET` | on outside production | `POST /api/dev/reset` (owner/admin only) |
 | `DELIVERY_MODE` / `REDIS_URL` | `inline` / – | `queue` needs Postgres and Redis |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4o-mini` | Without a key, OpenAI models are unavailable and rules are used. Each org picks its model in Settings or the header; `OPENAI_MODEL` is only the fallback |
+| `OPENROUTER_API_KEY` / `OPENAI_API_KEY` | – | OpenRouter is the default provider; direct OpenAI is optional and acts as the fallback when both are set. With neither, models are unavailable and rules are used |
+| `AI_PROVIDER` | `openrouter` if its key is set, else `openai` | Primary provider; startup fails if its key is missing |
+| `OPENAI_MODEL` | `openai/gpt-4o-mini` | Fallback model only; each org picks its model in Settings or the header |
+| `OPENROUTER_APP_NAME` | `PX Swipe Outreach` | OpenRouter `X-Title` header (`HTTP-Referer` = `APP_URL`) |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
 | `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
 | `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |

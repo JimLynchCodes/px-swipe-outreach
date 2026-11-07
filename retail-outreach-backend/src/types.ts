@@ -115,13 +115,13 @@ export type Suggestion = {
   channel: Channel;
   message: string;
   subject: string | null;
-  source: "openai" | "rules";
+  source: "openai" | "openrouter" | "rules";
   /** Model that wrote the copy ("rules" when no LLM was used, including fallbacks). */
   model: string;
   /** Token usage reported by the provider (absent for rules). */
-  usage?: { inputTokens: number; outputTokens: number };
+  usage?: { inputTokens: number; outputTokens: number; costUsd?: number };
   /** Tokens spent on a failed AI attempt before falling back to rules (recorded in Cost metrics; never sent to clients). */
-  aiAttempt?: { model: string; usage: { inputTokens: number; outputTokens: number } };
+  aiAttempt?: { model: string; usage: { inputTokens: number; outputTokens: number; costUsd?: number } };
   /** Model's 0-1 confidence that the promotion fits (AI only). */
   confidence?: number;
   /** Deal the message uses (null = fallback offer or no discount). */

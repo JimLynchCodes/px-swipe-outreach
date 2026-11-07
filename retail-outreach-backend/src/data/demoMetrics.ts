@@ -2,12 +2,12 @@
  * Clearly-labelled DEMO metrics: AI usage, sends by several (fictional) staff, and purchases, for ~5 months before
  * `now`. Deterministic (seeded PRNG) so tests are stable. Every row has isDemo=true and staff are suffixed "(demo)".
  */
-import { costUsd, PRICE_TABLE_VERSION } from "../ai/models.js";
+import { costUsd, modelInfo, PRICE_TABLE_VERSION } from "../ai/models.js";
 import type { AiUsageRow, PurchaseRow, SendRow, SmsCostRow } from "../metrics/types.js";
 import * as seed from "./seed.js";
 
 export const DEMO_STAFF = ["Maya R. (demo)", "Leo T. (demo)", "Ava K. (demo)", "Sam P. (demo)"] as const;
-const MODEL_MIX = ["gpt-4o-mini", "gpt-4o-mini", "gpt-4o-mini", "gpt-5-mini", "rules"] as const;
+const MODEL_MIX = ["openai/gpt-4o-mini", "openai/gpt-4o-mini", "google/gemini-2.5-flash-lite", "gpt-4o-mini", "rules"] as const;
 const STAFF_SKILL = [0.36, 0.3, 0.24, 0.18]; // conversion propensity, so the leaderboard has a spread
 
 function rng(seedN: number) {
@@ -33,7 +33,7 @@ export function buildDemoMetrics(now = new Date(), days = 150, idOf: (kind: stri
       const at = new Date(day.getTime() + (10 + r() * 10) * 3_600_000);
       if (at.getTime() > nowMs) continue;
       const model = pick(MODEL_MIX);
-      const provider = model === "rules" ? "rules" : "openai";
+      const provider = modelInfo(model)?.provider ?? "rules";
       const inT = model === "rules" ? 0 : 620 + Math.floor(r() * 220), outT = model === "rules" ? 0 : 110 + Math.floor(r() * 90);
       const todays = weekly.filter(x => x.days.includes(weekday));
       const deal = todays.length && r() < 0.8 ? pick(todays) : null;

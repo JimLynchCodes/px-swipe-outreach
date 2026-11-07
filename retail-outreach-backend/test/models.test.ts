@@ -23,8 +23,8 @@ class FakeProvider implements SuggestionProvider {
 }
 
 describe("model catalog", () => {
-  it("defaults to the cheapest OpenAI chat model and includes rules-only", () => {
-    expect(DEFAULT_AI_MODEL).toBe("gpt-4o-mini");
+  it("defaults to GPT-4o mini via OpenRouter and includes rules-only", () => {
+    expect(DEFAULT_AI_MODEL).toBe("openai/gpt-4o-mini");
     const openai = MODELS.filter(m => m.provider === "openai");
     expect(Math.min(...openai.map(m => m.inputPerM + m.outputPerM))).toBe(0.15 + 0.6);
     expect(MODELS.find(m => m.id === "rules")).toMatchObject({ inputPerM: 0, outputPerM: 0 });
@@ -34,11 +34,17 @@ describe("model catalog", () => {
     expect(costUsd("gpt-4o-mini", 700, 150)).toBeCloseTo(0.000195, 9);
     expect(costUsd("rules", 1e6, 1e6)).toBe(0);
   });
-  it("marks OpenAI models unavailable without a key", () => {
+  it("marks models unavailable without a key; OpenRouter also serves OpenAI models via aliases", () => {
     const none = listModels({});
     expect(none.find(m => m.id === "gpt-4o-mini")).toMatchObject({ available: false, note: expect.stringContaining("OPENAI_API_KEY") });
+    expect(none.find(m => m.id === "openai/gpt-4o-mini")).toMatchObject({ available: false, note: expect.stringContaining("OPENROUTER_API_KEY") });
+    const or = listModels({ OPENROUTER_API_KEY: "sk-or-x" });
+    expect(or.filter(m => m.provider === "openrouter").every(m => m.available)).toBe(true);
+    expect(or.find(m => m.id === "gpt-4o-mini")!.available).toBe(true); // alias → openai/gpt-4o-mini
+    expect(or.find(m => m.id === "gpt-5.4-nano")!.available).toBe(false); // no OpenRouter alias
+    expect(listModels({ OPENAI_API_KEY: "sk-x" }).find(m => m.id === "google/gemini-2.5-flash-lite")!.available).toBe(false);
     expect(none.find(m => m.id === "rules")).toMatchObject({ available: true, costHint: "Heuristic-based canned suggestions, free", label: "None", inputPerM: 0 });
-    expect(listModels({ OPENAI_API_KEY: "sk-x" }).every(m => m.available)).toBe(true);
+    expect(listModels({ OPENAI_API_KEY: "sk-x" }).filter(m => m.provider === "openai").every(m => m.available)).toBe(true);
   });
 });
 
@@ -76,9 +82,9 @@ describe("model picker API", () => {
     const as = async (u: string) => ({ authorization: `Bearer ${await fake.sign(u)}`, "x-org-id": DEMO_ORG_ID });
 
     const list = (await app.inject({ url: "/api/ai/models", headers: await as(STAFF) })).json();
-    expect(list.selected).toBe("gpt-4o-mini");
+    expect(list.selected).toBe("openai/gpt-4o-mini");
     expect(list.effective).toBe("rules"); // test app has no OPENAI_API_KEY
-    expect(list.models.map((m: any) => m.id)).toEqual(expect.arrayContaining(["gpt-4o-mini", "gpt-5-mini", "rules"]));
+    expect(list.models.map((m: any) => m.id)).toEqual(expect.arrayContaining(["openai/gpt-4o-mini", "anthropic/claude-haiku-5.5", "gpt-4o-mini", "gpt-5-mini", "rules"]));
 
     const sugg = async () => (await app.inject({ method: "POST", url: "/api/outreach/opp_0001/suggestion", payload: { channel: "sms" }, headers: await as(OWNER) })).json().suggestion;
     expect((await sugg()).model).toBe("gpt-4o-mini");

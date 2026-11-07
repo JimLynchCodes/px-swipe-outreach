@@ -6,7 +6,7 @@
 | Supabase `service_role` / `sb_secret_` key (`SUPABASE_SERVICE_ROLE_KEY`) | backend env, only when `INVITE_MAILER=supabase`; used only for the Auth invite/magic-link endpoints, never for data queries | frontend, git, logs |
 | `DATABASE_URL` (DB password) | backend/worker env | frontend, git, logs |
 | `SUPABASE_JWT_SECRET` (legacy HS256 only) | backend env | frontend |
-| `OPENAI_API_KEY`, SMS/email provider keys | backend env | frontend |
+| `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, SMS/email provider keys | backend env | frontend |
 
 Only `VITE_SUPABASE_URL` and the anon/publishable key are shipped to browsers. The frontend refuses a service_role or secret key at startup.
 

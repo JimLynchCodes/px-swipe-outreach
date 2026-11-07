@@ -90,7 +90,7 @@ The **Using model … ▾** pill in the header (it replaced "AI Powered") picks 
 
 Prices live in a versioned table (`PRICE_TABLE_VERSION`). Update it when OpenAI changes prices. GPT-5 nano and GPT-4.1 nano were cheaper, but OpenAI lists them as deprecated or shut down.
 
-**Without `OPENAI_API_KEY`,** OpenAI models show as *Unavailable* with a note, and suggestions use rules. The pill reads "(rules fallback)". Provider errors also fall back to rules.
+**Without `OPENROUTER_API_KEY` or `OPENAI_API_KEY`,** models whose provider has no key show as *Unavailable* with a note, and suggestions use rules. The pill reads "(rules fallback)". Provider errors also fall back to rules.
 
 **Adding a provider** (e.g. Anthropic):
 
