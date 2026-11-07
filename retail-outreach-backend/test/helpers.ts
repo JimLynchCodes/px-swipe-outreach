@@ -6,6 +6,7 @@ import { RulesSuggestionProvider, type SuggestionProvider } from "../src/provide
 import { ConsoleMessageProvider, type MessageProvider } from "../src/providers/messaging.js";
 import { MemoryStore } from "../src/store/memory.js";
 import type { OutreachStore } from "../src/store/types.js";
+import type { SyncService } from "../src/sync/index.js";
 import type { InviteEmail, InviteMailer } from "../src/team/mailer.js";
 
 /** Records invite emails; set `fail` to simulate a provider outage. */
@@ -24,14 +25,14 @@ export class FakeInviteMailer implements InviteMailer {
 
 export async function makeApp(overrides: {
   suggestions?: SuggestionProvider; messenger?: MessageProvider; authenticator?: Authenticator;
-  store?: OutreachStore; env?: Record<string, string>; inviteMailer?: InviteMailer;
+  store?: OutreachStore; env?: Record<string, string>; inviteMailer?: InviteMailer; sync?: SyncService;
 } = {}) {
   const config = loadConfig({ NODE_ENV: "test", ...overrides.env });
   const store = overrides.store ?? new MemoryStore();
   const messenger = overrides.messenger ?? new ConsoleMessageProvider(() => {});
   const app = await buildApp({
     config, store, suggestions: overrides.suggestions ?? new RulesSuggestionProvider(), messenger,
-    authenticator: overrides.authenticator, inviteMailer: overrides.inviteMailer, logger: false
+    authenticator: overrides.authenticator, inviteMailer: overrides.inviteMailer, logger: false, sync: overrides.sync
   });
   return { app, store, messenger, config };
 }

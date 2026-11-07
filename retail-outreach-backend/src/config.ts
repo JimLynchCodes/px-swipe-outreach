@@ -103,7 +103,33 @@ const schema = z.object({
   /** Domain whose mail is routed to the inbound email webhook; outbound email uses Reply-To: reply+<token>@domain. */
   INBOUND_EMAIL_DOMAIN: z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i, "must be a domain name").optional(),
   /** BACKEND SECRET. Required by the inbound email webhook (?key= or X-Inbound-Secret). */
-  INBOUND_EMAIL_SECRET: z.string().min(24).optional()
+  INBOUND_EMAIL_SECRET: z.string().min(24).optional(),
+
+  // ── Data sync (src/sync). All BACKEND SECRETS; the UI only shows which names are missing. ──
+  /** OpenAI admin key (Usage + Costs APIs) for the ai-usage sync. */
+  OPENAI_ADMIN_KEY: z.string().min(10).optional(),
+  /** OpenRouter provisioning key for /api/v1/activity (falls back to OPENROUTER_API_KEY). */
+  OPENROUTER_PROVISIONING_KEY: z.string().min(10).optional(),
+  /** Email tracking source beyond the send ledger. */
+  EMAIL_EVENTS_PROVIDER: z.enum(["ledger", "sendgrid"]).default("ledger"),
+  SENDGRID_API_KEY: z.string().min(10).optional(),
+  /** Quickvee merchant portal login (the merchant's own account only). Never logged. */
+  QUICKVEE_EMAIL: z.string().min(3).optional(),
+  QUICKVEE_PASSWORD: z.string().min(1).optional(),
+  QUICKVEE_BASE_URL: z.string().url().default("https://merchant.quickvee.com"),
+  /** Session cookies + raw snapshots (gitignored; contains PII). */
+  QUICKVEE_STATE_DIR: z.string().default(".quickvee"),
+  QUICKVEE_HEADLESS: z.preprocess(v => v === undefined || v === "" ? undefined : !["false", "0", "no"].includes(String(v).toLowerCase()), z.boolean().default(true)),
+  QUICKVEE_SAVE_RAW: z.preprocess(v => v === undefined || v === "" ? undefined : !["false", "0", "no"].includes(String(v).toLowerCase()), z.boolean().default(true)),
+  /** Minimum gap between portal requests. */
+  QUICKVEE_MIN_DELAY_MS: z.coerce.number().int().min(0).max(60_000).default(1500),
+  /** Days per orders window (export/crawl). */
+  QUICKVEE_CHUNK_DAYS: z.coerce.number().int().min(1).max(366).default(7),
+  /** Chromium binary for Playwright (Docker: /usr/bin/chromium-browser). Auto-detected when unset. */
+  QUICKVEE_CHROMIUM_PATH: z.string().optional(),
+  /** Run the DB-backed sync scheduler in this process (safe on several instances). */
+  SYNC_SCHEDULER: z.preprocess(v => v === undefined || v === "" ? undefined : !["false", "0", "no"].includes(String(v).toLowerCase()), z.boolean().default(true)),
+  SYNC_SCHEDULER_INTERVAL_SECONDS: z.coerce.number().int().min(5).max(3600).default(60)
 }).superRefine((c, ctx) => {
   const issue = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
   if (c.AUTH_MODE === "supabase" && !c.SUPABASE_URL) issue("SUPABASE_URL", "required when AUTH_MODE=supabase");

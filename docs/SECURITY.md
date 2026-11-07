@@ -7,6 +7,8 @@
 | `DATABASE_URL` (DB password) | backend/worker env | frontend, git, logs |
 | `SUPABASE_JWT_SECRET` (legacy HS256 only) | backend env | frontend |
 | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, SMS/email provider keys | backend env | frontend |
+| Data sync credentials (`OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY`, `SENDGRID_API_KEY`, `QUICKVEE_EMAIL`/`QUICKVEE_PASSWORD`) | backend env only; values redacted from run logs; the UI gets only missing env *names* | frontend, git, logs, `etl_runs.log` |
+| Quickvee session cookies + raw snapshots (`.quickvee/`) | server disk/volume, mode 0700/0600; gitignored and dockerignored (contains customer PII) | git, images |
 
 Only `VITE_SUPABASE_URL` and the anon/publishable key are shipped to browsers. The frontend refuses a service_role or secret key at startup.
 

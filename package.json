@@ -9,6 +9,7 @@
     "test": "npm --prefix retail-outreach-backend test && npm --prefix px-swipe-outreach-frontend test",
     "typecheck": "npm --prefix retail-outreach-backend run typecheck && npm --prefix px-swipe-outreach-frontend run typecheck",
     "lint": "npm --prefix retail-outreach-backend run lint && npm --prefix px-swipe-outreach-frontend run lint",
+    "sync": "npm --prefix retail-outreach-backend run sync --",
     "dev:live": "concurrently -k -n api,web -c cyan,magenta \"npm --prefix retail-outreach-backend run dev:live\" \"npm --prefix px-swipe-outreach-frontend run dev\"",
     "dev:supabase": "concurrently -k -n api,web -c cyan,magenta \"npm --prefix retail-outreach-backend run dev:supabase\" \"npm --prefix px-swipe-outreach-frontend run dev:supabase\""
   },

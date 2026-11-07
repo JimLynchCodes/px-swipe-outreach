@@ -5,6 +5,7 @@
 |---|---|---|
 | API | `retail-outreach-backend/Dockerfile` → `node dist/server.js` | Stateless; scale horizontally. `/health/live` (liveness), `/health/ready` (DB + Redis). |
 | Worker | same image → `node dist/worker.js` | Needed when `DELIVERY_MODE=queue`. |
+| Data sync | runs inside the API (`SYNC_SCHEDULER=true`) | DB-backed scheduler, safe on several instances. The image includes Chromium for Quickvee; mount a volume at `/app/.quickvee` to keep the portal session. Or set `SYNC_SCHEDULER=false` and cron `node dist/sync/cli.js all`. See [DATA_SYNC.md](DATA_SYNC.md). |
 | Migrations | same image → `node dist/db/migrate.js` or `supabase db push` | Run once per release, before rolling the API. |
 | Web | `px-swipe-outreach-frontend/Dockerfile` (nginx) | Static SPA with security headers; proxies `/api` to `API_UPSTREAM`. |
 | Postgres + Auth | Supabase | See [SUPABASE_SETUP.md](SUPABASE_SETUP.md). |

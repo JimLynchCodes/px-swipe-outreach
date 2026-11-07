@@ -9,9 +9,13 @@ COPY retail-outreach-backend/src ./src
 RUN npm run build && npm prune --omit=dev
 
 FROM node:20-alpine
-ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 SUPABASE_DIR=/app/supabase
+ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 SUPABASE_DIR=/app/supabase \
+    QUICKVEE_CHROMIUM_PATH=/usr/bin/chromium-browser QUICKVEE_STATE_DIR=/app/.quickvee
 WORKDIR /app
-RUN apk add --no-cache tini
+# Chromium for the Quickvee sync (Playwright drives it via playwright-core; no bundled browser download).
+# Mount a volume at /app/.quickvee to keep the portal session across restarts.
+RUN apk add --no-cache tini chromium nss freetype harfbuzz ca-certificates ttf-freefont \
+  && mkdir -p /app/.quickvee && chown node:node /app/.quickvee
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY retail-outreach-backend/package.json ./

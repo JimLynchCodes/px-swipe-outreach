@@ -86,6 +86,12 @@ const p = (favoriteCategories: Category[], favoriteBrands: string[], visitsPerMo
 
 const MON = 0, TUE = 1, WED = 2, THU = 3, FRI = 4, SAT = 5, SUN = 6;
 
+/** Demo rewards members (in production these come from the Quickvee rewards sync). */
+export const SEED_REWARDS: Record<string, { points: number; joinedAt: string }> = {
+  cust_0002: { points: 340, joinedAt: "2025-03-14" },
+  cust_0003: { points: 120, joinedAt: "2026-02-01" }
+};
+
 export const customers: SeedCustomer[] = [
   c("cust_0001", "Sarah", "Mitchell", 34, "Main St", ["Main St", "Eastside"],
     [["prod_cwoil", 58], ["prod_cornbread", 58], ["prod_koi", 95]], p(["cbd"], ["Charlotte's Web", "Cornbread Hemp"], 1, 9800, MON, "evening"), { extraSpendCents: 41000 }),

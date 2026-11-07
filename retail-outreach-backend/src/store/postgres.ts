@@ -38,7 +38,7 @@ const OPP_SELECT = `
     cu.id as customer_id, cu.first_name, cu.last_name, cu.age, cu.gender, cu.location,
     cu.phone, cu.email, cu.sms_consent, cu.email_consent, cu.lifetime_spend_cents, cu.last_purchase_at,
     cu.age_verified, cu.favorite_categories, cu.favorite_brands, cu.visits_per_month, cu.avg_basket_cents,
-    cu.preferred_day, cu.preferred_time,
+    cu.preferred_day, cu.preferred_time, cu.rewards_member, cu.rewards_points, cu.rewards_joined_at,
     array(select ch::text from unnest(array['sms','email']::public.outreach_channel[]) ch
       where exists (select 1 from public.suppressions s where s.org_id = o.org_id and s.channel = ch
         and s.value = public.normalize_contact(ch, case when ch = 'sms' then cu.phone else cu.email end))
@@ -173,7 +173,8 @@ export class PostgresStore implements OutreachStore {
   private async hydrate(db: Db, rows: any[]): Promise<Opportunity[]> {
     if (!rows.length) return [];
     const items = await db.query<any>(`
-      select p.customer_id, pi.product_id, pi.product_name, pi.unit_price_cents, pr.category, pr.brand, pr.image_url, p.purchased_at
+      select p.customer_id, coalesce(pi.product_id::text, 'item:' || lower(pi.product_name)) as product_id, pi.product_name, pi.unit_price_cents,
+        coalesce(pr.category, lower(pi.category)) as category, coalesce(pr.brand, pi.brand) as brand, pr.image_url, p.purchased_at
       from public.purchases p
       join public.purchase_items pi on pi.org_id = p.org_id and pi.purchase_id = p.id
       left join public.products pr on pr.org_id = pi.org_id and pr.id = pi.product_id
@@ -202,6 +203,7 @@ export class PostgresStore implements OutreachStore {
           lastPurchaseAt: r.last_purchase_at ? new Date(r.last_purchase_at).toISOString() : null,
           itemsPurchased: purchases.length, purchases,
           ageVerified: r.age_verified,
+          rewards: r.rewards_member ? { member: true, points: r.rewards_points, joinedAt: r.rewards_joined_at ? new Date(r.rewards_joined_at).toISOString().slice(0, 10) : null } : null,
           profile: {
             favoriteCategories: r.favorite_categories, favoriteBrands: r.favorite_brands,
             visitsPerMonth: Number(r.visits_per_month), avgBasketCents: r.avg_basket_cents,

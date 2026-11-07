@@ -41,6 +41,7 @@ export function buildSeedOpportunities(now = Date.now(), orgId = seed.DEMO_ORG_I
       itemsPurchased: purchases.length,
       purchases,
       ageVerified: sc.ageVerified,
+      rewards: seed.SEED_REWARDS[sc.id] ? { member: true, ...seed.SEED_REWARDS[sc.id] } : null,
       profile: { ...sc.profile, favoriteCategories: [...sc.profile.favoriteCategories], favoriteBrands: [...sc.profile.favoriteBrands] }
     };
     const pick = seed.chooseCampaign(segmentOf(customer, now), customer.lifetimeSpendCents, daysSince(customer.lastPurchaseAt, now) ?? 999);

@@ -5,6 +5,7 @@ import { primaryProvider, refreshOpenRouterCatalog } from "./ai/models.js";
 import { createMessageProvider } from "./providers/messaging.js";
 import { reconcileSmsCosts } from "./metrics/smsCost.js";
 import { createStore } from "./store/index.js";
+import { createSync } from "./sync/index.js";
 
 const config = loadConfigOrExit();
 const store = await createStore(config);
@@ -12,6 +13,8 @@ const queue = config.DELIVERY_MODE === "queue"
   ? await import("./queue.js").then(m => m.createDeliveryQueue(config.REDIS_URL))
   : null;
 
+// Data sync: the scheduler is DB-backed (SKIP LOCKED claims), so running it on every API instance is safe.
+const sync = await createSync(config, store, { info: (o, m) => app.log.info(o, m), warn: (o, m) => app.log.warn(o, m), error: (o, m) => app.log.error(o, m) });
 const messenger = createMessageProvider(config, { log: line => app.log.info(line) });
 const app = await buildApp({
   config, store,
@@ -21,7 +24,8 @@ const app = await buildApp({
     onError: e => app.log.warn({ err: e }, "AI suggestion failed; using rules fallback")
   }),
   messenger,
-  enqueueDelivery: queue ? id => queue.enqueue(id) : undefined
+  enqueueDelivery: queue ? id => queue.enqueue(id) : undefined,
+  sync
 });
 
 let shuttingDown = false;
@@ -32,7 +36,9 @@ async function shutdown(signal: string) {
   const timer = setTimeout(() => { app.log.error("graceful shutdown timed out; forcing exit"); process.exit(1); }, config.SHUTDOWN_TIMEOUT_MS);
   timer.unref();
   try {
+    sync.scheduler.stop();
     await app.close(); // stops accepting connections, waits for in-flight requests
+    await sync.runner.drain(); // let running sync jobs finish (bounded by SHUTDOWN_TIMEOUT_MS; a killed run is reaped by its stale heartbeat)
     await queue?.close();
     await store.close();
     process.exit(0);
@@ -70,4 +76,9 @@ if (config.OPENROUTER_API_KEY) {
     .catch(e => app.log.warn({ err: e }, "OpenRouter catalog refresh failed; using built-in prices"));
   setInterval(refresh, 6 * 3_600_000).unref();
   void refresh();
+}
+
+if (config.SYNC_SCHEDULER) {
+  sync.scheduler.start();
+  app.log.info({ intervalSeconds: config.SYNC_SCHEDULER_INTERVAL_SECONDS }, "data sync scheduler started");
 }

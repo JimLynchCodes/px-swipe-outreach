@@ -27,6 +27,8 @@ import { DEFAULT_ATTRIBUTION_DAYS, performanceReport } from "./metrics/performan
 import { ConsoleInviteMailer, SupabaseInviteMailer, type InviteMailer } from "./team/mailer.js";
 import { INVITE_ACCEPT_PATH, INVITE_PREVIEW_PATH, teamRoutes } from "./team/routes.js";
 import type { Actor } from "./types.js";
+import { createSync, type SyncService } from "./sync/index.js";
+import { syncRoutes } from "./sync/routes.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -49,6 +51,8 @@ export type AppDeps = {
   logger?: boolean;
   /** Fetches a Twilio message (price) for the status callback. Defaults to the Twilio SMS provider's, if any. */
   fetchTwilioMessage?: MessageFetcher;
+  /** Data sync (jobs, runner, scheduler). Defaults to one built for the store; the server starts its scheduler. */
+  sync?: SyncService;
 };
 
 const idParams = z.object({ id: z.string().min(1).max(100) });
@@ -402,6 +406,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     return reply.code(204).send();
   });
+
+  // ── Data sync ───────────────────────────────────────────────────────
+  const sync = deps.sync ?? await createSync(config, store, app.log);
+  app.decorate("syncConfig", config);
+  await syncRoutes(app, { sync, actorOf, sendError, schedulerEnabled: config.SYNC_SCHEDULER });
 
   // ── Team ────────────────────────────────────────────────────────────
   const inviteMailer = deps.inviteMailer ?? (config.INVITE_MAILER === "supabase"

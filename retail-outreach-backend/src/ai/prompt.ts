@@ -1,4 +1,5 @@
 /** Prompt + structured-output schema for AI outreach copy (smoke shop). See docs/AI_SUGGESTIONS.md. */
+import { purchaseInsights, restockWindow } from "../insights.js";
 import { z } from "zod";
 import { daysSince, discountLabel, SMS_OPT_OUT, WEEKDAYS } from "../domain.js";
 import { categoryLabel } from "../recommend.js";
@@ -84,11 +85,26 @@ export function systemPrompt(ctx: PromptContext): string {
     "- No free tobacco/nicotine products, samples or giveaways. No 'get high', 'stoned', 'lit' or intoxication language.",
     "- No pressure or urgency (no 'hurry', 'last chance', 'limited time'). You may state a promotion's real end date.",
     "- Address the customer by FIRST name only. Don't mention segments, scores, analytics or how often they visit.",
+    "- Rewards: only if customer.rewards is set, you may thank them as a rewards member and quote their points balance EXACTLY as given. Never invent points, point values, multipliers or redemptions. If rewards is null, don't mention points.",
+    "- If restock_due lists an item, a light 'time to stock up on <item>?' angle is welcome (no pressure, no claims about running out).",
     "- Include '21+' once. Do NOT write opt-out text or the store signature (both are appended automatically).",
     `- sms_text: at most ${smsBudget(ctx.smsSignature)} characters, plain GSM characters preferred. email_subject: at most ${EMAIL_SUBJECT_LIMIT} characters. email_body: 2-4 short sentences, under ${EMAIL_BODY_LIMIT} characters, no signature.`,
     `- Fill all fields; the requested channel is ${ctx.channel.toUpperCase()}, so make that one great.`,
     shots
   ].filter(Boolean).join("\n");
+}
+
+/** Real purchase history + rewards facts (all grounded; the validator checks any points the copy quotes). */
+function historyPayload(ctx: PromptContext) {
+  const c = ctx.customer;
+  const h = purchaseInsights(c, ctx.now.getTime());
+  return {
+    orders_per_month: h.ordersPerMonth || null,
+    top_categories_by_purchases: h.topCategories.map(categoryLabel),
+    top_brands_by_purchases: h.topBrands,
+    restock_due: h.restock.filter(restockWindow).slice(0, 2).map(r => ({ item: r.name, every_days: r.cycleDays, due_in_days: r.dueInDays })),
+    rewards: c.rewards?.member ? { member: true, points: c.rewards.points, member_since: c.rewards.joinedAt } : null
+  };
 }
 
 export function userPayload(ctx: PromptContext) {
@@ -99,7 +115,8 @@ export function userPayload(ctx: PromptContext) {
       favorite_categories: p.favoriteCategories.map(categoryLabel), favorite_brands: p.favoriteBrands,
       visits_per_month: p.visitsPerMonth, avg_basket_usd: Math.round(p.avgBasketCents / 100),
       preferred_day: p.preferredDay === null ? null : WEEKDAYS[p.preferredDay], preferred_time: p.preferredTime,
-      recent_items: c.purchases.slice(0, 5).map(x => x.name)
+      recent_items: c.purchases.slice(0, 5).map(x => x.name),
+      ...historyPayload(ctx)
     },
     today: ctx.now.toISOString().slice(0, 10),
     promotions: ctx.promotions.map(d => ({

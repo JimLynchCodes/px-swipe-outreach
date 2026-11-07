@@ -1,4 +1,4 @@
-import type { CostReport, PerformanceReport,
+import type { SyncFrequency, SyncJobId, SyncOverview, SyncRun, SyncSchedule, CostReport, PerformanceReport,
   AiModelOption, CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
   SendResult, Suggestion,
 } from './types'
@@ -135,6 +135,16 @@ export const api = {
   metrics: {
     costs: () => request<CostReport>('/api/metrics/costs'),
     performance: (days?: number) => request<PerformanceReport>(`/api/metrics/performance${days ? `?days=${days}` : ''}`),
+  },
+  sync: {
+    overview: () => request<SyncOverview>('/api/sync'),
+    run: (job: SyncJobId, body: { dryRun?: boolean; from?: string; to?: string } = {}) =>
+      request<{ run: SyncRun }>(`/api/sync/${job}/run`, { method: 'POST', body: JSON.stringify(body) }).then(r => r.run),
+    schedule: (job: SyncJobId, frequency: SyncFrequency, startLocal: string) =>
+      request<{ schedule: SyncSchedule }>(`/api/sync/${job}/schedule`, { method: 'PUT', body: JSON.stringify({ frequency, startLocal }) }).then(r => r.schedule),
+    timezone: (timezone: string) => request<{ timezone: string }>('/api/sync/timezone', { method: 'PUT', body: JSON.stringify({ timezone }) }),
+    runs: (job?: SyncJobId, limit = 20) => request<{ runs: SyncRun[] }>(`/api/sync/runs?limit=${limit}${job ? `&job=${job}` : ''}`).then(r => r.runs),
+    runDetail: (id: string) => request<{ run: SyncRun }>(`/api/sync/runs/${encodeURIComponent(id)}`).then(r => r.run),
   },
   resetDemo: () => request<{ ok: true }>('/api/dev/reset', { method: 'POST' }),
 }
