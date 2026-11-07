@@ -12,6 +12,7 @@ import { AuthError, createAuthenticator, resolveOrg, type Authenticator, type Au
 import { ACTIONABLE_STATUSES, canContact, cooldownUntil, maskRecipient, recipientFor, SMS_MAX, toCardDto, withSmsOptOut } from "./domain.js";
 import { dealRoutes } from "./deals/routes.js";
 import { customerRoutes } from "./customers/routes.js";
+import { orderRoutes } from "./orders/routes.js";
 import { recommend } from "./recommend.js";
 import { optOutRoutes, REOPTIN_PATH, RESUBSCRIBE_PATH, TWILIO_WEBHOOK_PREFIX, UNSUBSCRIBE_PATH } from "./optout/routes.js";
 import { unsubscribeLink } from "./optout/unsubscribe.js";
@@ -378,6 +379,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // ── Promotions & settings ───────────────────────────────────────────
   await dealRoutes(app, { store, actorOf });
   await customerRoutes(app, { store, actorOf, sendError });
+  await orderRoutes(app, { store, actorOf, sendError });
   /** Model picker options: allowlist, cost hints, and whether each provider is configured on this server. */
   app.get("/api/ai/models", async request => {
     const settings = await store.getSettings(actorOf(request));

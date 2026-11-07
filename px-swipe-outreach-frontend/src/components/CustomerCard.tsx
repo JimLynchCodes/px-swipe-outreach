@@ -78,7 +78,9 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
       <div className="stats">
         <Stat icon={<CircleDollarSign size={18} />} label="Lifetime Spend" value={money(c.lifetimeSpendCents)} />
         <Stat icon={<CalendarDays size={18} />} label="Last Purchase" value={daysAgo(c.daysSinceLastPurchase)} />
-        <Stat icon={<ShoppingBag size={18} />} label="Items Purchased" value={`${c.itemsPurchased} total`} />
+        {c.itemsPurchased === 0 && c.lifetimeOrders
+          ? <Stat icon={<ShoppingBag size={18} />} label="Lifetime Orders" value={`${c.lifetimeOrders} total`} />
+          : <Stat icon={<ShoppingBag size={18} />} label="Items Purchased" value={`${c.itemsPurchased} total`} />}
       </div>
 
       <section aria-label="Buying patterns">

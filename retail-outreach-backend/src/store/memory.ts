@@ -10,7 +10,9 @@ import type {
 } from "../types.js";
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
-import { isExisting, phoneKey, emailKey, type ImportConsent, type ImportCustomer } from "../customers/csvImport.js";
+import { IN_STORE_SIGNUP, isExisting, phoneKey, emailKey, type ImportConsent, type ImportCustomer } from "../customers/csvImport.js";
+import { splitName } from "../sync/quickvee/normalize.js";
+import type { Order } from "../sync/types.js";
 import { IMPORT_RATIONALE, MANUAL_CAMPAIGN, PICK_RATIONALE, toSummary } from "../customers/summary.js";
 import { DEFAULT_SETTINGS, StoreError, type Cooldowns, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
@@ -618,12 +620,16 @@ export class MemoryStore implements OutreachStore {
         location: r.location, storesShopped: r.location ? [r.location] : [], phone: r.phone, email: r.email,
         smsConsent: consent.smsConsent && !!r.phone, emailConsent: consent.emailConsent && !!r.email, suppressed: [],
         lifetimeSpendCents: r.lifetimeSpendCents, lastPurchaseAt: r.lastPurchaseAt, itemsPurchased: 0, purchases: [],
-        ageVerified: consent.ageVerified, lastSmsAt: null, lastEmailAt: null,
+        ageVerified: consent.ageVerified, lastSmsAt: null, lastEmailAt: null, lifetimeOrders: r.lifetimeOrders,
         rewards: r.rewardsPoints !== null ? { member: true, points: r.rewardsPoints, joinedAt: r.customerSince } : null,
         profile: { favoriteCategories: [], favoriteBrands: [], visitsPerMonth: 0, avgBasketCents: 0, preferredDay: null, preferredTime: null }
       };
       this.opps.push(this.newOpp(actor.orgId, customer, IMPORT_RATIONALE));
       this.customerMeta.set(id, { createdAt: now, source: "csv" });
+      for (const ch of ["sms", "email"] as const) {
+        const v = normalizeContact(ch, ch === "sms" ? r.phone : r.email);
+        if (v && (ch === "sms" ? customer.smsConsent : customer.emailConsent)) this.recordConsent(actor.orgId, ch, v, "opt_in", "import_signup", { actorId: actor.userId });
+      }
       if (r.externalId) keys.externalIds.add(`qv:${r.externalId}`);
       if (phoneKey(r.phone)) keys.phones.add(phoneKey(r.phone)!);
       if (emailKey(r.email)) keys.emails.add(emailKey(r.email)!);
@@ -659,6 +665,55 @@ export class MemoryStore implements OutreachStore {
   private readonly startedAt = new Date().toISOString();
 
   /** Stamps the customer's last outreach send on this channel (every opportunity for that customer shares it). */
+  // ── Order history import ──
+  private orderIds = new Map<string, Set<string>>();
+  private ordersOf(orgId: string) { let s = this.orderIds.get(orgId); if (!s) this.orderIds.set(orgId, s = new Set()); return s; }
+  async existingOrderIds(actor: Actor, ids: string[]) {
+    this.assertMember(actor);
+    const have = this.ordersOf(actor.orgId);
+    return new Set(ids.filter(id => have.has(id)));
+  }
+  private findCustomer(orgId: string, c: Order["customer"]): Customer | null {
+    const p = phoneKey(c.phone), e = emailKey(c.email), x = c.externalId ? `qv:${c.externalId}` : null;
+    const all = this.orgCustomers(orgId);
+    return (x && all.find(k => k.externalId === x)) || (p && all.find(k => phoneKey(k.phone) === p)) || (e && all.find(k => emailKey(k.email) === e)) || null;
+  }
+  async importOrders(actor: Actor, orders: Order[]) {
+    this.assertMember(actor);
+    assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
+    const have = this.ordersOf(actor.orgId);
+    const r = { inserted: 0, existing: 0, customersCreated: 0, unlinked: 0 };
+    for (const o of orders) {
+      if (have.has(o.externalId)) { r.existing++; continue; }
+      let c = this.findCustomer(actor.orgId, o.customer);
+      if (!c) {
+        if (!o.customer.phone && !o.customer.email) { r.unlinked++; continue; }
+        const [first, last] = splitName(o.customer.name ?? undefined);
+        await this.importCustomers(actor, [{ row: 0, externalId: o.customer.externalId, firstName: (first ?? "Customer").slice(0, 100), lastName: (last ?? "").slice(0, 100),
+          phone: o.customer.phone, email: o.customer.email, location: null, age: null, lastPurchaseAt: null, lifetimeSpendCents: 0, rewardsPoints: null, lifetimeOrders: null, customerSince: null }], IN_STORE_SIGNUP);
+        c = this.findCustomer(actor.orgId, o.customer)!;
+        r.customersCreated++;
+      }
+      const items = o.items.map((i, j) => ({ productId: `item:${i.name.toLowerCase()}`, name: i.name, category: i.category?.toLowerCase() ?? null, brand: i.brand,
+        priceCents: i.unitPriceCents, imageUrl: null, purchasedAt: new Date(Date.parse(o.at) - j).toISOString() }));
+      for (const opp of this.opps) {
+        if (opp.orgId !== actor.orgId || opp.customer.id !== c.id) continue;
+        const cu = opp.customer;
+        cu.purchases = [...items, ...cu.purchases].sort((a, b) => b.purchasedAt.localeCompare(a.purchasedAt));
+        cu.itemsPurchased = cu.purchases.length;
+        cu.lifetimeSpendCents += Math.max(0, o.totalCents);
+        if (!cu.lastPurchaseAt || cu.lastPurchaseAt < o.at) cu.lastPurchaseAt = o.at;
+        const cats = new Map<string, number>();
+        for (const p of cu.purchases) if (p.category) cats.set(p.category, (cats.get(p.category) ?? 0) + 1);
+        cu.profile.favoriteCategories = [...cats.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k]) => k);
+      }
+      have.add(o.externalId);
+      r.inserted++;
+    }
+    this.audit(actor, "orders_imported", r);
+    return r;
+  }
+
   private touchLastSent(orgId: string, customerId: string | null, channel: Channel, at: string) {
     if (!customerId) return;
     for (const x of this.opps) {

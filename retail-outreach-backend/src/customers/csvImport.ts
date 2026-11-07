@@ -16,12 +16,18 @@ export type ImportCustomer = {
   lastPurchaseAt: string | null;
   lifetimeSpendCents: number;
   rewardsPoints: number | null;
+  lifetimeOrders: number | null;
   customerSince: string | null;
 };
 export type InvalidRow = { row: number; reason: string };
 export type ParsedImport = { customers: ImportCustomer[]; invalid: InvalidRow[]; duplicatesInFile: number };
 export type ExistingKeys = { externalIds: Set<string>; phones: Set<string>; emails: Set<string> };
 export type ImportConsent = { smsConsent: boolean; emailConsent: boolean; ageVerified: boolean };
+/**
+ * Imported customers signed up in store, where marketing consent (texts + email) and 21+ ID are checked at signup.
+ * Each import records an `opt_in` consent event with source `import_signup` per contact, so the audit trail shows where consent came from.
+ */
+export const IN_STORE_SIGNUP: ImportConsent = { smsConsent: true, emailConsent: true, ageVerified: true };
 
 export const MAX_IMPORT_ROWS = 5000;
 
@@ -41,6 +47,7 @@ const COLUMNS = {
   since: ["customersince", "joined", "signupdate", "createdat"],
   lastOrder: ["lastorderdate", "lastpurchase", "lastvisit", "lastorder"],
   spend: ["lifetimespend", "totalspend", "lifetimevalue"],
+  orders: ["lifetimeorders", "totalorders", "orders", "ordercount"],
   points: ["loyaltypoints", "points", "rewardpoints"],
   disabled: ["disabledinquickvee", "disabled", "inactive"]
 } as const;
@@ -107,6 +114,7 @@ export function parseCustomerCsv(text: string, opts: { tz?: string; now?: number
       age: ageFrom(toIso(get("dob") || undefined, opts.tz), opts.now),
       lastPurchaseAt: toIso(get("lastOrder") || undefined, opts.tz),
       lifetimeSpendCents: Math.max(0, toCents(get("spend"))),
+      lifetimeOrders: /^\d+$/.test(get("orders").replace(/,/g, "")) ? Number(get("orders").replace(/,/g, "")) : null,
       rewardsPoints: points !== null && Number.isFinite(points) && points >= 0 ? points : null,
       customerSince: toIso(get("since") || undefined, opts.tz)?.slice(0, 10) ?? null
     });

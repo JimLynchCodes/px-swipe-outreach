@@ -320,7 +320,8 @@ Summary cards (here and on Cost metrics) share a `MetricCard` layout: a small up
   2. The popup lists the new customers, with **Submit** and **Cancel**.
   3. Submit calls `POST /api/customers/import`. The server re-parses and re-dedupes inside the transaction, using a per-org advisory lock, and never trusts the preview.
   4. A success modal opens; **OK** closes it.
-- **Consent:** CSVs don't carry marketing consent, so the popup has three unchecked boxes: agreed to texts, agreed to emails, and ID checked 21+. Unchecked means the deck won't contact them on that channel.
+- **Consent and age:** imported customers are added as **opted in to texts and email and verified 21+**, because the store checks both at in-store signup. There are no checkboxes. Each import writes one `opt_in` consent event per contact with source `import_signup` (shown as in-store signup via import), and records the importing user, so the opt-out/consent history shows where consent came from. A customer verified 21+ with no birth date on file is contactable; a known age under 21 never is.
+- **Lifetime orders:** the CSV's `Lifetime orders` column is stored in `customers.lifetime_orders`. The card shows it as "Lifetime Orders" until real purchase history is loaded.
 - **Security:** imports run as the signed-in user under RLS (customer and opportunity inserts are owner/admin only). Limits are 5 MB and 5,000 rows per upload.
 - **Deck:** each imported customer gets a pending opportunity in the `manual` campaign, so they show up in the deck.
 
@@ -333,3 +334,24 @@ Clicking a customer calls `POST /api/customers/:id/open`, which returns their op
 - The deck shows that card first with a fresh suggestion.
 - An explicit pick **bypasses the cooldown filter**: `GET /api/outreach/:id?pick=1`, and the suggestion and send calls carry `ignoreCooldown: true`.
 - If the last text or email falls inside the Settings cooldown window, the card shows it larger and in red, with the date the cooldown ends.
+
+## Manually add order history (CSV)
+
+**Data sync → Order history from a file → Manually add** uploads an order-history CSV, one row per line item with the order columns repeated:
+
+```
+Order ID,Date,Customer ID,Customer name,Phone,Email,Item,SKU,Category,Brand,Qty,Unit price,Item discount,Order discount,Subtotal,Total,Payment
+```
+
+This is exactly what `npm run scrape:quickvee:orders` writes (see `docs/DATA_SYNC.md`). Other exports work when their headers match the Quickvee aliases (`CSV_ALIASES`). Dates may be ISO or store-local (`11/03/2026 3:04 PM`).
+
+- **Preview** (`POST /api/orders/import/preview`):
+  - Lists the orders not already loaded. Dedupe is by order ID (`purchases.external_id = qv:<Order ID>`, the same key the Quickvee sync uses, so manual and scheduled loads never double count).
+  - Each order shows its customer link: **Customer on file** (matched by POS id, then phone last-10 digits, then email), **New customer** (has a phone or email, so one is created), or **No customer (skipped)** (a walk-in with no contact, flagged and not imported).
+  - Invalid rows (missing order ID, bad date) are listed with reasons.
+  - Submit and Cancel, then a success modal with OK.
+- **Write** (`POST /api/orders/import`):
+  - Owner/admin, as the signed-in user under RLS, with a per-org advisory lock. Dedupe is re-checked server-side.
+  - Rows go into the same `purchases` and `purchase_items` tables the data sync uses (`source = 'csv'`).
+  - New customers get in-store signup consent (an `import_signup` event) and a deck card.
+  - Buying profiles are then recomputed for every touched customer: lifetime spend, last purchase, AOV, visits per month, typical day and time, top categories and brands. That feeds the card's purchase history and the suggestions.

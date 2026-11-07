@@ -19,7 +19,8 @@ export function isValidEmail(email: string | null): boolean {
 export const MIN_AGE = 21;
 /** Age-restricted retail: only market to customers whose ID was checked and who are 21+. */
 export function isAgeEligible(customer: Pick<Customer, "age" | "ageVerified">): boolean {
-  return customer.ageVerified && customer.age !== null && customer.age >= MIN_AGE;
+  // Verified at the counter (ID checked) counts even when the POS has no birth date; a known age under 21 never does.
+  return customer.ageVerified && (customer.age === null || customer.age >= MIN_AGE);
 }
 
 export function canContact(customer: Customer, channel: Channel): boolean {
@@ -150,6 +151,7 @@ export function toCardDto(opp: Opportunity, now = Date.now(), cooldown: Cooldown
       lifetimeSpendCents: c.lifetimeSpendCents,
       daysSinceLastPurchase: daysSince(c.lastPurchaseAt, now),
       itemsPurchased: c.itemsPurchased,
+      lifetimeOrders: c.lifetimeOrders ?? null,
       ageVerified: isAgeEligible(c),
       profile: c.profile,
       contact: {

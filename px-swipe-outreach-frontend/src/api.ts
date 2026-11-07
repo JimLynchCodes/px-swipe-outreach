@@ -1,4 +1,4 @@
-import type { CustomerSummary, ImportConsent, ImportPreview, SyncFrequency, SyncJobId, SyncOverview, SyncRun, SyncSchedule, CostReport, PerformanceReport,
+import type { CustomerSummary, OrderImportPreview, ImportPreview, SyncFrequency, SyncJobId, SyncOverview, SyncRun, SyncSchedule, CostReport, PerformanceReport,
   AiModelOption, CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
   SendResult, Suggestion,
 } from './types'
@@ -115,8 +115,13 @@ export const api = {
       request<{ items: CustomerSummary[]; total: number; page: number; pageSize: number }>(`/api/customers?${new URLSearchParams({ ...(search ? { search } : {}), page: String(page) })}`),
     open: (id: string) => request<{ opportunityId: string }>(`/api/customers/${encodeURIComponent(id)}/open`, { method: 'POST' }).then(r => r.opportunityId),
     preview: (csv: string) => request<ImportPreview>('/api/customers/import/preview', { method: 'POST', body: JSON.stringify({ csv }) }),
-    import: (csv: string, consent: ImportConsent) =>
-      request<{ inserted: number; existing: number; invalid: number; duplicatesInFile: number }>('/api/customers/import', { method: 'POST', body: JSON.stringify({ csv, ...consent }) }),
+    import: (csv: string) =>
+      request<{ inserted: number; existing: number; invalid: number; duplicatesInFile: number }>('/api/customers/import', { method: 'POST', body: JSON.stringify({ csv }) }),
+  },
+  orders: {
+    preview: (csv: string) => request<OrderImportPreview>('/api/orders/import/preview', { method: 'POST', body: JSON.stringify({ csv }) }),
+    import: (csv: string) =>
+      request<{ inserted: number; existing: number; customersCreated: number; unlinked: number; invalid: number }>('/api/orders/import', { method: 'POST', body: JSON.stringify({ csv }) }),
   },
   settings: {
     get: () => request<{ settings: OrgSettings }>('/api/settings').then(r => r.settings),

@@ -30,6 +30,8 @@ export interface OutreachCard {
     lifetimeSpendCents: number
     daysSinceLastPurchase: number | null
     itemsPurchased: number
+    /** POS lifetime order count (CSV import); optional for older servers. */
+    lifetimeOrders?: number | null
     ageVerified: boolean
     profile: BuyingProfile
     contact: {
@@ -100,7 +102,13 @@ export interface CustomerSummary {
 }
 export interface ImportPreviewRow { row: number; name: string; phone: string | null; email: string | null; location: string | null; lifetimeSpendCents: number; lastPurchaseAt: string | null }
 export interface ImportPreview { newCustomers: ImportPreviewRow[]; existing: number; duplicatesInFile: number; invalid: Array<{ row: number; reason: string }>; totalRows: number }
-export interface ImportConsent { smsConsent: boolean; emailConsent: boolean; ageVerified: boolean }
+
+export type OrderLink = 'existing' | 'new' | 'unlinked'
+export interface OrderPreviewRow { orderId: string; at: string; totalCents: number; items: number; itemSummary: string; customer: string | null; link: OrderLink }
+export interface OrderImportPreview {
+  newOrders: OrderPreviewRow[]; newOrderCount: number; existing: number; invalid: Array<{ row: number; reason: string }>
+  links: Record<OrderLink, number>; totalCents: number
+}
 
 export interface OrgSettings {
   storeName: string | null

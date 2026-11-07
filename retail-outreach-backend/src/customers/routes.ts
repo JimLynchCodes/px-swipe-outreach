@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { Actor } from "../types.js";
 import type { OutreachStore } from "../store/types.js";
 import { StoreError } from "../store/types.js";
-import { ImportError, isExisting, parseCustomerCsv, toPreview } from "./csvImport.js";
+import { IN_STORE_SIGNUP, ImportError, isExisting, parseCustomerCsv, toPreview } from "./csvImport.js";
 
 type Deps = { store: OutreachStore; actorOf: (req: any) => Actor; timezone?: string;
   sendError: (reply: FastifyReply, status: number, code: string, error: string, details?: string[]) => unknown };
@@ -44,13 +44,12 @@ export async function customerRoutes(app: FastifyInstance, { store, actorOf, sen
   /** Writes the new customers. The server re-parses and re-dedupes (never trusts the preview). */
   app.post("/api/customers/import", { bodyLimit: IMPORT_BODY_LIMIT }, async (request, reply) => {
     const actor = manager(request);
-    const body = csvBody.extend({
-      smsConsent: z.boolean().default(false), emailConsent: z.boolean().default(false), ageVerified: z.boolean().default(false)
-    }).strict().parse(request.body ?? {});
+    const body = csvBody.strict().parse(request.body ?? {});
     const parsed = parse(body.csv, reply);
     if (!parsed) return reply;
     if (!parsed.customers.length) return sendError(reply, 422, "nothing_to_import", "No valid customer rows in this file.");
-    const r = await store.importCustomers(actor, parsed.customers, { smsConsent: body.smsConsent, emailConsent: body.emailConsent, ageVerified: body.ageVerified });
+    // Consent + 21+ were checked at in-store signup; recorded as source import_signup in the consent history.
+    const r = await store.importCustomers(actor, parsed.customers, IN_STORE_SIGNUP);
     return reply.code(201).send({ ...r, invalid: parsed.invalid.length, duplicatesInFile: parsed.duplicatesInFile });
   });
 

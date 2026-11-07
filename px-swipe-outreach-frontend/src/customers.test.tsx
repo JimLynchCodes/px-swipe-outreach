@@ -43,17 +43,18 @@ describe('Data sync → Manually add', () => {
       'POST /api/customers/import': () => json({ inserted: 1, existing: 2, invalid: 1, duplicatesInFile: 1 }, 201),
     })
     go('/data-sync')
-    fireEvent.click(await screen.findByRole('button', { name: 'Manually add' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Manually add customers' }))
     pickFile(CSV)
     const dialog = await screen.findByRole('dialog', { name: 'Add 1 new customer?' })
     expect(within(dialog).getByText('Avery Test')).toBeInTheDocument()
     expect(within(dialog).getByText(/2 already in your customers · 1 repeated in the file · 1 invalid/)).toBeInTheDocument()
     expect(calls.find(c => c.url.endsWith('/import/preview'))!.body).toEqual({ csv: CSV })
-    fireEvent.click(within(dialog).getByLabelText(/marketing texts/))
+    expect(within(dialog).getByText(/opted in to texts and email and verified 21\+/)).toBeInTheDocument()
+    expect(within(dialog).queryByRole('checkbox')).toBeNull()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Submit' }))
     const ok = await screen.findByRole('dialog', { name: 'Customers added' })
     expect(ok).toHaveTextContent('Added 1 new customer. 2 already existed')
-    expect(calls.find(c => c.url.endsWith('/api/customers/import'))!.body).toEqual({ csv: CSV, smsConsent: true, emailConsent: false, ageVerified: false })
+    expect(calls.find(c => c.url.endsWith('/api/customers/import'))!.body).toEqual({ csv: CSV })
     fireEvent.click(within(ok).getByRole('button', { name: 'OK' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
@@ -61,7 +62,7 @@ describe('Data sync → Manually add', () => {
   it('Cancel writes nothing', async () => {
     const calls = backend({ 'POST /api/customers/import/preview': () => json(PREVIEW) })
     go('/data-sync')
-    await screen.findByRole('button', { name: 'Manually add' })
+    await screen.findByRole('button', { name: 'Manually add customers' })
     pickFile(CSV)
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
@@ -71,7 +72,7 @@ describe('Data sync → Manually add', () => {
   it('shows server and file errors', async () => {
     backend({ 'POST /api/customers/import/preview': () => json({ error: 'The CSV needs a Phone or Email column.', code: 'invalid_csv' }, 422) })
     go('/data-sync')
-    await screen.findByRole('button', { name: 'Manually add' })
+    await screen.findByRole('button', { name: 'Manually add customers' })
     pickFile('a,b\n1,2')
     expect(await screen.findByRole('alert')).toHaveTextContent('Phone or Email column')
     pickFile('x', 'photo.png', 'image/png')
@@ -84,7 +85,7 @@ describe('Data sync → Manually add', () => {
       'POST /api/customers/import': () => json({ error: 'Database unavailable' }, 503),
     })
     go('/data-sync')
-    await screen.findByRole('button', { name: 'Manually add' })
+    await screen.findByRole('button', { name: 'Manually add customers' })
     pickFile(CSV)
     fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Submit' }))
     expect(await within(screen.getByRole('dialog')).findByRole('alert')).toHaveTextContent('Database unavailable')
@@ -130,5 +131,48 @@ describe('Registered users', () => {
     expect(line).toHaveTextContent('Last email 40d ago')
     await waitFor(() => expect(calls.find(c => c.url.endsWith('/opp_9/suggestion'))?.body).toEqual({ channel: 'sms', ignoreCooldown: true }))
     expect(window.location.search).toBe('')
+  })
+})
+
+const ORDER_PREVIEW = {
+  newOrders: [
+    { orderId: 'A-1002', at: '2026-11-03T20:04:00Z', totalCents: 99500, items: 1, itemSummary: 'Koi CBD Gummies 20ct', customer: 'Riley Newcomer', link: 'new' },
+    { orderId: 'A-1003', at: '2026-11-04T17:00:00Z', totalCents: 214, items: 1, itemSummary: 'Lighter', customer: null, link: 'unlinked' },
+    { orderId: 'A-1001', at: '2026-11-01T19:30:00Z', totalCents: 3852, items: 2, itemSummary: '2× Padrón 1964 Maduro, Cutter', customer: 'Jamal Carter', link: 'existing' },
+  ],
+  newOrderCount: 3, existing: 4, invalid: [{ row: 5, reason: 'Missing order ID' }], links: { existing: 1, new: 1, unlinked: 1 }, totalCents: 103352,
+}
+const pickOrders = (content: string) =>
+  fireEvent.change(screen.getByLabelText('Order history CSV file'), { target: { files: [new File([content], 'orders.csv', { type: 'text/csv' })] } })
+
+describe('Data sync → Manually add (order history)', () => {
+  it('previews new orders with customer links, submits, then OK closes the success modal', async () => {
+    const calls = backend({
+      'POST /api/orders/import/preview': () => json(ORDER_PREVIEW),
+      'POST /api/orders/import': () => json({ inserted: 2, existing: 4, customersCreated: 1, unlinked: 1, invalid: 1 }, 201),
+    })
+    go('/data-sync')
+    await screen.findByRole('button', { name: 'Manually add orders' })
+    pickOrders('Order ID,Date\nA-1,2026-11-01\n')
+    const dialog = await screen.findByRole('dialog', { name: 'Add 2 new orders?' })
+    expect(within(dialog).getByText(/4 already loaded · 1 for new customers \(they'll be created\) · 1 with no customer/)).toBeInTheDocument()
+    expect(within(dialog).getByText('No customer (skipped)')).toBeInTheDocument()
+    expect(within(dialog).getByText(/2× Padrón 1964 Maduro, Cutter/)).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Submit' }))
+    const ok = await screen.findByRole('dialog', { name: 'Orders added' })
+    expect(ok).toHaveTextContent('Added 2 orders to purchase history. Created 1 new customer. 4 were already loaded. 1 had no customer and were skipped.')
+    expect(calls.find(c => c.url.endsWith('/api/orders/import'))!.body).toEqual({ csv: 'Order ID,Date\nA-1,2026-11-01\n' })
+    fireEvent.click(within(ok).getByRole('button', { name: 'OK' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+
+  it('Cancel writes nothing; errors are shown', async () => {
+    const calls = backend({ 'POST /api/orders/import/preview': () => json(ORDER_PREVIEW) })
+    go('/data-sync')
+    await screen.findByRole('button', { name: 'Manually add orders' })
+    pickOrders('x')
+    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(calls.some(c => c.url.endsWith('/api/orders/import'))).toBe(false)
   })
 })
