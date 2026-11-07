@@ -1,7 +1,8 @@
-import { z } from "zod";
 import { daysSince, discountLabel, withEmailFooter, withSmsOptOut, WEEKDAYS } from "../domain.js";
-import { categoryLabel } from "../recommend.js";
-import type { Channel, Opportunity, Recommendation, Suggestion } from "../types.js";
+import { bestDealDay, categoryLabel, dealRunsOn, sendTiming } from "../recommend.js";
+import { checkCopy, type Violation } from "../ai/compliance.js";
+import { AI_JSON_SCHEMA, aiOutputSchema, systemPrompt, userPayload, type AiOutput, type PromptContext } from "../ai/prompt.js";
+import type { BrandVoice, Channel, Deal, Opportunity, Recommendation, Suggestion } from "../types.js";
 import { DEFAULT_AI_MODEL, modelInfo, PROVIDERS, RULES_MODEL } from "../ai/models.js";
 
 export type SuggestionInput = {
@@ -10,6 +11,11 @@ export type SuggestionInput = {
   signatures?: { sms: string; email: string };
   /** Org's chosen model (src/ai/models.ts). Providers that don't serve it ignore it. */
   model?: string;
+  /** All org promotions; the AI provider filters to enabled, running and within-cap ones. */
+  promotions?: Deal[];
+  maxDiscountPercent?: number;
+  voice?: BrandVoice;
+  now?: Date;
 };
 
 /** Anything that can turn an opportunity into a suggested outreach message. */
@@ -88,74 +94,128 @@ export class RulesSuggestionProvider implements SuggestionProvider {
   }
 }
 
-const outputSchema = z.object({
-  title: z.string().min(1).max(80),
-  reasoning: z.string().min(1).max(400),
-  message: z.string().min(1).max(5000),
-  subject: z.string().max(200).nullable()
-});
+/** Minimal slice of the OpenAI SDK used here (injectable for tests and recorded evals). */
+export type ChatCompletionClient = {
+  create(params: Record<string, unknown>, opts?: { signal?: AbortSignal; timeout?: number; maxRetries?: number }): Promise<{
+    choices: Array<{ message?: { content?: string | null } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+  }>;
+};
 
-/** OpenAI structured-output provider. Writes copy for the deal the engine already chose; minimal customer facts only. */
+/** Thrown when the AI attempt fails (API error, bad JSON, or compliance rejection twice). Carries tokens already spent. */
+export class AiAttemptError extends Error {
+  constructor(message: string, readonly model: string, readonly usage: { inputTokens: number; outputTokens: number }, readonly violations: Violation[] = [], options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "AiAttemptError";
+  }
+}
+
+export type OpenAIProviderOptions = {
+  /** Injected client (tests/evals). Default: the official SDK with SDK-level retries + exponential backoff. */
+  client?: ChatCompletionClient;
+  /** Per-request timeout (ms). */
+  timeoutMs?: number;
+  /** SDK retries with exponential backoff on 408/409/429/5xx/connection errors. */
+  maxRetries?: number;
+  /** Extra generations allowed after a compliance rejection (each gets the violations as feedback). */
+  regenerations?: number;
+  temperature?: number;
+  maxCompletionTokens?: number;
+};
+
+/** Promotions the model may choose from: enabled, running within the next 7 days, and within the discount cap. */
+export function eligiblePromotions(deals: Deal[], maxDiscountPercent: number, now = Date.now()): Deal[] {
+  return deals.filter(d => d.active && [0, 1, 2, 3, 4, 5, 6].some(day => dealRunsOn(d, day, now))
+    && !(d.discountType === "percent" && (d.discountValue ?? 0) > maxDiscountPercent));
+}
+
+const DEFAULT_VOICE: BrandVoice = { preset: "friendly", emoji: false, signOff: "", about: "" };
+
+/**
+ * OpenAI structured-output provider. Chooses one promotion (or none) from the eligible list and writes copy in the
+ * org's brand voice; output is zod-validated and checked by the compliance validator (src/ai/compliance.ts).
+ * A rejected draft is regenerated once with the violations as feedback; a second failure throws AiAttemptError so the
+ * router falls back to rules (and still records the tokens spent).
+ */
 export class OpenAISuggestionProvider implements SuggestionProvider {
   readonly name = "openai" as const;
-  constructor(private apiKey: string, private defaultModel: string = DEFAULT_AI_MODEL) {}
+  private opts: Required<Omit<OpenAIProviderOptions, "client">> & { client?: ChatCompletionClient };
+  constructor(private apiKey: string, private defaultModel: string = DEFAULT_AI_MODEL, opts: OpenAIProviderOptions = {}) {
+    this.opts = { timeoutMs: 15_000, maxRetries: 2, regenerations: 1, temperature: 0.3, maxCompletionTokens: 500, ...opts };
+  }
+
+  private async client(): Promise<ChatCompletionClient> {
+    if (this.opts.client) return this.opts.client;
+    const { default: OpenAI } = await import("openai");
+    const sdk = new OpenAI({ apiKey: this.apiKey, maxRetries: this.opts.maxRetries, timeout: this.opts.timeoutMs });
+    return { create: (params, o) => sdk.chat.completions.create(params as never, o) as never };
+  }
 
   async suggest(input: SuggestionInput): Promise<Suggestion> {
     const model = input.model && modelInfo(input.model)?.provider === "openai" ? input.model : this.defaultModel;
-    const { opportunity, channel, businessName, recommendation: rec } = input;
-    const { default: OpenAI } = await import("openai");
-    const client = new OpenAI({ apiKey: this.apiKey });
-    const c = opportunity.customer;
-    const response = await client.chat.completions.create({
-      model,
-      ...(modelInfo(model)?.reasoning ? {} : { temperature: 0.7 }),
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "outreach_suggestion", strict: true,
-          schema: {
-            type: "object", additionalProperties: false,
-            properties: {
-              title: { type: "string" }, reasoning: { type: "string" },
-              message: { type: "string" }, subject: { type: ["string", "null"] }
-            },
-            required: ["title", "reasoning", "message", "subject"]
-          }
-        }
-      },
-      messages: [
-        {
-          role: "system",
-          content: `You write friendly, never-pushy outreach for ${businessName}, a licensed smoke shop (vape, CBD, glass, papers, cigars, hookah). Customers are verified adults 21+.
-Goal: get the customer to visit and grow their basket, using ONLY the supplied deal (or fallback offer).
-Rules: only use supplied facts; never invent prices, discounts, stock, or dates. Identify the shop by name. No health or medical claims (especially about CBD), no claims about effects, nothing appealing to minors, no cartoon/youth language. Include "21+" once. Do not mention internal scores, segments, or analytics.
-"title" is a short action for staff (e.g. "Invite them to Cigar Friday (20% off)"); "reasoning" is 1-2 sentences for staff explaining why this deal fits this customer.
-${channel === "sms" ? 'SMS under 130 characters; do not add a signature or opt-out text (both are appended automatically); "subject" must be null.' : "Short email with a subject; do not sign it (the store signature and unsubscribe footer are appended automatically)."}`
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            channel,
-            customer: {
-              firstName: c.firstName,
-              daysSinceLastVisit: daysSince(c.lastPurchaseAt),
-              favoriteCategories: c.profile.favoriteCategories, favoriteBrands: c.profile.favoriteBrands,
-              visitsPerMonth: c.profile.visitsPerMonth, preferredDay: c.profile.preferredDay === null ? null : WEEKDAYS[c.profile.preferredDay],
-              recentItems: c.purchases.slice(0, 5).map(p => p.name)
-            },
-            whyChosen: rec.reasons,
-            deal: rec.deal ? { title: rec.deal.title, description: rec.deal.description, day: WEEKDAYS[rec.dealDay ?? rec.deal.days[0]], discount: discountLabel(rec.deal) } : null,
-            fallbackOffer: rec.deal ? null : opportunity.offer
-          })
-        }
-      ]
-    });
-    const content = response.choices[0]?.message?.content;
-    if (!content) throw new Error("AI returned an empty response");
-    const usage = response.usage ? { inputTokens: response.usage.prompt_tokens ?? 0, outputTokens: response.usage.completion_tokens ?? 0 } : undefined;
-    return finalizeSuggestion(outputSchema.parse(JSON.parse(content)), input, this.name, { model, usage });
+    const now = input.now ?? new Date();
+    const cap = input.maxDiscountPercent ?? 100;
+    const promotions = eligiblePromotions(input.promotions ?? (input.recommendation.deal ? [input.recommendation.deal] : []), cap, now.getTime());
+    const c = input.opportunity.customer;
+    const ctx: PromptContext = {
+      storeName: input.businessName, voice: input.voice ?? DEFAULT_VOICE, channel: input.channel, smsSignature: input.signatures?.sms ?? "",
+      maxDiscountPercent: cap, customer: c, segment: input.recommendation.segment, promotions,
+      recommendation: input.recommendation, offer: input.opportunity.offer, now
+    };
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "system", content: systemPrompt(ctx) },
+      { role: "user", content: JSON.stringify(userPayload(ctx)) }
+    ];
+    const client = await this.client();
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    let violations: Violation[] = [];
+    for (let attempt = 0; attempt <= this.opts.regenerations; attempt++) {
+      let content: string | null | undefined;
+      try {
+        const res = await client.create({
+          model, messages,
+          ...(modelInfo(model)?.reasoning ? {} : { temperature: this.opts.temperature }),
+          max_completion_tokens: this.opts.maxCompletionTokens,
+          response_format: { type: "json_schema", json_schema: AI_JSON_SCHEMA }
+        }, { timeout: this.opts.timeoutMs, maxRetries: this.opts.maxRetries });
+        usage.inputTokens += res.usage?.prompt_tokens ?? 0;
+        usage.outputTokens += res.usage?.completion_tokens ?? 0;
+        content = res.choices[0]?.message?.content;
+      } catch (e) {
+        throw new AiAttemptError(`OpenAI request failed: ${(e as Error).message}`, model, usage, [], { cause: e });
+      }
+      let out: AiOutput;
+      try { out = aiOutputSchema.parse(JSON.parse(content ?? "")); }
+      catch { violations = [{ code: "bad_output", message: "Output was not valid JSON for the schema." }]; messages.push({ role: "assistant", content: content ?? "" }, { role: "user", content: feedback(violations) }); continue; }
+      const promo = out.promotion_id ? promotions.find(d => d.id === out.promotion_id) ?? null : null;
+      violations = out.promotion_id && !promo ? [{ code: "unknown_promotion", message: `promotion_id "${out.promotion_id}" is not in PROMOTIONS.` }] : [];
+      const check = checkCopy({ smsText: out.sms_text, emailSubject: out.email_subject, emailBody: out.email_body }, {
+        channel: input.channel, firstName: c.firstName, lastName: c.lastName, promotion: promo,
+        offerPercent: promo ? null : input.opportunity.offer?.discountPercent ?? null, maxDiscountPercent: cap, smsSignature: ctx.smsSignature, now
+      });
+      violations.push(...check.violations);
+      if (!violations.length) return this.toSuggestion(out, promo, input, model, usage, now);
+      messages.push({ role: "assistant", content: content ?? "" }, { role: "user", content: feedback(violations) });
+    }
+    throw new AiAttemptError(`AI copy rejected: ${violations.map(v => v.code).join(", ")}`, model, usage, violations);
+  }
+
+  private toSuggestion(out: AiOutput, promo: Deal | null, input: SuggestionInput, model: string, usage: { inputTokens: number; outputTokens: number }, now: Date): Suggestion {
+    const pref = input.opportunity.customer.profile;
+    const dealDay = promo ? bestDealDay(promo, pref.preferredDay, now.getTime()) : null;
+    const base = input.recommendation;
+    const sendAt = dealDay !== null ? { ...sendTiming(dealDay, pref.preferredTime), label: out.send_time } : base.sendAt && { ...base.sendAt, label: out.send_time };
+    const rec: Recommendation = { ...base, deal: promo, dealDay, sendAt };
+    const verb = base.segment === "lapsed" ? "Win them back with" : base.segment === "at_risk" ? "Bring them in for" : "Invite them to";
+    const title = promo ? `${verb} ${promo.title} (${discountLabel(promo)})` : input.opportunity.offer ? `${verb} ${input.opportunity.offer.discountPercent}% off` : "Share what's new";
+    const signOff = input.voice?.signOff?.trim();
+    const body = signOff && !out.email_body.includes(signOff) ? `${out.email_body.trim()}\n\n${signOff}` : out.email_body;
+    const s = finalizeSuggestion({ title: title.slice(0, 80), reasoning: out.reason, message: input.channel === "sms" ? out.sms_text : body, subject: input.channel === "email" ? out.email_subject : null },
+      { ...input, recommendation: rec }, this.name, { model, usage });
+    return { ...s, confidence: out.confidence };
   }
 }
+
+const feedback = (v: Violation[]) => `Your draft was rejected. Fix ALL of these and return the full JSON again:\n${v.map(x => `- ${x.message}`).join("\n")}`;
 
 /** Tries the primary provider and falls back to rules on any error. */
 export class FallbackSuggestionProvider implements SuggestionProvider {
@@ -183,13 +243,17 @@ export class ModelRouter implements SuggestionProvider {
     const provider = info && info.provider !== "rules" ? this.providers[info.provider] : undefined;
     if (!provider) return this.rules.suggest(input);
     try { return await provider.suggest({ ...input, model }); }
-    catch (e) { this.onError(e); return this.rules.suggest(input); }
+    catch (e) {
+      this.onError(e);
+      const fallback = await this.rules.suggest(input);
+      return e instanceof AiAttemptError && (e.usage.inputTokens || e.usage.outputTokens) ? { ...fallback, aiAttempt: { model: e.model, usage: e.usage } } : fallback;
+    }
   }
 }
 
-export function createSuggestionProvider(opts: { apiKey?: string; model?: string; onError?: (e: unknown) => void }): SuggestionProvider {
+export function createSuggestionProvider(opts: { apiKey?: string; model?: string; onError?: (e: unknown) => void; openai?: OpenAIProviderOptions }): SuggestionProvider {
   const providers: Partial<Record<string, SuggestionProvider>> = {};
-  if (PROVIDERS.openai.configured({ OPENAI_API_KEY: opts.apiKey })) providers.openai = new OpenAISuggestionProvider(opts.apiKey!, opts.model);
+  if (PROVIDERS.openai.configured({ OPENAI_API_KEY: opts.apiKey })) providers.openai = new OpenAISuggestionProvider(opts.apiKey!, opts.model, opts.openai);
   // e.g. if (opts.anthropicKey) providers.anthropic = new AnthropicSuggestionProvider(opts.anthropicKey);
   return new ModelRouter(providers, new RulesSuggestionProvider(), opts.model ?? DEFAULT_AI_MODEL, opts.onError);
 }

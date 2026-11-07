@@ -215,9 +215,18 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const offer = opp.offer && { ...opp.offer, discountPercent: Math.min(opp.offer.discountPercent, settings.maxDiscountPercent) };
     const suggestion = await suggestions.suggest({
       opportunity: { ...opp, offer: offer && offer.discountPercent > 0 ? offer : null }, channel: body.channel, businessName, recommendation,
-      signatures: { sms: settings.smsSignature, email: settings.emailSignature }, model: settings.aiModel
+      signatures: { sms: settings.smsSignature, email: settings.emailSignature }, model: settings.aiModel,
+      promotions: deals, maxDiscountPercent: settings.maxDiscountPercent, voice: settings.brandVoice
     });
-    await store.saveSuggestion(actor, id, suggestion);
+    await store.saveSuggestion(actor, id, { ...suggestion, aiAttempt: undefined });
+    if (suggestion.aiAttempt) {
+      // Recorded first so the main row stays the latest (markAiUsageSent). Tokens burned by a failed/rejected AI attempt before the rules fallback still cost money.
+      const a = suggestion.aiAttempt;
+      await store.recordAiUsage(actor, {
+        opportunityId: id, model: a.model, provider: modelInfo(a.model)?.provider ?? "openai", inputTokens: a.usage.inputTokens, outputTokens: a.usage.outputTokens,
+        costUsd: costUsd(a.model, a.usage.inputTokens, a.usage.outputTokens), priceVersion: PRICE_TABLE_VERSION, dealId: null, dealTitle: null
+      }).catch(e => request.log.warn({ err: e }, "failed to record AI usage"));
+    }
     // Cost metrics: one row per suggestion call (rules = $0). Never block the suggestion on metrics.
     const info = modelInfo(suggestion.model);
     await store.recordAiUsage(actor, {
@@ -226,7 +235,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       costUsd: suggestion.usage ? costUsd(suggestion.model, suggestion.usage.inputTokens, suggestion.usage.outputTokens) : 0,
       priceVersion: PRICE_TABLE_VERSION, dealId: suggestion.deal?.id ?? null, dealTitle: suggestion.deal?.title ?? null
     }).catch(e => request.log.warn({ err: e }, "failed to record AI usage"));
-    const { usage: _u, ...publicSuggestion } = suggestion;
+    const { usage: _u, aiAttempt: _a, ...publicSuggestion } = suggestion;
     return { suggestion: publicSuggestion };
   });
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { fakeSupabase, makeApp } from "./helpers.js";
+import { createSuggestionProvider } from "../src/providers/ai.js";
 import { MemoryStore } from "../src/store/memory.js";
-import { DEMO_ORG, DEMO_ORG_ID } from "../src/data/seed.js";
+import { DEMO_ORG, DEMO_ORG_ID, DEMO_USER_ID } from "../src/data/seed.js";
 import { costReport } from "../src/metrics/cost.js";
 import { attribute, performanceReport } from "../src/metrics/performance.js";
 import { buildDemoMetrics } from "../src/data/demoMetrics.js";
@@ -85,6 +86,18 @@ describe("metrics API (demo mode)", () => {
     expect(perf.json().attributionDays).toBe(10);
     expect(perf.json().leaderboard.all.rows.length).toBeGreaterThanOrEqual(4);
     expect((await a.inject({ url: "/api/metrics/performance?days=0" })).statusCode).toBe(400);
+  });
+
+  it("records tokens wasted by a rejected AI attempt (rules fallback) and the main call as free", async () => {
+    const bad = JSON.stringify({ promotion_id: null, reason: "x", send_time: "now", sms_text: "Hurry, get high!", email_subject: "x", email_body: "x", confidence: 0.1 });
+    const client = { create: async () => ({ choices: [{ message: { content: bad } }], usage: { prompt_tokens: 1000, completion_tokens: 100 } }) };
+    const store = new MemoryStore();
+    const { app: a } = await makeApp({ store, suggestions: createSuggestionProvider({ apiKey: "k", openai: { client } }) });
+    const sug = await a.inject({ method: "POST", url: "/api/outreach/opp_0001/suggestion", payload: { channel: "sms" } });
+    expect(sug.json().suggestion).toMatchObject({ source: "rules", model: "rules" });
+    expect(sug.json().suggestion.aiAttempt).toBeUndefined();
+    const rows = (await store.listAiUsage({ orgId: DEMO_ORG_ID, userId: DEMO_USER_ID } as never, "2000-01-01")).filter(r => !r.isDemo);
+    expect(rows.map(r => [r.model, r.inputTokens, r.outputTokens, r.costUsd > 0])).toEqual([["gpt-4o-mini", 2000, 200, true], ["rules", 0, 0, false]]);
   });
 
   it("a send lands in the ledger with its model and deal; costs are owner/admin only, performance is for everyone", async () => {

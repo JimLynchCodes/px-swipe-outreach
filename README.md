@@ -90,7 +90,7 @@ These pieces are still stubbed:
 * **Real delivery.** Add `MessageProvider`s for Twilio (SMS) and SendGrid or Postmark (email). Inbound STOP/HELP, unsubscribe links and reply threading are done (see [docs/OUTREACH_FEATURES.md](docs/OUTREACH_FEATURES.md)). Still to do: quiet hours and per-customer frequency caps.
 * **Onboarding.** Org creation/self-serve onboarding and ownership-transfer UX.
 * **Live replies.** Replace 15 s polling with Supabase Realtime or SSE.
-* **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. Prompt tuning, brand voice and evals still need work.
+* **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. It uses brand voice, a JSON schema, compliance guardrails with a validator, regeneration and a rules fallback. `npm run eval` runs the eval suite. See [docs/AI_SUGGESTIONS.md](docs/AI_SUGGESTIONS.md).
 * **Analytics.** Track send → redeem → revenue attribution.
 
 ## Real email and SMS

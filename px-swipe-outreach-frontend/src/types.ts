@@ -93,6 +93,17 @@ export interface OrgSettings {
   maxDiscountPercent: number
   /** Suggestion model id; 'rules' = no AI. */
   aiModel: string
+  /** How AI suggestions sound. Optional for older servers. */
+  brandVoice?: BrandVoice
+}
+
+export interface BrandVoice {
+  preset: 'friendly' | 'chill' | 'premium'
+  emoji: boolean
+  /** Email sign-off line, e.g. "See you soon!" */
+  signOff: string
+  /** A few facts about the shop the AI may use for color. */
+  about: string
 }
 
 export type OptOutSource = 'sms_stop' | 'email_unsubscribe' | 'manual' | 'provider'

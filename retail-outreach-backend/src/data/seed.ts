@@ -12,8 +12,10 @@ export const DEMO_SETTINGS = {
   smsSignature: "-Cloud 9",
   defaultChannel: null,
   maxDiscountPercent: 25,
-  aiModel: "gpt-4o-mini"
-} as const;
+  aiModel: "gpt-4o-mini",
+  brandVoice: { preset: "friendly" as const, emoji: false, signOff: "See you soon!",
+    about: "Family-owned smoke shop on Main St since 2014. Big glass wall, walk-in cigar humidor, knowledgeable staff, 21+ only." }
+};
 export const DEMO_ORG = { id: DEMO_ORG_ID, name: "Cloud 9 Smoke Shop", slug: "demo-retailer", businessName: "Cloud 9 Smoke Shop" };
 export const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
 export const DEMO_USER_EMAIL = "demo@px-outreach.local";

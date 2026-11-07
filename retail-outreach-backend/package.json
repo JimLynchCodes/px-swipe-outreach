@@ -19,7 +19,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:db": "vitest run test/db",
-    "db:migrate:prod": "node dist/db/migrate.js"
+    "db:migrate:prod": "node dist/db/migrate.js",
+    "eval": "tsx src/ai/evals/run.ts"
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",

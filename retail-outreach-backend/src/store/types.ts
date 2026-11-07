@@ -161,4 +161,5 @@ export interface OutreachStore {
   close(): Promise<void>;
 }
 
-export const DEFAULT_SETTINGS: OrgSettings = { storeName: null, emailSignature: "", smsSignature: "", defaultChannel: null, maxDiscountPercent: 25, aiModel: DEFAULT_AI_MODEL };
+export const DEFAULT_SETTINGS: OrgSettings = { storeName: null, emailSignature: "", smsSignature: "", defaultChannel: null, maxDiscountPercent: 25, aiModel: DEFAULT_AI_MODEL,
+  brandVoice: { preset: "friendly", emoji: false, signOff: "", about: "" } };

@@ -120,6 +120,10 @@ export type Suggestion = {
   model: string;
   /** Token usage reported by the provider (absent for rules). */
   usage?: { inputTokens: number; outputTokens: number };
+  /** Tokens spent on a failed AI attempt before falling back to rules (recorded in Cost metrics; never sent to clients). */
+  aiAttempt?: { model: string; usage: { inputTokens: number; outputTokens: number } };
+  /** Model's 0-1 confidence that the promotion fits (AI only). */
+  confidence?: number;
   /** Deal the message uses (null = fallback offer or no discount). */
   deal: { id: string; title: string; day: number; discountLabel: string } | null;
   /** Why this outreach was chosen (short bullet points for staff). */
@@ -211,7 +215,12 @@ export type OrgSettings = {
   aiModel: string;
   /** Highest percent discount the engine may offer (deals and fallback offers above it are skipped/capped). */
   maxDiscountPercent: number;
+  /** How AI copy sounds (fed into the prompt). */
+  brandVoice: BrandVoice;
 };
+
+export type VoicePreset = "friendly" | "chill" | "premium";
+export type BrandVoice = { preset: VoicePreset; emoji: boolean; signOff: string; about: string };
 
 export type MessageDirection = "inbound" | "outbound";
 /** message = normal text; opt_out/opt_in/help = keyword replies; auto = automatic compliance reply. */

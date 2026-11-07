@@ -8,9 +8,15 @@ import { emptyDeal, PromotionForm } from '../deals/PromotionForm'
 import { toInput, useDeals } from '../deals/useDeals'
 import { charCount } from '../lib/format'
 import { categoryLabel, DAYS_SHORT, discountLabel, formatRange, rangeStatus } from '../lib/week'
-import type { DealInput, OrgSettings } from '../types'
+import type { BrandVoice, DealInput, OrgSettings } from '../types'
 
 export const SMS_SIGNATURE_MAX = 60
+export const DEFAULT_VOICE: BrandVoice = { preset: 'friendly', emoji: false, signOff: '', about: '' }
+const PRESETS: Record<BrandVoice['preset'], string> = {
+  friendly: 'Friendly local shop: warm, neighborly, plain words',
+  chill: 'Chill: relaxed, short and casual',
+  premium: 'Premium lounge: polished, no slang'
+}
 
 export function SettingsPage() {
   const auth = useAuth()
@@ -31,6 +37,8 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
   useEffect(() => { api.settings.get().then(setS, e => setStatus({ kind: 'err', text: e.message })) }, [])
   if (!s) return <section className="panel">{status ? <p className="error" role="alert">{status.text}</p> : <p className="muted">Loading…</p>}</section>
   const set = <K extends keyof OrgSettings>(k: K, v: OrgSettings[K]) => setS({ ...s, [k]: v })
+  const voice = s.brandVoice ?? DEFAULT_VOICE
+  const setVoice = (v: Partial<BrandVoice>) => set('brandVoice', { ...voice, ...v })
 
   async function save(e: FormEvent) {
     e.preventDefault()
@@ -64,6 +72,23 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
           <input maxLength={SMS_SIGNATURE_MAX} value={s.smsSignature} onChange={e => set('smsSignature', e.target.value.replace(/[\r\n]/g, ''))} placeholder="-Cloud 9" />
         </label>
         <p className="muted small">{charCount(s.smsSignature)}/{SMS_SIGNATURE_MAX} · added to every text and counted in its length. Texts also end with “Reply STOP to opt out.”</p>
+      </fieldset>
+      <h3 className="eyebrow">Brand voice</h3>
+      <p className="muted small">How AI suggestions sound. Compliance rules (no health claims, nothing aimed at minors, no invented deals, discounts within your cap) always apply.</p>
+      <fieldset disabled={!canEdit} aria-label="Brand voice">
+        <div className="row-fields">
+          <label>Voice
+            <select value={voice.preset} onChange={e => setVoice({ preset: e.target.value as BrandVoice['preset'] })}>
+              {(Object.keys(PRESETS) as BrandVoice['preset'][]).map(p => <option key={p} value={p}>{PRESETS[p]}</option>)}
+            </select>
+          </label>
+          <label className="check"><input type="checkbox" checked={voice.emoji} onChange={e => setVoice({ emoji: e.target.checked })} /> Allow emoji</label>
+        </div>
+        <label>Email sign-off<input maxLength={40} value={voice.signOff} onChange={e => setVoice({ signOff: e.target.value.replace(/[\r\n]/g, '') })} placeholder="See you soon!" /></label>
+        <label>About our shop
+          <textarea rows={3} maxLength={500} value={voice.about} onChange={e => setVoice({ about: e.target.value })} placeholder="Family-owned on Main St since 2014. Big humidor, local glass artists." />
+        </label>
+        <p className="muted small">{charCount(voice.about)}/500 · the AI may use these facts for color; it never invents beyond them.</p>
       </fieldset>
       {status && <p className={status.kind === 'err' ? 'error' : 'green'} role={status.kind === 'err' ? 'alert' : 'status'}>{status.text}</p>}
       {canEdit && <div className="form-actions"><button className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</button></div>}

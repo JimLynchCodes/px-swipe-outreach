@@ -160,9 +160,9 @@ async function seedDealsAndSettings(db: pg.PoolClient, orgId: string, id: (n: st
     }
   }
   const st = seed.DEMO_SETTINGS;
-  await db.query(`insert into public.org_settings (org_id, store_name, email_signature, sms_signature, default_channel, max_discount_percent)
-    values ($1,$2,$3,$4,$5,$6) on conflict (org_id) do nothing`,
-    [orgId, st.storeName, st.emailSignature, st.smsSignature, st.defaultChannel, st.maxDiscountPercent]);
+  await db.query(`insert into public.org_settings (org_id, store_name, email_signature, sms_signature, default_channel, max_discount_percent, brand_voice)
+    values ($1,$2,$3,$4,$5,$6,$7) on conflict (org_id) do nothing`,
+    [orgId, st.storeName, st.emailSignature, st.smsSignature, st.defaultChannel, st.maxDiscountPercent, JSON.stringify(st.brandVoice)]);
 }
 
 async function main() {

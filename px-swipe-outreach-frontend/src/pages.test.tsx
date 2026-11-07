@@ -64,6 +64,23 @@ describe('Settings page', () => {
     expect(calls.find(c => c.method === 'PUT')!.body).toMatchObject({ smsSignature: '-C9', defaultChannel: 'email', maxDiscountPercent: 20 })
   })
 
+  it('edits the brand voice', async () => {
+    const calls = backend({
+      'GET /api/settings': () => json({ settings: { ...SETTINGS, brandVoice: { preset: 'friendly', emoji: false, signOff: 'See you soon!', about: '' } } }),
+      'PUT /api/settings': c => json({ settings: c.body }),
+      'GET /api/deals': () => json({ deals: [DEAL] }),
+      'GET /api/catalog': () => json({ products: [], categories: ['cigars'] }),
+    })
+    go('/settings')
+    fireEvent.change(await screen.findByLabelText('Voice'), { target: { value: 'premium' } })
+    fireEvent.click(screen.getByLabelText('Allow emoji'))
+    fireEvent.change(screen.getByLabelText('Email sign-off'), { target: { value: 'Cheers,' } })
+    fireEvent.change(screen.getByLabelText('About our shop'), { target: { value: 'Since 2014' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
+    expect(await screen.findByText('Settings saved')).toBeInTheDocument()
+    expect(calls.find(c => c.method === 'PUT')!.body).toMatchObject({ brandVoice: { preset: 'premium', emoji: true, signOff: 'Cheers,', about: 'Since 2014' } })
+  })
+
   it('toggles, adds and deletes promotions', async () => {
     vi.stubGlobal('confirm', () => true)
     const calls = backend({

@@ -1,0 +1,238 @@
+{
+  "note": "SYNTHETIC hand-authored outputs in the shape gpt-4o-mini returns (no API key was available). Five cases include deliberately non-compliant first drafts to exercise the validator, regeneration and rules fallback. Replace with real outputs via `npm run eval -- --live --record`.",
+  "promptVersion": "2026-11-07.1",
+  "cases": {
+    "sarah-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0002\",\"reason\":\"Sarah mostly buys CBD, which Mellow Monday covers.\",\"send_time\":\"Monday morning\",\"sms_text\":\"Hi Sarah, Mellow Monday: 15% off CBD to help you unwind and sleep better. 21+ w/ ID.\",\"email_subject\":\"Mellow Monday: 15% off, Sarah\",\"email_body\":\"Hi Sarah,\\n\\nMellow Monday is on this Monday: 15% off cbd. 15% off all CBD oils and gummies.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 107
+        },
+        {
+          "content": "{\"promotion_id\":\"deal_0002\",\"reason\":\"Sarah mostly buys CBD, which Mellow Monday covers.\",\"send_time\":\"Monday morning\",\"sms_text\":\"Hi Sarah, it's been a minute! Mellow Monday this Monday: 15% off cbd. 21+ w/ ID.\",\"email_subject\":\"Mellow Monday: 15% off, Sarah\",\"email_body\":\"Hi Sarah,\\n\\nMellow Monday is on this Monday: 15% off cbd. 15% off all CBD oils and gummies.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 106
+        }
+      ]
+    },
+    "jamal-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0007\",\"reason\":\"Jamal mostly buys cigars, which Cigar Friday covers.\",\"send_time\":\"Friday morning\",\"sms_text\":\"Hi Jamal! Cigar Friday: 30% off cigars this week. 21+ w/ ID.\",\"email_subject\":\"Cigar Friday: 20% off, Jamal\",\"email_body\":\"Hi Jamal,\\n\\nCigar Friday is on this Friday: 20% off cigars. 20% off premium singles — Padrón, Fuente, Oliva.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 105
+        },
+        {
+          "content": "{\"promotion_id\":\"deal_0007\",\"reason\":\"Jamal mostly buys cigars, which Cigar Friday covers.\",\"send_time\":\"Friday morning\",\"sms_text\":\"Hi Jamal! Cigar Friday this Friday: 20% off cigars. 21+ w/ ID.\",\"email_subject\":\"Cigar Friday: 20% off, Jamal\",\"email_body\":\"Hi Jamal,\\n\\nCigar Friday is on this Friday: 20% off cigars. 20% off premium singles — Padrón, Fuente, Oliva.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 106
+        }
+      ]
+    },
+    "priya-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0006\",\"reason\":\"Priya mostly buys vape, which Throwback Thursday covers.\",\"send_time\":\"Thursday morning\",\"sms_text\":\"Hi Priya! Throwback Thursday this Thursday: 10% off vape. 21+ w/ ID.\",\"email_subject\":\"Throwback Thursday: 10% off, Priya\",\"email_body\":\"Hi Priya,\\n\\nThrowback Thursday is on this Thursday: 10% off vape. 10% off Geek Bar and Elf Bar disposables.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 110
+        }
+      ]
+    },
+    "marcus-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0009\",\"reason\":\"Marcus mostly buys cigars and accessories, which Grinder upgrade covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Marcus, we miss you! Grinder upgrade: $10 off accessories. 21+ w/ ID.\",\"email_subject\":\"Grinder upgrade: $10 off, Marcus\",\"email_body\":\"Hi Marcus,\\n\\nGrinder upgrade is on now: $10 off accessories. $10 off Santa Cruz Shredder grinders.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 112
+        }
+      ]
+    },
+    "tyler-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0003\",\"reason\":\"Tyler mostly buys papers & cones and accessories, which Two-for Tuesday covers.\",\"send_time\":\"Tuesday morning\",\"sms_text\":\"Hi Tyler! yler! Two-for Tuesday this Tuesday: Buy one, get one papers & cones. 21+ w/ ID. We just restocked every size of papers, cones and rolling trays, plus new grinders by the register. See you!\",\"email_subject\":\"Two-for Tuesday: Buy one, get one, Tyler\",\"email_body\":\"Hi Tyler,\\n\\nTwo-for Tuesday is on this Tuesday: Buy one, get one papers & cones. Buy one pack of papers or cones, get one free.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 154
+        },
+        {
+          "content": "{\"promotion_id\":\"deal_0003\",\"reason\":\"Tyler mostly buys papers & cones and accessories, which Two-for Tuesday covers.\",\"send_time\":\"Tuesday morning\",\"sms_text\":\"Hi Tyler! Two-for Tuesday this Tuesday: Buy one, get one papers & cones. 21+ w/ ID.\",\"email_subject\":\"Two-for Tuesday: Buy one, get one, Tyler\",\"email_body\":\"Hi Tyler,\\n\\nTwo-for Tuesday is on this Tuesday: Buy one, get one papers & cones. Buy one pack of papers or cones, get one free.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 126
+        }
+      ]
+    },
+    "dana-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0005\",\"reason\":\"Dana mostly buys glass and accessories, which Cleaner bundle covers.\",\"send_time\":\"Wednesday morning\",\"sms_text\":\"Hi Dana, we miss you! Cleaner bundle: Free gift glass. 21+ w/ ID.\",\"email_subject\":\"Cleaner bundle: Free gift, Dana\",\"email_body\":\"Hi Dana,\\n\\nCleaner bundle is on now: Free gift glass. Free Formula 420 cleaner with any glass purchase.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 111
+        }
+      ]
+    },
+    "chris-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0006\",\"reason\":\"Chris mostly buys vape, which Throwback Thursday covers.\",\"send_time\":\"Thursday morning\",\"sms_text\":\"Hi Chris! Throwback Thursday this Thursday: 10% off vape. 21+ w/ ID.\",\"email_subject\":\"Throwback Thursday: 10% off, Chris\",\"email_body\":\"Hi Chris,\\n\\nThrowback Thursday is on this Thursday: 10% off vape. 10% off Geek Bar and Elf Bar disposables.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 110
+        }
+      ]
+    },
+    "hannah-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0002\",\"reason\":\"Hannah mostly buys CBD, which Mellow Monday covers.\",\"send_time\":\"Sunday evening (night before)\",\"sms_text\":\"Hi Hannah! Mellow Monday this Monday: 15% off cbd. 21+ w/ ID.\",\"email_subject\":\"Mellow Monday: 15% off, Hannah\",\"email_body\":\"Hi Hannah,\\n\\nMellow Monday is on this Monday: 15% off cbd. 15% off all CBD oils and gummies.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 105
+        }
+      ]
+    },
+    "luis-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"promo_winter\",\"reason\":\"Luis mostly buys hookah, which Winter Warm-Up covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Luis, it's been a minute! Winter Warm-Up: 20% off cigars & hookah. 21+ w/ ID.\",\"email_subject\":\"Winter Warm-Up: 20% off, Luis\",\"email_body\":\"Hi Luis,\\n\\nWinter Warm-Up is on now: 20% off cigars and hookah. 20% off cigars and hookah all winter.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 110
+        }
+      ]
+    },
+    "grace-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0010\",\"reason\":\"Grace mostly buys glass and papers & cones, which Weekend Restock covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Grace! Weekend Restock this Saturday: 10% off accessories & papers & cones. 21+ w/ ID.\",\"email_subject\":\"Weekend Restock: 10% off, Grace\",\"email_body\":\"Hi Grace,\\n\\nWeekend Restock is on this Saturday: 10% off accessories and papers & cones. 10% off accessories and rolling supplies.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 124
+        }
+      ]
+    },
+    "ben-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0007\",\"reason\":\"Ben mostly buys cigars, which Cigar Friday covers.\",\"send_time\":\"Friday morning\",\"sms_text\":\"Hi Ben, we miss you! Cigar Friday: 20% off cigars. 21+ w/ ID.\",\"email_subject\":\"Cigar Friday: 20% off, Ben\",\"email_body\":\"Hi Ben,\\n\\nCigar Friday is on now: 20% off cigars. 20% off premium singles — Padrón, Fuente, Oliva.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 102
+        }
+      ]
+    },
+    "mia-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0005\",\"reason\":\"Mia mostly buys glass and accessories, which Cleaner bundle covers.\",\"send_time\":\"Wednesday morning\",\"sms_text\":\"Hi Mia! Cleaner bundle this Wednesday: Free gift glass. 21+ w/ ID.\",\"email_subject\":\"Cleaner bundle: Free gift, Mia\",\"email_body\":\"Hi Mia,\\n\\nCleaner bundle is on this Wednesday: Free gift glass. Free Formula 420 cleaner with any glass purchase.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 113
+        }
+      ]
+    },
+    "owen-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0006\",\"reason\":\"Owen mostly buys vape, which Throwback Thursday covers.\",\"send_time\":\"Thursday morning\",\"sms_text\":\"Hi Owen! Throwback Thursday this Thursday: 10% off vape. 21+ w/ ID.\",\"email_subject\":\"Throwback Thursday: 10% off, Owen\",\"email_body\":\"Hi Owen,\\n\\nThrowback Thursday is on this Thursday: 10% off vape. 10% off Geek Bar and Elf Bar disposables.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 109
+        }
+      ]
+    },
+    "chloe-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0010\",\"reason\":\"Chloe mostly buys CBD and papers & cones, which Weekend Restock covers.\",\"send_time\":\"Sunday morning\",\"sms_text\":\"Hi Chloe! Weekend Restock this Sunday: 10% off accessories & papers & cones. 21+ w/ ID.\",\"email_subject\":\"Weekend Restock: 10% off, Chloe\",\"email_body\":\"Hi Chloe,\\n\\nWeekend Restock is on this Sunday: 10% off accessories and papers & cones. 10% off accessories and rolling supplies.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 122
+        }
+      ]
+    },
+    "noah-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0009\",\"reason\":\"Noah mostly buys glass and accessories, which Grinder upgrade covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Noah! Grinder upgrade this Saturday: $10 off accessories. 21+ w/ ID.\",\"email_subject\":\"Grinder upgrade: $10 off, Noah\",\"email_body\":\"Hi Noah,\\n\\nGrinder upgrade is on this Saturday: $10 off accessories. $10 off Santa Cruz Shredder grinders.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 113
+        }
+      ]
+    },
+    "zoe-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"promo_winter\",\"reason\":\"Zoe mostly buys hookah, which Winter Warm-Up covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Zoe! Winter Warm-Up: 20% off cigars & hookah. 21+ w/ ID.\",\"email_subject\":\"Winter Warm-Up: 20% off, Zoe\",\"email_body\":\"Hi Zoe,\\n\\nWinter Warm-Up is on now: 20% off cigars and hookah. 20% off cigars and hookah all winter.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 104
+        }
+      ]
+    },
+    "ethan-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0007\",\"reason\":\"Ethan mostly buys cigars, which Cigar Friday covers.\",\"send_time\":\"Friday morning\",\"sms_text\":\"Hi Ethan! Cigar Friday this Friday: 20% off cigars. 21+ w/ ID.\",\"email_subject\":\"Cigar Friday: 20% off, Ethan\",\"email_body\":\"Hi Ethan,\\n\\nCigar Friday is on this Friday: 20% off cigars. 20% off premium singles — Padrón, Fuente, Oliva.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 106
+        }
+      ]
+    },
+    "lily-sms": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0006\",\"reason\":\"Lily mostly buys vape, which Throwback Thursday covers.\",\"send_time\":\"Thursday morning\",\"sms_text\":\"Hi Lily, hurry, last chance! Throwback Thursday 10% off vape. 21+ w/ ID.\",\"email_subject\":\"Throwback Thursday: 10% off, Lily\",\"email_body\":\"Hi Lily,\\n\\nThrowback Thursday is on now: 10% off vape. 10% off Geek Bar and Elf Bar disposables.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 108
+        },
+        {
+          "content": "{\"promotion_id\":\"deal_0006\",\"reason\":\"Lily mostly buys vape, which Throwback Thursday covers.\",\"send_time\":\"Thursday morning\",\"sms_text\":\"Hi Lily, don't miss out, act now: 10% off vape Thursday. 21+ w/ ID.\",\"email_subject\":\"Throwback Thursday: 10% off, Lily\",\"email_body\":\"Hi Lily,\\n\\nThrowback Thursday is on now: 10% off vape. 10% off Geek Bar and Elf Bar disposables.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 106
+        }
+      ]
+    },
+    "sarah-email": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0002\",\"reason\":\"Sarah mostly buys CBD, which Mellow Monday covers.\",\"send_time\":\"Monday morning\",\"sms_text\":\"Hi Sarah, it's been a minute! Mellow Monday this Monday: 15% off cbd. 21+ w/ ID.\",\"email_subject\":\"Mellow Monday: 15% off, Sarah\",\"email_body\":\"Hi Sarah,\\n\\nMellow Monday is on this Monday: 15% off cbd. 15% off all CBD oils and gummies.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 106
+        }
+      ]
+    },
+    "marcus-email": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0009\",\"reason\":\"Marcus mostly buys cigars and accessories, which Grinder upgrade covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Marcus, we miss you! Grinder upgrade: $10 off accessories. 21+ w/ ID.\",\"email_subject\":\"Grinder upgrade: $10 off, Marcus\",\"email_body\":\"Hi Marcus,\\n\\nGrinder upgrade is on now: $10 off accessories. $10 off Santa Cruz Shredder grinders.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 112
+        }
+      ]
+    },
+    "elena-email": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_9999\",\"reason\":\"Elena mostly buys hookah, which Winter Warm-Up covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Elena! Winter Warm-Up: 20% off cigars & hookah. 21+ w/ ID.\",\"email_subject\":\"Hookah Happy Hour, Elena\",\"email_body\":\"Hi Elena,\\n\\nWinter Warm-Up is on now: 20% off cigars and hookah. 20% off cigars and hookah all winter.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 104
+        },
+        {
+          "content": "{\"promotion_id\":\"promo_winter\",\"reason\":\"Elena mostly buys hookah, which Winter Warm-Up covers.\",\"send_time\":\"Saturday morning\",\"sms_text\":\"Hi Elena! Winter Warm-Up: 20% off cigars & hookah. 21+ w/ ID.\",\"email_subject\":\"Winter Warm-Up: 20% off, Elena\",\"email_body\":\"Hi Elena,\\n\\nWinter Warm-Up is on now: 20% off cigars and hookah. 20% off cigars and hookah all winter.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 106
+        }
+      ]
+    },
+    "dana-email": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0005\",\"reason\":\"Dana mostly buys glass and accessories, which Cleaner bundle covers.\",\"send_time\":\"Wednesday morning\",\"sms_text\":\"Hi Dana, we miss you! Cleaner bundle: Free gift glass. 21+ w/ ID.\",\"email_subject\":\"Cleaner bundle: Free gift, Dana\",\"email_body\":\"Hi Dana,\\n\\nCleaner bundle is on now: Free gift glass. Free Formula 420 cleaner with any glass purchase.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 111
+        }
+      ]
+    },
+    "chloe-email": {
+      "attempts": [
+        {
+          "content": "{\"promotion_id\":\"deal_0010\",\"reason\":\"Chloe mostly buys CBD and papers & cones, which Weekend Restock covers.\",\"send_time\":\"Sunday morning\",\"sms_text\":\"Hi Chloe! Weekend Restock this Sunday: 10% off accessories & papers & cones. 21+ w/ ID.\",\"email_subject\":\"Weekend Restock: 10% off, Chloe\",\"email_body\":\"Hi Chloe,\\n\\nWeekend Restock is on this Sunday: 10% off accessories and papers & cones. 10% off accessories and rolling supplies.\\n\\nCome by Main St (21+ with ID).\",\"confidence\":0.82}",
+          "inputTokens": 1450,
+          "outputTokens": 122
+        }
+      ]
+    }
+  }
+}

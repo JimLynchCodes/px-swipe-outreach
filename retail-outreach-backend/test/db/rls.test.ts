@@ -314,8 +314,10 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     });
 
     it("settings upsert is owner/admin only and readable by members", async () => {
-      const next = { storeName: "Shop A+", emailSignature: "A\nB", smsSignature: "-A", defaultChannel: "email" as const, maxDiscountPercent: 15, aiModel: "gpt-5-mini" };
+      const next = { storeName: "Shop A+", emailSignature: "A\nB", smsSignature: "-A", defaultChannel: "email" as const, maxDiscountPercent: 15, aiModel: "gpt-5-mini",
+        brandVoice: { preset: "premium" as const, emoji: true, signOff: "Cheers", about: "Lounge" } };
       expect(await store.updateSettings(A, next)).toEqual(next);
+      await expect(asUser(ALICE, `update public.org_settings set brand_voice = '{"preset":"edgy"}' where org_id = $1`, [ORG_A])).rejects.toThrow(/check constraint/);
       expect((await asUser(STAFF, `select store_name from public.org_settings where org_id = $1`, [ORG_A])).rows[0].store_name).toBe("Shop A+");
       expect((await asUser(STAFF, `update public.org_settings set store_name = 'X' where org_id = $1`, [ORG_A])).rowCount).toBe(0);
       expect((await asUser(BOB, `select 1 from public.org_settings where org_id = $1`, [ORG_A])).rowCount).toBe(0);

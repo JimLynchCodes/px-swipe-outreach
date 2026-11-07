@@ -37,7 +37,14 @@ export const settingsInput = z.object({
   defaultChannel: z.enum(["sms", "email"]).nullable(),
   maxDiscountPercent: z.number().int().min(0).max(100),
   /** Optional so older clients keep the current model. Allowlisted. */
-  aiModel: z.enum(MODEL_IDS).optional()
+  aiModel: z.enum(MODEL_IDS).optional(),
+  /** Optional so older clients keep the current voice. */
+  brandVoice: z.object({
+    preset: z.enum(["friendly", "chill", "premium"]),
+    emoji: z.boolean(),
+    signOff: z.string().trim().max(40).refine(s => !/[\r\n]/.test(s), "must be a single line"),
+    about: z.string().trim().max(500)
+  }).strict().optional()
 }).strict();
 
 type Deps = { store: OutreachStore; actorOf: (req: any) => Actor };
@@ -80,7 +87,9 @@ export async function dealRoutes(app: FastifyInstance, { store, actorOf }: Deps)
   app.put("/api/settings", async request => {
     const actor = actorOf(request);
     const input = settingsInput.parse(request.body ?? {});
-    const aiModel = input.aiModel ?? (await store.getSettings(actor)).aiModel;
-    return { settings: await store.updateSettings(actor, { ...input, aiModel }) };
+    const current = await store.getSettings(actor);
+    const aiModel = input.aiModel ?? current.aiModel;
+    const brandVoice = input.brandVoice ?? current.brandVoice;
+    return { settings: await store.updateSettings(actor, { ...input, aiModel, brandVoice }) };
   });
 }
