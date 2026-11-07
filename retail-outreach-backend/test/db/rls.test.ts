@@ -315,8 +315,9 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
 
     it("settings upsert is owner/admin only and readable by members", async () => {
       const next = { storeName: "Shop A+", emailSignature: "A\nB", smsSignature: "-A", defaultChannel: "email" as const, maxDiscountPercent: 15, aiModel: "gpt-5-mini",
-        brandVoice: { preset: "premium" as const, emoji: true, signOff: "Cheers", about: "Lounge" } };
+        brandVoice: { preset: "premium" as const, emoji: true, signOff: "Cheers", about: "Lounge" }, smsCooldownDays: 7, emailCooldownDays: 14 };
       expect(await store.updateSettings(A, next)).toEqual(next);
+      await expect(asUser(ALICE, `update public.org_settings set sms_cooldown_days = -1 where org_id = $1`, [ORG_A])).rejects.toThrow(/check constraint/);
       await expect(asUser(ALICE, `update public.org_settings set brand_voice = '{"preset":"edgy"}' where org_id = $1`, [ORG_A])).rejects.toThrow(/check constraint/);
       expect((await asUser(STAFF, `select store_name from public.org_settings where org_id = $1`, [ORG_A])).rows[0].store_name).toBe("Shop A+");
       expect((await asUser(STAFF, `update public.org_settings set store_name = 'X' where org_id = $1`, [ORG_A])).rowCount).toBe(0);
@@ -481,6 +482,33 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       expect((await asUser(DAVE, `select count(*)::int n from public.customers`)).rows[0].n).toBe(0);
       expect((await asUser(DAVE, `select count(*)::int n from public.invitations`)).rows[0].n).toBe(0);
       await expect(asUser(DAVE, `select public.claim_pending_invitations()`)).resolves.toBeTruthy();
+    });
+  });
+  describe("contact cooldown", () => {
+    it("contact cooldown: sent deliveries stamp last_sms_at, the queue honors per-channel windows, users can't rewrite history", async () => {
+      const actor = { userId: STAFF, orgId: ORG_A };
+      const id = opp(ORG_A, "cust_0004");
+      const before = await store.getOpportunity(actor, id);
+      expect(before!.customer).toMatchObject({ lastSmsAt: null, lastEmailAt: null });
+      const { delivery } = await store.createDelivery(actor, id, { channel: "email", recipient: before!.customer.email!, message: "Hi", subject: "Hi", idempotencyKey: "cooldown-key-1" });
+      await processDelivery(store, new ConsoleMessageProvider(() => {}), delivery.id);
+      const after = await store.getOpportunity(actor, id);
+      expect(after!.customer.lastEmailAt).toEqual(expect.any(String));
+      expect(after!.customer.lastSmsAt).toBeNull();
+      const custId = seedUuid(ORG_A, "customer:cust_0004");
+      // Another actionable opportunity for the same customer, so the deck filter has something to hide.
+      await admin.query(`update public.outreach_opportunities set status = 'pending' where id = $1`, [id]);
+      await admin.query(`update public.customers set sms_consent = false where id = $1`, [custId]);
+      const ids = async (c: { sms: number; email: number }) => (await store.listQueue(actor, 100, c)).items.map(o => o.id);
+      expect(await ids({ sms: 0, email: 0 })).toContain(id);
+      expect(await ids({ sms: 0, email: 7 })).not.toContain(id); // email cooling, SMS unreachable → skipped
+      const { total } = await store.listQueue(actor, 1, { sms: 0, email: 7 });
+      expect(total).toBe((await store.listQueue(actor, 100, { sms: 0, email: 7 })).items.length);
+      await admin.query(`update public.customers set sms_consent = true where id = $1`, [custId]);
+      expect(await ids({ sms: 0, email: 7 })).toContain(id); // SMS still open
+      // Signed-in owners can't clear the history to dodge the window.
+      await asUser(ALICE, `update public.customers set last_email_at = null where id = $1`, [custId]);
+      expect((await admin.query(`select last_email_at from public.customers where id = $1`, [custId])).rows[0].last_email_at).not.toBeNull();
     });
   });
 });

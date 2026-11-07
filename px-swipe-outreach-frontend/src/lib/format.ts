@@ -27,3 +27,15 @@ export function monthLabel(key: string, style: 'long' | 'short' = 'long') {
   const [y, m] = key.split('-').map(Number)
   return new Date(y, m - 1, 1).toLocaleString('en-US', { month: style, ...(style === 'long' ? { year: 'numeric' } : {}) })
 }
+
+/** Compact "12d ago" / "today" / "never" for an ISO timestamp. */
+export function sinceShort(iso: string | null | undefined, now = Date.now()): string {
+  if (!iso) return 'never'
+  const days = Math.max(0, Math.floor((now - new Date(iso).getTime()) / 86_400_000))
+  return days === 0 ? 'today' : `${days}d ago`
+}
+
+/** "Nov 11" for an ISO timestamp. */
+export function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}

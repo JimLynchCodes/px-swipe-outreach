@@ -8,6 +8,7 @@ import { toInput, useDeals } from '../deals/useDeals'
 import { charCount } from '../lib/format'
 import { categoryLabel, DAYS_SHORT, discountLabel, formatRange, rangeStatus } from '../lib/week'
 import type { BrandVoice, DealInput, OrgSettings } from '../types'
+import { OUTREACH_SETTINGS_CHANGED } from './events'
 
 export const SMS_SIGNATURE_MAX = 60
 export const DEFAULT_VOICE: BrandVoice = { preset: 'friendly', emoji: false, signOff: '', about: '' }
@@ -16,6 +17,9 @@ const PRESETS: Record<BrandVoice['preset'], string> = {
   chill: 'Chill: relaxed, short and casual',
   premium: 'Premium lounge: polished, no slang'
 }
+
+/** Whole days, 0–365 (blank → 0). */
+const days = (v: string) => Math.min(365, Math.max(0, Math.floor(Number(v) || 0)))
 
 export function SettingsPage() {
   const auth = useAuth()
@@ -44,6 +48,7 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
     try {
       setS(await api.settings.save({ ...s!, storeName: s!.storeName?.trim() || null }))
       setStatus({ kind: 'ok', text: 'Settings saved' })
+      window.dispatchEvent(new Event(OUTREACH_SETTINGS_CHANGED))
     } catch (err) { setStatus({ kind: 'err', text: err instanceof Error ? err.message : String(err) }) }
     finally { setSaving(false) }
   }
@@ -63,6 +68,15 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
             <input type="number" min={0} max={100} value={s.maxDiscountPercent} onChange={e => set('maxDiscountPercent', Number(e.target.value))} />
           </label>
         </div>
+        <div className="row-fields">
+          <label>Text cooldown (days)
+            <input type="number" min={0} max={365} step={1} value={s.smsCooldownDays ?? 0} onChange={e => set('smsCooldownDays', days(e.target.value))} />
+          </label>
+          <label>Email cooldown (days)
+            <input type="number" min={0} max={365} step={1} value={s.emailCooldownDays ?? 0} onChange={e => set('emailCooldownDays', days(e.target.value))} />
+          </label>
+        </div>
+        <p className="muted small">Minimum days before we can reach out to a customer again via that channel. 0 = no limit. Customers inside both windows are left out of the deck.</p>
         <label>Email signature
           <textarea rows={4} maxLength={1000} value={s.emailSignature} onChange={e => set('emailSignature', e.target.value)} placeholder={'Cloud 9 Smoke Shop\n123 Main St'} />
         </label>

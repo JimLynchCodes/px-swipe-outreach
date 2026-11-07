@@ -3,14 +3,14 @@ import { newReplyToken } from "../replies/tokens.js";
 import * as seed from "../data/seed.js";
 import { buildDemoMetrics } from "../data/demoMetrics.js";
 import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCostInput, SmsCostRow } from "../metrics/types.js";
-import { daysSince, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
+import { daysSince, inDeck, NO_COOLDOWN, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Customer, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
   Opportunity, Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
-import { DEFAULT_SETTINGS, StoreError, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
+import { DEFAULT_SETTINGS, StoreError, type Cooldowns, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 type InvitationRow = {
   id: string; orgId: string; email: string; role: MemberRole; tokenHash: string; invitedBy: string | null;
@@ -41,6 +41,8 @@ export function buildSeedOpportunities(now = Date.now(), orgId = seed.DEMO_ORG_I
       itemsPurchased: purchases.length,
       purchases,
       ageVerified: sc.ageVerified,
+      lastSmsAt: seed.SEED_LAST_CONTACT[sc.id]?.smsDaysAgo !== undefined ? new Date(now - seed.SEED_LAST_CONTACT[sc.id].smsDaysAgo! * DAY_MS).toISOString() : null,
+      lastEmailAt: seed.SEED_LAST_CONTACT[sc.id]?.emailDaysAgo !== undefined ? new Date(now - seed.SEED_LAST_CONTACT[sc.id].emailDaysAgo! * DAY_MS).toISOString() : null,
       rewards: seed.SEED_REWARDS[sc.id] ? { member: true, ...seed.SEED_REWARDS[sc.id] } : null,
       profile: { ...sc.profile, favoriteCategories: [...sc.profile.favoriteCategories], favoriteBrands: [...sc.profile.favoriteBrands] }
     };
@@ -198,10 +200,12 @@ export class MemoryStore implements OutreachStore {
   async ping() {}
   async listMemberships(userId: string) { return structuredClone(this.memberships.get(userId) ?? []); }
 
-  async listQueue(actor: Actor, limit: number) {
+  async listQueue(actor: Actor, limit: number, cooldown: Cooldowns = NO_COOLDOWN) {
     this.assertMember(actor);
-    const all = this.opps.filter(o => o.orgId === actor.orgId && this.isActionable(o));
-    return { items: all.slice(0, limit).map(o => this.withSuppressions(o)), total: all.length };
+    const now = Date.now();
+    const all = this.opps.filter(o => o.orgId === actor.orgId && this.isActionable(o))
+      .map(o => this.withSuppressions(o)).filter(o => inDeck(o.customer, cooldown, now));
+    return { items: all.slice(0, limit), total: all.length };
   }
   async getOpportunity(actor: Actor, id: string) {
     const o = this.find(actor, id);
@@ -576,7 +580,16 @@ export class MemoryStore implements OutreachStore {
     if (patch.error) d.error = patch.error;
     const o = this.opps.find(x => x.orgId === d.orgId && x.id === d.opportunityId);
     if (o && (status === "sent" || status === "failed")) o.status = status;
+    if (status === "sent") this.touchLastSent(d.orgId, o?.customer.id ?? null, d.channel, new Date().toISOString());
     for (const m of this.msgs) if (m.deliveryId === id && status !== "delivered") m.status = status === "sending" ? "sending" : status;
+  }
+  /** Stamps the customer's last outreach send on this channel (every opportunity for that customer shares it). */
+  private touchLastSent(orgId: string, customerId: string | null, channel: Channel, at: string) {
+    if (!customerId) return;
+    for (const x of this.opps) {
+      if (x.orgId !== orgId || x.customer.id !== customerId) continue;
+      if (channel === "sms") x.customer.lastSmsAt = at; else x.customer.lastEmailAt = at;
+    }
   }
   async listMembers(actor: Actor): Promise<TeamMember[]> {
     this.assertMember(actor);

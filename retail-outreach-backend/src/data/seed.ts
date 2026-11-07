@@ -14,7 +14,9 @@ export const DEMO_SETTINGS = {
   maxDiscountPercent: 25,
   aiModel: "openai/gpt-4o-mini",
   brandVoice: { preset: "friendly" as const, emoji: false, signOff: "See you soon!",
-    about: "Family-owned smoke shop on Main St since 2014. Big glass wall, walk-in cigar humidor, knowledgeable staff, 21+ only." }
+    about: "Family-owned smoke shop on Main St since 2014. Big glass wall, walk-in cigar humidor, knowledgeable staff, 21+ only." },
+  smsCooldownDays: 0,
+  emailCooldownDays: 0
 };
 export const DEMO_ORG = { id: DEMO_ORG_ID, name: "Cloud 9 Smoke Shop", slug: "demo-retailer", businessName: "Cloud 9 Smoke Shop" };
 export const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";
@@ -90,6 +92,13 @@ const MON = 0, TUE = 1, WED = 2, THU = 3, FRI = 4, SAT = 5, SUN = 6;
 export const SEED_REWARDS: Record<string, { points: number; joinedAt: string }> = {
   cust_0002: { points: 340, joinedAt: "2025-03-14" },
   cust_0003: { points: 120, joinedAt: "2026-02-01" }
+};
+
+/** Demo outreach history: days since the last text / email sent from the app (absent = never). */
+export const SEED_LAST_CONTACT: Record<string, { smsDaysAgo?: number; emailDaysAgo?: number }> = {
+  cust_0001: { emailDaysAgo: 12 },
+  cust_0002: { smsDaysAgo: 3, emailDaysAgo: 40 },
+  cust_0003: { smsDaysAgo: 21 }
 };
 
 export const customers: SeedCustomer[] = [

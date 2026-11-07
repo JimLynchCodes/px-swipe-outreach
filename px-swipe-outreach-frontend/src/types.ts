@@ -32,7 +32,14 @@ export interface OutreachCard {
     itemsPurchased: number
     ageVerified: boolean
     profile: BuyingProfile
-    contact: { sms: boolean; email: boolean; preferredChannel: Channel | null; blockedReason: 'age_unverified' | 'opted_out' | null }
+    contact: {
+      /** Reachable on this channel right now (consent, contact, not opted out, outside its cooldown). */
+      sms: boolean; email: boolean; preferredChannel: Channel | null; blockedReason: 'age_unverified' | 'opted_out' | null
+      /** Last outreach send from this app per channel (ISO); null = never. Optional for older servers. */
+      lastSent?: { sms: string | null; email: string | null }
+      /** When each channel's cooldown ends (ISO); null = not cooling down. */
+      cooldownUntil?: { sms: string | null; email: string | null }
+    }
   }
   recentItems: Array<{ name: string; brand: string | null; category: string | null; daysAgo: number | null }>
   lastPurchase: {
@@ -95,6 +102,9 @@ export interface OrgSettings {
   aiModel: string
   /** How AI suggestions sound. Optional for older servers. */
   brandVoice?: BrandVoice
+  /** Minimum days between outreach texts / emails to the same customer (0 = off). Optional for older servers. */
+  smsCooldownDays?: number
+  emailCooldownDays?: number
 }
 
 export interface BrandVoice {

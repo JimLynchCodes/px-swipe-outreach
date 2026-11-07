@@ -38,6 +38,9 @@ export type Customer = {
   profile: BuyingProfile;
   /** Store rewards (Quickvee via data sync). Points are the real balance; copy may only quote this number. */
   rewards?: Rewards | null;
+  /** Last successful outreach send from this app, per channel (ISO); null = never. */
+  lastSmsAt?: string | null;
+  lastEmailAt?: string | null;
 };
 
 export type Rewards = { member: boolean; points: number | null; joinedAt: string | null };
@@ -221,6 +224,10 @@ export type OrgSettings = {
   maxDiscountPercent: number;
   /** How AI copy sounds (fed into the prompt). */
   brandVoice: BrandVoice;
+  /** Minimum days between outreach texts to the same customer (0 = no cooldown). */
+  smsCooldownDays: number;
+  /** Minimum days between outreach emails to the same customer (0 = no cooldown). */
+  emailCooldownDays: number;
 };
 
 export type VoicePreset = "friendly" | "chill" | "premium";
