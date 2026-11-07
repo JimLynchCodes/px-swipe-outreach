@@ -20,7 +20,6 @@ import type { MessageProvider } from "./providers/messaging.js";
 import { StoreError, type OutreachStore } from "./store/types.js";
 import { costUsd, listModels, modelInfo, PRICE_TABLE_VERSION, RULES_MODEL } from "./ai/models.js";
 import { costReport } from "./metrics/cost.js";
-import { devToolRoutes, isDevToolPath, SmsSimulator } from "./dev/simulator.js";
 import { DEFAULT_ATTRIBUTION_DAYS, performanceReport } from "./metrics/performance.js";
 import { ConsoleInviteMailer, SupabaseInviteMailer, type InviteMailer } from "./team/mailer.js";
 import { INVITE_ACCEPT_PATH, INVITE_PREVIEW_PATH, teamRoutes } from "./team/routes.js";
@@ -45,8 +44,6 @@ export type AppDeps = {
   inviteMailer?: InviteMailer;
   /** false disables logging (tests). */
   logger?: boolean;
-  /** Dev SMS simulator backing /dev/phone (dev only). One is created if omitted. */
-  simulator?: SmsSimulator;
 };
 
 const idParams = z.object({ id: z.string().min(1).max(100) });
@@ -57,7 +54,7 @@ const PUBLIC_PATHS = new Set(["/health", "/health/live", "/health/ready"]);
 const NO_ORG_PATHS = new Set(["/api/me", INVITE_ACCEPT_PATH]);
 /** API routes reachable without a session (still rate limited per IP). */
 const ANON_PATHS = new Set([INVITE_PREVIEW_PATH, UNSUBSCRIBE_PATH, RESUBSCRIBE_PATH, REOPTIN_PATH]);
-const isAnon = (path: string) => ANON_PATHS.has(path) || isDevToolPath(path) || path === INBOUND_EMAIL_PATH || path.startsWith(TWILIO_WEBHOOK_PREFIX);
+const isAnon = (path: string) => ANON_PATHS.has(path) || path === INBOUND_EMAIL_PATH || path.startsWith(TWILIO_WEBHOOK_PREFIX);
 
 /** Uniform error body: { error, code, requestId, details? }. */
 function sendError(reply: FastifyReply, status: number, code: string, error: string, details?: string[]) {
@@ -350,7 +347,6 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     onFile: async (part: any) => { part.file.resume(); }
   } as any);
   await replyRoutes(app, { config, store, messenger, actorOf, sendError });
-  devToolRoutes(app, { config, store, simulator: deps.simulator ?? new SmsSimulator() });
 
   // ── Team ────────────────────────────────────────────────────────────
   const inviteMailer = deps.inviteMailer ?? (config.INVITE_MAILER === "supabase"

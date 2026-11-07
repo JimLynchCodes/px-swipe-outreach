@@ -1,11 +1,12 @@
 import nodemailer, { type Transporter } from "nodemailer";
+import twilio from "twilio";
 import type { Channel } from "../types.js";
 
 export type OutboundMessage = {
   channel: Channel; recipient: string; message: string; subject?: string | null;
   /** Extra email headers, e.g. List-Unsubscribe, Reply-To. */
   headers?: Record<string, string>;
-  /** Org the message belongs to (the SMS simulator routes replies back to it). */
+  /** Org the message belongs to (for logging/routing). */
   orgId?: string;
 };
 
@@ -57,36 +58,22 @@ export class SmtpEmailProvider implements MessageProvider {
   }
 }
 
-export type TwilioOptions = { accountSid: string; authToken: string; from: string; statusCallback?: string };
+export type TwilioOptions = { accountSid: string; authToken: string; fromNumber?: string; messagingServiceSid?: string };
+/** Minimal slice of the Twilio SDK client we use (lets tests inject a fake). */
+export type TwilioClientLike = { messages: { create(p: { to: string; body: string; from?: string; messagingServiceSid?: string }): Promise<{ sid: string }> } };
 
-/** Optional, PAID: Twilio Programmable Messaging over its REST API (no SDK needed). `from` is a number or MG… service SID. */
+/** SMS_PROVIDER=twilio: real SMS through the official `twilio` SDK (paid; trial accounts only reach verified numbers). */
 export class TwilioSmsProvider implements MessageProvider {
   readonly name = "twilio";
-  constructor(private opts: TwilioOptions, private fetchImpl: typeof fetch = fetch) {}
+  private client: TwilioClientLike;
+  constructor(private opts: TwilioOptions, client?: TwilioClientLike) {
+    this.client = client ?? (twilio(opts.accountSid, opts.authToken) as unknown as TwilioClientLike);
+  }
   async send(msg: OutboundMessage) {
     if (msg.channel !== "sms") throw new Error("TwilioSmsProvider only sends SMS");
-    const form = new URLSearchParams({ To: msg.recipient, Body: msg.message });
-    if (this.opts.from.startsWith("MG")) form.set("MessagingServiceSid", this.opts.from); else form.set("From", this.opts.from);
-    const res = await this.fetchImpl(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(this.opts.accountSid)}/Messages.json`, {
-      method: "POST", body: form,
-      headers: { authorization: `Basic ${Buffer.from(`${this.opts.accountSid}:${this.opts.authToken}`).toString("base64")}`, "content-type": "application/x-www-form-urlencoded" }
-    });
-    const body = await res.json().catch(() => ({})) as { sid?: string; message?: string; code?: number };
-    if (!res.ok || !body.sid) throw new Error(`Twilio send failed (${res.status}${body.code ? ` ${body.code}` : ""}): ${body.message ?? "unknown error"}`);
-    return { providerMessageId: body.sid };
-  }
-}
-
-/** Where the dev SMS simulator puts outbound texts (in-process in the API; over HTTP from the worker). */
-export type SimulatorSink = (m: { orgId: string | null; to: string; body: string }) => Promise<string>;
-
-/** SMS_PROVIDER=simulator: nothing leaves the machine; texts show up on the dev phone page (/dev/phone). Dev only. */
-export class SimulatorSmsProvider implements MessageProvider {
-  readonly name = "simulator";
-  constructor(private sink: SimulatorSink) {}
-  async send(msg: OutboundMessage) {
-    if (msg.channel !== "sms") throw new Error("SimulatorSmsProvider only sends SMS");
-    return { providerMessageId: await this.sink({ orgId: msg.orgId ?? null, to: msg.recipient, body: msg.message }) };
+    const sender = this.opts.messagingServiceSid ? { messagingServiceSid: this.opts.messagingServiceSid } : { from: this.opts.fromNumber! };
+    const m = await this.client.messages.create({ to: msg.recipient, body: msg.message, ...sender });
+    return { providerMessageId: m.sid };
   }
 }
 
@@ -98,21 +85,19 @@ export class ChannelRouter implements MessageProvider {
 }
 
 export type MessagingConfig = {
-  EMAIL_PROVIDER: "log" | "smtp"; SMS_PROVIDER: "log" | "simulator" | "twilio";
+  EMAIL_PROVIDER: "log" | "smtp"; SMS_PROVIDER: "log" | "twilio";
   SMTP_HOST?: string; SMTP_PORT: number; SMTP_SECURE: boolean; SMTP_USER?: string; SMTP_PASS?: string; SMTP_FROM?: string;
-  TWILIO_ACCOUNT_SID?: string; TWILIO_AUTH_TOKEN?: string; TWILIO_FROM?: string;
+  TWILIO_ACCOUNT_SID?: string; TWILIO_AUTH_TOKEN?: string; TWILIO_FROM_NUMBER?: string; TWILIO_MESSAGING_SERVICE_SID?: string;
 };
 
 /** Builds the channel router from config (validated in config.ts, so required values are present here). */
-export function createMessageProvider(c: MessagingConfig, deps: { log?: (l: string) => void; simulatorSink?: SimulatorSink } = {}): MessageProvider {
+export function createMessageProvider(c: MessagingConfig, deps: { log?: (l: string) => void } = {}): MessageProvider {
   const logProvider = new ConsoleMessageProvider(deps.log);
   const email = c.EMAIL_PROVIDER === "smtp"
     ? new SmtpEmailProvider({ host: c.SMTP_HOST!, port: c.SMTP_PORT, secure: c.SMTP_SECURE, user: c.SMTP_USER, pass: c.SMTP_PASS, from: c.SMTP_FROM! })
     : logProvider;
   const sms = c.SMS_PROVIDER === "twilio"
-    ? new TwilioSmsProvider({ accountSid: c.TWILIO_ACCOUNT_SID!, authToken: c.TWILIO_AUTH_TOKEN!, from: c.TWILIO_FROM! })
-    : c.SMS_PROVIDER === "simulator"
-      ? new SimulatorSmsProvider(deps.simulatorSink ?? (async () => { throw new Error("SMS simulator sink not configured"); }))
-      : logProvider;
+    ? new TwilioSmsProvider({ accountSid: c.TWILIO_ACCOUNT_SID!, authToken: c.TWILIO_AUTH_TOKEN!, fromNumber: c.TWILIO_FROM_NUMBER, messagingServiceSid: c.TWILIO_MESSAGING_SERVICE_SID })
+    : logProvider;
   return new ChannelRouter({ email, sms });
 }

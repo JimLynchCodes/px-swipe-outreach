@@ -35,5 +35,5 @@ docker compose up --build         # web on :8080, api on :3000
 
 ### Delivery providers
 - `EMAIL_PROVIDER=smtp` with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` (any SMTP server; Gmail app password works for small volume).
-- `SMS_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM` (paid). Production refuses `log` and `simulator`.
+- `SMS_PROVIDER=twilio` with `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID` (paid; US A2P 10DLC registration required). Production refuses `log`.
 - Real inbound email needs an inbound-parse provider posting to `/webhooks/email/inbound` (see docs/LOCAL_DELIVERY_TESTING.md).

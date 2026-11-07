@@ -93,6 +93,6 @@ These pieces are still stubbed:
 * **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. Prompt tuning, brand voice and evals still need work.
 * **Analytics.** Track send → redeem → revenue attribution.
 
-## Testing real delivery locally
+## Real email and SMS
 
-`npm run dev:mail` starts Mailpit (emails at http://localhost:8025) and the app with the dev SMS phone at http://localhost:3000/dev/phone. Step by step: [docs/LOCAL_DELIVERY_TESTING.md](docs/LOCAL_DELIVERY_TESTING.md).
+`npm run dev` prints messages to the API log (`EMAIL_PROVIDER=log`, `SMS_PROVIDER=log`). Put SMTP and Twilio settings in `retail-outreach-backend/.env.local`, then run `npm run dev:live` to send for real. Step by step: [docs/LOCAL_DELIVERY_TESTING.md](docs/LOCAL_DELIVERY_TESTING.md).
