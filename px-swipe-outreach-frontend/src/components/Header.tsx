@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Ban, DatabaseZap, Layers, LogOut, Menu, MessageCircle, Receipt, Settings, Sparkles, TrendingUp, Users, X } from 'lucide-react'
+import { Ban, Contact, DatabaseZap, Layers, LogOut, Menu, MessageCircle, Receipt, Settings, Sparkles, TrendingUp, Users, X } from 'lucide-react'
 import { navigate, ROUTES, usePathname } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
 import { useUnreadCount } from '../replies/useUnread'
@@ -9,6 +9,7 @@ import { ModelPicker } from '../ai/ModelPicker'
 const LINKS = [
   { to: ROUTES.home, label: 'Outreach deck', icon: Layers },
   { to: ROUTES.replies, label: 'Replies', icon: MessageCircle, badge: true },
+  { to: ROUTES.customers, label: 'Registered users', icon: Contact },
   { to: ROUTES.performance, label: 'Performance metrics', icon: TrendingUp },
   { to: ROUTES.costs, label: 'Cost metrics', icon: Receipt, manage: true },
   { to: ROUTES.dataSync, label: 'Data sync', icon: DatabaseZap, manage: true },

@@ -1,7 +1,7 @@
 import { DEFAULT_AI_MODEL } from "../ai/models.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
-  Suggestion, SuppressionReason, TeamMember
+  Suggestion, SuppressionReason, TeamMember, CustomerSummary
 } from "../types.js";
 
 export type StoreErrorCode = "not_found" | "conflict" | "suppressed" | "forbidden" | "gone" | "rate_limited";
@@ -144,6 +144,19 @@ export interface OutreachStore {
   /** Auto-joins the user to every org with an unexpired pending invite for their email (case-insensitive). Returns orgs joined. */
   claimPendingInvitations(user: { id: string; email: string | null }): Promise<number>;
   acceptInvitation(user: { id: string; email: string | null }, tokenHash: string): Promise<{ orgId: string; role: MemberRole; alreadyMember: boolean }>;
+
+  // ── Customers (Registered users + CSV import) ──
+  /** Dedupe keys of every customer in the org: `qv:` external ids, phone last-10 digits, lowercased emails. */
+  customerKeys(actor: Actor): Promise<import("../customers/csvImport.js").ExistingKeys>;
+  /**
+   * Owner/admin. Inserts the customers that still don't match an existing one (re-checked inside the transaction) and gives
+   * each a pending opportunity so they reach the deck. Returns how many were inserted and how many turned out to exist.
+   */
+  importCustomers(actor: Actor, rows: import("../customers/csvImport.js").ImportCustomer[], consent: import("../customers/csvImport.js").ImportConsent): Promise<{ inserted: number; existing: number }>;
+  /** Newest first. `search` matches name, phone digits or email. */
+  listCustomers(actor: Actor, q: { search?: string; limit: number; offset: number }): Promise<{ items: CustomerSummary[]; total: number }>;
+  /** Any member. The customer's actionable opportunity, creating a pending one if needed (explicit pick from Registered users). Null = unknown customer. */
+  openCustomerCard(actor: Actor, customerId: string): Promise<string | null>;
 
   // System operations (no user context).
   /** Idempotent per (org, channel, contact). Audited. Returns created=false when already opted out. */

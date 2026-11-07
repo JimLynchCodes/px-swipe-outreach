@@ -1,0 +1,8 @@
+Customer ID,Store,First name,Last name,Name on file,Phone,Email,Street address,Suite / apt,City,State,ZIP,Date of birth,Customer since,Months as customer,Last order date,Lifetime spend ($),Lifetime orders,Loyalty points,Store credit ($),Customer group,Customer group ID,Staff note,Disabled in Quickvee
+900001,Burlington,Avery Testwood,,Avery Testwood,6095550101,avery.test@example.com,,,,,,,05/12/2025,17,09/19/2026,"$1,294.24",18,43.31,$1.49,Online - Individual Group,5549,,No
+900002,Burlington,Blake,,Blake,(609) 555-0102,blake.test@example.com,,,,,,01/02/1990,10/04/2024,25,08/28/2025,"$2,239.01",18,38.23,$0.00,Online - Individual Group,5549,,No
+900003,Burlington,Casey Dup,,Casey Dup,6095550101,casey.dup@example.com,,,,,,,02/25/2025,20,08/07/2025,$596.74,7,30.12,$0.00,Online - Individual Group,5549,,No
+900004,Burlington,Drew Nocontact,,Drew Nocontact,,not-an-email,,,,,,,05/15/2025,17,05/15/2025,$0.00,1,0.,$27.10,Online - Individual Group,5549,,No
+900005,Burlington,Emery Off,,Emery Off,6095550105,emery@example.com,,,,,,,06/07/2025,16,11/01/2026,"$3,003.47",44,0.,$0.00,Online - Individual Group,5549,,Yes
+,Burlington,,,,6095550106,nameless@example.com,,,,,,,10/03/2024,25,12/16/2025,$5.00,1,0,$0.00,Online - Individual Group,5549,,No
+900007,Burlington,Jamal Carter,,Jamal Carter,5555550002,jamal.again@example.com,,,,,,,02/15/2025,20,11/25/2025,"$1,118.80",31,31.,$0.00,Online - Individual Group,5549,,No

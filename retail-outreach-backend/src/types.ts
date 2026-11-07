@@ -40,7 +40,15 @@ export type Customer = {
   rewards?: Rewards | null;
   /** Last successful outreach send from this app, per channel (ISO); null = never. */
   lastSmsAt?: string | null;
+  /** POS identifier (`qv:<id>` for Quickvee). */
+  externalId?: string | null;
   lastEmailAt?: string | null;
+};
+
+/** Customer row for the Registered users page (contact details masked). */
+export type CustomerSummary = {
+  id: string; name: string; phone: string | null; email: string | null; location: string | null; source: string | null;
+  createdAt: string; lastSmsAt: string | null; lastEmailAt: string | null; lifetimeSpendCents: number;
 };
 
 export type Rewards = { member: boolean; points: number | null; joinedAt: string | null };

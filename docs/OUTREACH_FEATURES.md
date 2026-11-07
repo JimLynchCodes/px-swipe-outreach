@@ -300,3 +300,36 @@ Summary cards (here and on Cost metrics) share a `MetricCard` layout: a small up
   - Saving settings fires `outreach-settings:changed`, and the deck reloads with a fresh set of cards.
 - **Tamper-proofing:** signed-in users (the `authenticated` role) can't rewrite `last_*_at`; only the backend or service role can.
 - **Demo data:** Jamal was texted 3 days ago and emailed 40 days ago, Sarah was emailed 12 days ago, and Priya was texted 21 days ago. Set a 7-day text cooldown to see Jamal switch to email only.
+
+## Manually add customers (CSV import)
+
+**Data sync → Manually add** uploads a customer CSV. Quickvee's customer export is the reference format; other exports work if their headers match.
+
+- **Columns read:**
+  - `Customer ID`, `First name` / `Last name` / `Name on file` (a full name in `First name` is split), `Phone`, `Email`
+  - `Store` (or City/State), `Date of birth` (→ age), `Customer since`, `Last order date`, `Lifetime spend ($)`, `Loyalty points`
+  - Rows with `Disabled in Quickvee = Yes` are skipped.
+- **Dedupe:** a row counts as existing when any one of these matches a customer already in the org (Supabase, or the demo store in demo mode):
+  - `qv:<Customer ID>`, the same key the Quickvee sync uses
+  - the phone number's last 10 digits
+  - the email, lowercased
+
+  Repeats inside the file are dropped too.
+- **Flow:**
+  1. `POST /api/customers/import/preview` returns only the **new** customers (contact details masked), plus counts of existing, repeated and invalid rows (each invalid row with its reason).
+  2. The popup lists the new customers, with **Submit** and **Cancel**.
+  3. Submit calls `POST /api/customers/import`. The server re-parses and re-dedupes inside the transaction, using a per-org advisory lock, and never trusts the preview.
+  4. A success modal opens; **OK** closes it.
+- **Consent:** CSVs don't carry marketing consent, so the popup has three unchecked boxes: agreed to texts, agreed to emails, and ID checked 21+. Unchecked means the deck won't contact them on that channel.
+- **Security:** imports run as the signed-in user under RLS (customer and opportunity inserts are owner/admin only). Limits are 5 MB and 5,000 rows per upload.
+- **Deck:** each imported customer gets a pending opportunity in the `manual` campaign, so they show up in the deck.
+
+## Registered users
+
+The **Registered users** menu page (`/customers`) lists the org's customers, newest first. It has search (name, phone digits or email), contact details are masked, and imported customers carry an "Imported" tag.
+
+Clicking a customer calls `POST /api/customers/:id/open`, which returns their open card or creates a pending one. It's open to any member through `public.open_customer_card`, a security-definer function scoped to the caller's org. The app then goes to `/?customer=<opportunityId>`:
+
+- The deck shows that card first with a fresh suggestion.
+- An explicit pick **bypasses the cooldown filter**: `GET /api/outreach/:id?pick=1`, and the suggestion and send calls carry `ignoreCooldown: true`.
+- If the last text or email falls inside the Settings cooldown window, the card shows it larger and in red, with the date the cooldown ends.

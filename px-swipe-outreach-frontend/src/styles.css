@@ -343,3 +343,12 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .sync-log code { display: block; color: #94a3b8; white-space: pre-wrap; word-break: break-all; }
 .pill.warn { background: #fef3c7; color: #92400e; padding: 2px 8px; margin-left: 8px; }
 .last-contact { margin: -6px 0 0; font-size: 12px; opacity: .85; }
+.modal-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 20, .45); display: grid; place-items: center; z-index: 50; padding: 16px; }
+.modal { background: #fff; border-radius: 16px; padding: 20px; width: min(560px, 100%); max-height: 85vh; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 20px 50px rgba(0,0,0,.2); outline: none; }
+.modal h3 { margin: 0; font-size: 18px; }
+.modal-body { overflow: auto; display: flex; flex-direction: column; gap: 10px; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.import-list { max-height: 40vh; overflow: auto; }
+.consent { border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.last-contact.recent { font-size: 15px; font-weight: 600; color: var(--red-ink); opacity: 1; }
+.customer-row { cursor: pointer; text-align: left; width: 100%; background: none; border: 0; padding: 0; font: inherit; color: inherit; }
