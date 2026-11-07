@@ -5,6 +5,7 @@ import { Header } from './components/Header'
 import { CustomerCard, type CardDraft } from './components/CustomerCard'
 import { DealsPanel } from './deals/DealsPanel'
 import { AI_MODEL_CHANGED } from './ai/ModelPicker'
+import { OUTREACH_SETTINGS_CHANGED } from './settings/events'
 import type { Channel, OrgSettings, OutreachCard } from './types'
 
 const SWIPE_THRESHOLD = 110
@@ -50,6 +51,16 @@ export default function App() {
   }, [])
 
   useEffect(() => { void loadQueue() }, [loadQueue])
+
+  // Cooldowns (or other outreach settings) changed → fresh settings and a fresh deck.
+  useEffect(() => {
+    const onSettings = () => {
+      api.settings.get().then(setSettings, () => setSettings(null))
+      void loadQueue()
+    }
+    window.addEventListener(OUTREACH_SETTINGS_CHANGED, onSettings)
+    return () => window.removeEventListener(OUTREACH_SETTINGS_CHANGED, onSettings)
+  }, [loadQueue])
 
   const suggestionSeq = useRef(0)
   const fetchSuggestion = useCallback(async (card: OutreachCard, channel: Channel) => {

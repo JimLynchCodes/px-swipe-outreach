@@ -9,7 +9,7 @@ import rateLimit from "@fastify/rate-limit";
 import { z, ZodError } from "zod";
 import type { AppConfig } from "./config.js";
 import { AuthError, createAuthenticator, resolveOrg, type Authenticator, type AuthUser, type OrgContext } from "./auth.js";
-import { canContact, maskRecipient, recipientFor, SMS_MAX, toCardDto, withSmsOptOut } from "./domain.js";
+import { ACTIONABLE_STATUSES, canContact, cooldownUntil, maskRecipient, recipientFor, SMS_MAX, toCardDto, withSmsOptOut } from "./domain.js";
 import { dealRoutes } from "./deals/routes.js";
 import { recommend } from "./recommend.js";
 import { optOutRoutes, REOPTIN_PATH, RESUBSCRIBE_PATH, TWILIO_WEBHOOK_PREFIX, UNSUBSCRIBE_PATH } from "./optout/routes.js";
@@ -26,7 +26,7 @@ import { costReport } from "./metrics/cost.js";
 import { DEFAULT_ATTRIBUTION_DAYS, performanceReport } from "./metrics/performance.js";
 import { ConsoleInviteMailer, SupabaseInviteMailer, type InviteMailer } from "./team/mailer.js";
 import { INVITE_ACCEPT_PATH, INVITE_PREVIEW_PATH, teamRoutes } from "./team/routes.js";
-import type { Actor } from "./types.js";
+import type { Actor, OrgSettings } from "./types.js";
 import { createSync, type SyncService } from "./sync/index.js";
 import { syncRoutes } from "./sync/routes.js";
 
@@ -199,15 +199,18 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // ── Outreach ────────────────────────────────────────────────────────
   app.get("/api/outreach/queue", async request => {
     const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(100).default(20) }).parse(request.query);
-    const { items, total } = await store.listQueue(actorOf(request), limit);
-    return { items: items.map(o => toCardDto(o)), total };
+    const actor = actorOf(request);
+    const cooldown = cooldownsOf(await store.getSettings(actor));
+    const { items, total } = await store.listQueue(actor, limit, cooldown);
+    const now = Date.now();
+    return { items: items.map(o => toCardDto(o, now, cooldown)), total, cooldown };
   });
 
   app.get("/api/outreach/:id", async (request, reply) => {
     const { id } = idParams.parse(request.params);
     const opp = await store.getOpportunity(actorOf(request), id);
     if (!opp) return sendError(reply, 404, "not_found", "Opportunity not found");
-    return toCardDto(opp);
+    return toCardDto(opp, Date.now(), cooldownsOf(await store.getSettings(actorOf(request))));
   });
 
   /** AI suggestion (title, reasoning, message) for a channel. */
@@ -221,6 +224,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return sendError(reply, 422, "not_contactable", `Customer cannot be contacted by ${body.channel}`);
     }
     const [deals, catalog, settings] = await Promise.all([store.listDeals(actor), store.listCatalog(actor), store.getSettings(actor)]);
+    const until = cooldownUntil(opp.customer, body.channel, cooldownsOf(settings));
+    if (until) return sendError(reply, 422, "cooldown", `Customer was contacted by ${body.channel} recently; next allowed ${until}`);
     const businessName = settings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
     const recommendation = recommend(opp.customer, deals, { catalog, maxDiscountPercent: settings.maxDiscountPercent });
     // The standing fallback offer never exceeds the org's discount cap.
@@ -295,7 +300,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!canContact(opp.customer, body.channel)) {
       return sendError(reply, 422, "not_contactable", `Customer cannot be contacted by ${body.channel}`);
     }
-    const businessName = (await store.getSettings(actor)).storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
+    const sendSettings = await store.getSettings(actor);
+    // Only for a fresh send: a retry of an already-queued send must still resolve to its idempotent duplicate.
+    const until = (ACTIONABLE_STATUSES as readonly string[]).includes(opp.status) ? cooldownUntil(opp.customer, body.channel, cooldownsOf(sendSettings)) : null;
+    if (until) return sendError(reply, 422, "cooldown", `Customer was contacted by ${body.channel} recently; next allowed ${until}`);
+    const businessName = sendSettings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
     const subject = body.channel === "email" ? (body.subject || `A note from ${businessName}`) : null;
     const { delivery, duplicate } = await store.createDelivery(actor, id, {
       channel: body.channel, recipient: recipientFor(opp.customer, body.channel)!,
@@ -434,3 +443,5 @@ export function twilioFetcherOf(m: MessageProvider): MessageFetcher | undefined 
   const sms = m instanceof ChannelRouter ? m.sms : m;
   return sms instanceof TwilioSmsProvider ? sid => sms.fetchMessage(sid) : undefined;
 }
+
+function cooldownsOf(s: OrgSettings) { return { sms: s.smsCooldownDays ?? 0, email: s.emailCooldownDays ?? 0 }; }

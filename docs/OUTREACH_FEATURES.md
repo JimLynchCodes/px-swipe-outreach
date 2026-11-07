@@ -288,3 +288,15 @@ pill. Demo purchases never appear in the deck's customer history. RLS: members c
 **Month-over-month growth is like-for-like.** On day N of a month, "Month to date" covers day 1 through now. It is compared with sends from day 1 through the same day and time of last month (clamped to last month's final day, e.g. Mar 31 → Feb 28). For that comparison, last month only counts purchases made by the same cut-off, so neither period gets extra days to convert. The card also shows the full previous month's total for context. Previously a partial month was compared with a full one, which showed misleading drops like ▼95% early in the month. Early in a month the sample is small, so expect noisy percentages.
 
 Summary cards (here and on Cost metrics) share a `MetricCard` layout: a small uppercase label, the value, then a green ▲ / red ▼ growth pill or a gray context line. The grid is 2×2 on desktop and 1 column under 640px.
+
+## Contact cooldown
+
+- **What's tracked:** `customers.last_sms_at` / `customers.last_email_at` record the last *successful* deck send on each channel. A database trigger stamps them when a delivery's status becomes `sent` (the demo store does the same in memory). Failed sends don't count; conversation replies in the Replies inbox don't count.
+- **On the card:** a small muted line, e.g. `Last text 12d ago · Last email never`.
+- **Settings → Store:** `Text cooldown (days)` and `Email cooldown (days)` (whole numbers, 0–365, default 0 = no limit). These are stored in `org_settings.sms_cooldown_days` / `email_cooldown_days`. Owners and admins edit them under the existing settings RLS.
+- **Deck rules:**
+  - A channel inside its window can't be picked on the card, and the API refuses a suggestion or send on it with `422 cooldown`.
+  - If no channel is both reachable and outside its window, the customer is left out of the deck entirely (`/api/outreach/queue`, filtered in SQL, so `total` stays accurate).
+  - Saving settings fires `outreach-settings:changed`, and the deck reloads with a fresh set of cards.
+- **Tamper-proofing:** signed-in users (the `authenticated` role) can't rewrite `last_*_at`; only the backend or service role can.
+- **Demo data:** Jamal was texted 3 days ago and emailed 40 days ago, Sarah was emailed 12 days ago, and Priya was texted 21 days ago. Set a 7-day text cooldown to see Jamal switch to email only.

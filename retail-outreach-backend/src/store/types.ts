@@ -25,6 +25,9 @@ export function teamError(reason: keyof typeof TEAM_ERRORS): StoreError {
   return new StoreError(code, msg, reason);
 }
 
+/** Per-channel cooldown windows in days (0 = off). Customers with no channel outside its window are left out of the queue. */
+export type Cooldowns = { sms: number; email: number };
+
 export type NewInvitation = { email: string; role: MemberRole; tokenHash: string; expiresAt: Date };
 
 export type NewDelivery = {
@@ -50,7 +53,7 @@ export interface OutreachStore {
   listMemberships(userId: string): Promise<Membership[]>;
 
   /** Actionable (pending/drafted) opportunities, oldest first. */
-  listQueue(actor: Actor, limit: number): Promise<{ items: Opportunity[]; total: number }>;
+  listQueue(actor: Actor, limit: number, cooldown?: Cooldowns): Promise<{ items: Opportunity[]; total: number }>;
   getOpportunity(actor: Actor, id: string): Promise<Opportunity | null>;
   /** Throws StoreError(not_found|conflict). */
   skip(actor: Actor, id: string): Promise<void>;
@@ -170,4 +173,4 @@ export interface OutreachStore {
 }
 
 export const DEFAULT_SETTINGS: OrgSettings = { storeName: null, emailSignature: "", smsSignature: "", defaultChannel: null, maxDiscountPercent: 25, aiModel: DEFAULT_AI_MODEL,
-  brandVoice: { preset: "friendly", emoji: false, signOff: "", about: "" } };
+  brandVoice: { preset: "friendly", emoji: false, signOff: "", about: "" }, smsCooldownDays: 0, emailCooldownDays: 0 };

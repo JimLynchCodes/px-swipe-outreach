@@ -342,3 +342,4 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .sync-log .lvl { text-transform: uppercase; color: #86efac; margin: 0 6px; }
 .sync-log code { display: block; color: #94a3b8; white-space: pre-wrap; word-break: break-all; }
 .pill.warn { background: #fef3c7; color: #92400e; padding: 2px 8px; margin-left: 8px; }
+.last-contact { margin: -6px 0 0; font-size: 12px; opacity: .85; }

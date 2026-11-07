@@ -1,6 +1,6 @@
 import type pg from "pg";
 import { createPool, type PoolOptions } from "../db/pool.js";
-import { ACTIONABLE_STATUSES, maskRecipient } from "../domain.js";
+import { ACTIONABLE_STATUSES, inDeck, maskRecipient, MIN_AGE, NO_COOLDOWN } from "../domain.js";
 import { newReplyToken } from "../replies/tokens.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
@@ -9,7 +9,7 @@ import type {
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
 import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCostInput, SmsCostRow } from "../metrics/types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
-import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
+import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type Cooldowns, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 const INVITE_COLS = `id, org_id, email, role, invited_by, created_at, expires_at, last_sent_at, send_count, accepted_at, revoked_at`;
 function toInvitation(r: any): Invitation {
@@ -31,6 +31,20 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const isUuid = (s: string) => UUID_RE.test(s);
 const ACTIONABLE = `('${ACTIONABLE_STATUSES.join("','")}')`;
 
+/**
+ * Deck filter in SQL (mirrors domain.inDeck): keep the customer unless a
+ * channel is cooling down and no channel is both reachable (consent, contact, not suppressed, 21+) and outside its window.
+ */
+const reachable = (ch: Channel) => `(cu.${ch === "sms" ? "sms_consent and cu.phone" : "email_consent and cu.email"} is not null
+  and cu.age_verified and coalesce(cu.age, 0) >= ${Number(MIN_AGE)}
+  and not exists (select 1 from public.suppressions s where s.org_id = o.org_id and s.channel = '${ch}'
+    and s.value = public.normalize_contact('${ch}', cu.${ch === "sms" ? "phone" : "email"})))`;
+const cooling = (col: string, p: number) => `($${p}::int > 0 and cu.${col} > now() - make_interval(days => $${p}::int))`;
+const inDeckSql = (smsParam: number, emailParam: number) => {
+  const sms = cooling("last_sms_at", smsParam), email = cooling("last_email_at", emailParam);
+  return `(not (${sms} or ${email}) or (${reachable("sms")} and not ${sms}) or (${reachable("email")} and not ${email}))`;
+};
+
 const OPP_SELECT = `
   select o.id, o.org_id, o.status, o.score, o.rationale,
     c.key as campaign_key, c.type as campaign_type, c.name as campaign_name,
@@ -38,7 +52,7 @@ const OPP_SELECT = `
     cu.id as customer_id, cu.first_name, cu.last_name, cu.age, cu.gender, cu.location,
     cu.phone, cu.email, cu.sms_consent, cu.email_consent, cu.lifetime_spend_cents, cu.last_purchase_at,
     cu.age_verified, cu.favorite_categories, cu.favorite_brands, cu.visits_per_month, cu.avg_basket_cents,
-    cu.preferred_day, cu.preferred_time, cu.rewards_member, cu.rewards_points, cu.rewards_joined_at,
+    cu.preferred_day, cu.preferred_time, cu.rewards_member, cu.rewards_points, cu.rewards_joined_at, cu.last_sms_at, cu.last_email_at,
     array(select ch::text from unnest(array['sms','email']::public.outreach_channel[]) ch
       where exists (select 1 from public.suppressions s where s.org_id = o.org_id and s.channel = ch
         and s.value = public.normalize_contact(ch, case when ch = 'sms' then cu.phone else cu.email end))
@@ -131,7 +145,8 @@ const dealParams = (d: DealInput) => [d.days, d.title, d.description, d.discount
 function toSettings(r: any): OrgSettings {
   return { storeName: r.store_name, emailSignature: r.email_signature, smsSignature: r.sms_signature,
     defaultChannel: r.default_channel, maxDiscountPercent: r.max_discount_percent, aiModel: r.ai_model ?? DEFAULT_SETTINGS.aiModel,
-    brandVoice: { ...DEFAULT_SETTINGS.brandVoice, ...(r.brand_voice ?? {}) } };
+    brandVoice: { ...DEFAULT_SETTINGS.brandVoice, ...(r.brand_voice ?? {}) },
+    smsCooldownDays: r.sms_cooldown_days ?? 0, emailCooldownDays: r.email_cooldown_days ?? 0 };
 }
 
 export class PostgresStore implements OutreachStore {
@@ -203,6 +218,8 @@ export class PostgresStore implements OutreachStore {
           lastPurchaseAt: r.last_purchase_at ? new Date(r.last_purchase_at).toISOString() : null,
           itemsPurchased: purchases.length, purchases,
           ageVerified: r.age_verified,
+          lastSmsAt: r.last_sms_at ? new Date(r.last_sms_at).toISOString() : null,
+          lastEmailAt: r.last_email_at ? new Date(r.last_email_at).toISOString() : null,
           rewards: r.rewards_member ? { member: true, points: r.rewards_points, joinedAt: r.rewards_joined_at ? new Date(r.rewards_joined_at).toISOString().slice(0, 10) : null } : null,
           profile: {
             favoriteCategories: r.favorite_categories, favoriteBrands: r.favorite_brands,
@@ -242,13 +259,16 @@ export class PostgresStore implements OutreachStore {
     });
   }
 
-  async listQueue(actor: Actor, limit: number) {
+  async listQueue(actor: Actor, limit: number, cooldown: Cooldowns = NO_COOLDOWN) {
     return this.asUser(actor.userId, async db => {
-      const r = await db.query(`${OPP_SELECT} where o.org_id = $1 and o.status in ${ACTIONABLE}
-        order by o.created_at asc, o.id limit $2`, [actor.orgId, limit]);
-      const total = await db.query<{ n: number }>(`select count(*)::int as n from public.outreach_opportunities
-        where org_id = $1 and status in ${ACTIONABLE}`, [actor.orgId]);
-      return { items: await this.hydrate(db, r.rows), total: total.rows[0].n };
+      const r = await db.query(`${OPP_SELECT} where o.org_id = $1 and o.status in ${ACTIONABLE} and ${inDeckSql(3, 4)}
+        order by o.created_at asc, o.id limit $2`, [actor.orgId, limit, cooldown.sms, cooldown.email]);
+      const total = await db.query<{ n: number }>(`select count(*)::int as n from public.outreach_opportunities o
+        join public.customers cu on cu.org_id = o.org_id and cu.id = o.customer_id
+        where o.org_id = $1 and o.status in ${ACTIONABLE} and ${inDeckSql(2, 3)}`, [actor.orgId, cooldown.sms, cooldown.email]);
+      // The SQL filter is the source of truth for paging; the domain check is a belt-and-braces guard (e.g. invalid phone formats).
+      const now = Date.now();
+      return { items: (await this.hydrate(db, r.rows)).filter(o => inDeck(o.customer, cooldown, now)), total: total.rows[0].n };
     });
   }
 
@@ -410,12 +430,14 @@ export class PostgresStore implements OutreachStore {
   async updateSettings(actor: Actor, s: OrgSettings): Promise<OrgSettings> {
     return this.asUser(actor.userId, async db => {
       assertCanEditDeals(await this.role(db, actor));
-      const r = await db.query(`insert into public.org_settings (org_id, store_name, email_signature, sms_signature, default_channel, max_discount_percent, updated_by, ai_model, brand_voice)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      const r = await db.query(`insert into public.org_settings (org_id, store_name, email_signature, sms_signature, default_channel, max_discount_percent, updated_by, ai_model, brand_voice, sms_cooldown_days, email_cooldown_days)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
         on conflict (org_id) do update set store_name = excluded.store_name, email_signature = excluded.email_signature,
           sms_signature = excluded.sms_signature, default_channel = excluded.default_channel,
-          max_discount_percent = excluded.max_discount_percent, updated_by = excluded.updated_by, ai_model = excluded.ai_model, brand_voice = excluded.brand_voice
-        returning *`, [actor.orgId, s.storeName, s.emailSignature, s.smsSignature, s.defaultChannel, s.maxDiscountPercent, actor.userId, s.aiModel, JSON.stringify(s.brandVoice)]);
+          max_discount_percent = excluded.max_discount_percent, updated_by = excluded.updated_by, ai_model = excluded.ai_model, brand_voice = excluded.brand_voice,
+          sms_cooldown_days = excluded.sms_cooldown_days, email_cooldown_days = excluded.email_cooldown_days
+        returning *`, [actor.orgId, s.storeName, s.emailSignature, s.smsSignature, s.defaultChannel, s.maxDiscountPercent, actor.userId, s.aiModel, JSON.stringify(s.brandVoice),
+          s.smsCooldownDays ?? 0, s.emailCooldownDays ?? 0]);
       await this.event(db, actor, actor.orgId, null, "settings_updated", {});
       return toSettings(r.rows[0]);
     }).catch(mapTeamError);

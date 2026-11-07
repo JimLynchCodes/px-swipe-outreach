@@ -44,7 +44,10 @@ export const settingsInput = z.object({
     emoji: z.boolean(),
     signOff: z.string().trim().max(40).refine(s => !/[\r\n]/.test(s), "must be a single line"),
     about: z.string().trim().max(500)
-  }).strict().optional()
+  }).strict().optional(),
+  /** Minimum days between outreach texts / emails to the same customer. Optional so older clients keep the current value. */
+  smsCooldownDays: z.number().int().min(0).max(365).optional(),
+  emailCooldownDays: z.number().int().min(0).max(365).optional()
 }).strict();
 
 type Deps = { store: OutreachStore; actorOf: (req: any) => Actor };
@@ -90,6 +93,8 @@ export async function dealRoutes(app: FastifyInstance, { store, actorOf }: Deps)
     const current = await store.getSettings(actor);
     const aiModel = input.aiModel ?? current.aiModel;
     const brandVoice = input.brandVoice ?? current.brandVoice;
-    return { settings: await store.updateSettings(actor, { ...input, aiModel, brandVoice }) };
+    const smsCooldownDays = input.smsCooldownDays ?? current.smsCooldownDays;
+    const emailCooldownDays = input.emailCooldownDays ?? current.emailCooldownDays;
+    return { settings: await store.updateSettings(actor, { ...input, aiModel, brandVoice, smsCooldownDays, emailCooldownDays }) };
   });
 }

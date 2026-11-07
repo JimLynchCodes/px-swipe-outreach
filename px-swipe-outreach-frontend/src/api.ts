@@ -71,7 +71,7 @@ export const api = {
   me: () => request<{ user: { id: string; email: string | null }; memberships: Membership[]; authMode: string; dataStore?: 'memory' | 'postgres' }>('/api/me'),
   optOut: (id: string, channel: Channel | 'all' = 'all') =>
     request<{ ok: true }>(`/api/outreach/${encodeURIComponent(id)}/opt-out`, { method: 'POST', body: JSON.stringify({ channel }) }),
-  queue: (limit = 50) => request<{ items: OutreachCard[]; total: number }>(`/api/outreach/queue?limit=${limit}`),
+  queue: (limit = 50) => request<{ items: OutreachCard[]; total: number; cooldown?: { sms: number; email: number } }>(`/api/outreach/queue?limit=${limit}`),
   suggestion: (id: string, channel: Channel) =>
     request<{ suggestion: Suggestion }>(`/api/outreach/${encodeURIComponent(id)}/suggestion`, {
       method: 'POST', body: JSON.stringify({ channel }),

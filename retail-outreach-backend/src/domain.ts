@@ -30,8 +30,40 @@ export function canContact(customer: Customer, channel: Channel): boolean {
     : customer.emailConsent && isValidEmail(customer.email);
 }
 
-export function preferredChannel(customer: Customer): Channel | null {
-  return canContact(customer, "sms") ? "sms" : canContact(customer, "email") ? "email" : null;
+/** Per-channel cooldown windows in days (0 = off). */
+export type CooldownDays = { sms: number; email: number };
+export const NO_COOLDOWN: CooldownDays = { sms: 0, email: 0 };
+
+export function lastSentAt(customer: Customer, channel: Channel): string | null {
+  return (channel === "sms" ? customer.lastSmsAt : customer.lastEmailAt) ?? null;
+}
+
+/** When the channel's cooldown ends (ISO), or null when the customer can be reached on it now. */
+export function cooldownUntil(customer: Customer, channel: Channel, cooldown: CooldownDays, now = Date.now()): string | null {
+  const days = cooldown[channel];
+  const last = lastSentAt(customer, channel);
+  if (!days || days <= 0 || !last) return null;
+  const until = new Date(last).getTime() + days * DAY_MS;
+  return until > now ? new Date(until).toISOString() : null;
+}
+
+/** Contactable on this channel and outside its cooldown window. */
+export function canReachNow(customer: Customer, channel: Channel, cooldown: CooldownDays, now = Date.now()): boolean {
+  return canContact(customer, channel) && !cooldownUntil(customer, channel, cooldown, now);
+}
+
+/**
+ * Deck filter: a customer stays in the deck unless cooldown is the reason they can't be reached, i.e. at least one
+ * channel is cooling down and no channel is both contactable and outside its window.
+ */
+export function inDeck(customer: Customer, cooldown: CooldownDays, now = Date.now()): boolean {
+  const cooling = (["sms", "email"] as const).some(ch => cooldownUntil(customer, ch, cooldown, now));
+  if (!cooling) return true;
+  return canReachNow(customer, "sms", cooldown, now) || canReachNow(customer, "email", cooldown, now);
+}
+
+export function preferredChannel(customer: Customer, cooldown: CooldownDays = NO_COOLDOWN, now = Date.now()): Channel | null {
+  return canReachNow(customer, "sms", cooldown, now) ? "sms" : canReachNow(customer, "email", cooldown, now) ? "email" : null;
 }
 
 export function recipientFor(customer: Customer, channel: Channel): string | null {
@@ -95,7 +127,7 @@ export function withEmailFooter(message: string): string {
 export const ACTIONABLE_STATUSES = ["pending", "drafted"] as const;
 
 /** Shape returned to the browser. No raw phone/email. */
-export function toCardDto(opp: Opportunity, now = Date.now()) {
+export function toCardDto(opp: Opportunity, now = Date.now(), cooldown: CooldownDays = NO_COOLDOWN) {
   const c = opp.customer;
   const [last, ...earlier] = c.purchases;
   return {
@@ -119,9 +151,12 @@ export function toCardDto(opp: Opportunity, now = Date.now()) {
       ageVerified: isAgeEligible(c),
       profile: c.profile,
       contact: {
-        sms: canContact(c, "sms"),
-        email: canContact(c, "email"),
-        preferredChannel: preferredChannel(c),
+        sms: canReachNow(c, "sms", cooldown, now),
+        email: canReachNow(c, "email", cooldown, now),
+        preferredChannel: preferredChannel(c, cooldown, now),
+        /** Last outreach send from this app per channel (ISO or null) and when each channel's cooldown ends (null = not cooling down). */
+        lastSent: { sms: c.lastSmsAt ?? null, email: c.lastEmailAt ?? null },
+        cooldownUntil: { sms: cooldownUntil(c, "sms", cooldown, now), email: cooldownUntil(c, "email", cooldown, now) },
         blockedReason: !isAgeEligible(c) ? "age_unverified" as const
           : c.suppressed.length === 2 ? "opted_out" as const : null
       }

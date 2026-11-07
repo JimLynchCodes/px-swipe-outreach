@@ -3,7 +3,7 @@ import {
   Pencil, Phone, ShieldAlert, ShieldCheck, ShoppingBag, Sparkles, Store, Tag, Check, Repeat, X,
 } from 'lucide-react'
 import type { Channel, OutreachCard, Suggestion } from '../types'
-import { charCount, daysAgo, money, SMS_MAX } from '../lib/format'
+import { charCount, daysAgo, money, shortDate, sinceShort, SMS_MAX } from '../lib/format'
 import { categoryLabel, DAYS, SEGMENT_LABEL } from '../lib/week'
 
 export interface CardDraft {
@@ -38,6 +38,7 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
   const { customer: c, lastPurchase: lp } = card
   const { contact, profile } = c
   const channelOk = draft.channel === 'sms' ? contact.sms : contact.email
+  const coolingUntil = contact.cooldownUntil?.[draft.channel] ?? null
   const s = draft.suggestion
   const count = charCount(draft.message)
   const habit = [
@@ -59,6 +60,11 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
         {c.location && <li><MapPin size={16} aria-hidden />{c.location}</li>}
         {c.storesShopped.length > 0 && <li><Store size={16} aria-hidden />Shops at: {c.storesShopped.join(', ')}</li>}
       </ul>
+      {contact.lastSent && (
+        <p className="last-contact muted small" aria-label="Last contacted">
+          Last text {sinceShort(contact.lastSent.sms)} · Last email {sinceShort(contact.lastSent.email)}
+        </p>
+      )}
 
       <div className="stats">
         <Stat icon={<CircleDollarSign size={18} />} label="Lifetime Spend" value={money(c.lifetimeSpendCents)} />
@@ -150,7 +156,9 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
       </div>
       <p className={`contact-note ${channelOk ? '' : 'warn'}`}>
         {draft.channel === 'sms' ? <Phone size={13} aria-hidden /> : <Mail size={13} aria-hidden />}
-        {channelOk
+        {coolingUntil
+          ? `${draft.channel === 'sms' ? 'Texted' : 'Emailed'} recently · cooldown until ${shortDate(coolingUntil)}`
+          : channelOk
           ? `Customer has a valid ${draft.channel === 'sms' ? 'phone number' : 'email address'}`
           : `No ${draft.channel === 'sms' ? 'phone number' : 'email address'} we can use (missing or opted out)`}
       </p>
