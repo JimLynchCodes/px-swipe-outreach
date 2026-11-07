@@ -51,7 +51,7 @@ export function ModelPicker() {
     <div className="model-picker" ref={ref}>
       <button className="pill model-pill" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)}
         title={fallback ? 'Selected model is unavailable; using rules' : undefined}>
-        <Sparkles size={14} aria-hidden /> Using model {label}{fallback && ' (rules fallback)'} <ChevronDown size={14} aria-hidden />
+        <Sparkles size={14} aria-hidden /> Using model {label}{fallback && ' (fallback: None)'} <ChevronDown size={14} aria-hidden />
       </button>
       {open && (
         <div className="menu model-menu" role="menu" aria-label="AI model">

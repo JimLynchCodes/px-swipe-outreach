@@ -27,7 +27,7 @@ const m = (model: string, label: string, o: Partial<CostReport['ytd']['byModel']
   ({ model, label, aiCalls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, smsSent: 0, emailSent: 0, messagesSent: 0, ...o })
 const COSTS: CostReport = {
   year: 2026, priceTableVersion: '2026-11-01', demo: true,
-  ytd: { costUsd: 0.4321, messagesSent: 900, aiCalls: 1100, byModel: [m('gpt-4o-mini', 'GPT-4o mini', { aiCalls: 800, costUsd: 0.2, messagesSent: 600 }), m('rules', 'Rules only', { aiCalls: 300, messagesSent: 300 })] },
+  ytd: { costUsd: 0.4321, messagesSent: 900, aiCalls: 1100, byModel: [m('gpt-4o-mini', 'GPT-4o mini', { aiCalls: 800, costUsd: 0.2, messagesSent: 600 }), m('rules', 'None', { aiCalls: 300, messagesSent: 300 })] },
   months: [
     { month: '2026-11', models: [m('gpt-4o-mini', 'GPT-4o mini', { aiCalls: 3, inputTokens: 2100, outputTokens: 450, costUsd: 0.000585, messagesSent: 2 })],
       total: { aiCalls: 3, inputTokens: 2100, outputTokens: 450, costUsd: 0.000585, smsSent: 2, emailSent: 0, messagesSent: 2 } },
@@ -66,7 +66,7 @@ describe('Cost metrics', () => {
     const ytd = await screen.findByRole('region', { name: 'Year to date' })
     expect(within(ytd).getByText('$0.4321')).toBeInTheDocument()
     expect(within(ytd).getByText('1,100')).toBeInTheDocument()
-    expect(within(ytd).getByText('Rules only')).toBeInTheDocument()
+    expect(within(ytd).getByText('None')).toBeInTheDocument()
     expect(screen.getByText('includes demo data')).toBeInTheDocument()
     const headings = screen.getAllByRole('heading', { level: 3 }).map(h => h.textContent)
     expect(headings).toEqual(['Year to date', 'November 2026', 'October 2026'])

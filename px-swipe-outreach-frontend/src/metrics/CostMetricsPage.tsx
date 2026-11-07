@@ -37,7 +37,7 @@ export function CostMetricsPage() {
               <ModelTable rows={m.models} total={m.total} caption={`${monthLabel(m.month)} by model`} />
             </section>
           ))}
-          <p className="muted small">Costs are priced when each suggestion is made, from the token counts the API returns. “Rules only” is free.
+          <p className="muted small">Costs are priced when each suggestion is made, from the token counts the API returns. “None” (heuristic-based canned suggestions) is free.
             Messages sent are counted against the model that wrote the suggestion.</p>
         </>}
     </PageShell>

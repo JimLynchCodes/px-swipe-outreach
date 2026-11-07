@@ -31,7 +31,7 @@ export const MODELS: ModelInfo[] = [
   { id: "gpt-5-mini", provider: "openai", label: "GPT-5 mini", inputPerM: 0.25, outputPerM: 2.0, reasoning: true },
   { id: "gpt-4.1-mini", provider: "openai", label: "GPT-4.1 mini", inputPerM: 0.4, outputPerM: 1.6 },
   { id: "gpt-5.4-mini", provider: "openai", label: "GPT-5.4 mini", inputPerM: 0.75, outputPerM: 4.5, reasoning: true },
-  { id: RULES_MODEL, provider: "rules", label: "Rules only (no AI)", inputPerM: 0, outputPerM: 0 }
+  { id: RULES_MODEL, provider: "rules", label: "None", inputPerM: 0, outputPerM: 0 }
 ];
 export const MODEL_IDS = MODELS.map(m => m.id) as [string, ...string[]];
 export const modelInfo = (id: string) => MODELS.find(m => m.id === id);
@@ -43,7 +43,7 @@ export const PROVIDERS: Record<ProviderId, { label: string; configured: (c: { OP
 
 /** Short cost hint, e.g. "~$0.02 per 100 suggestions", from ~700 input + ~150 output tokens per suggestion. */
 export function costHint(m: ModelInfo): string {
-  if (m.provider === "rules") return "Free";
+  if (m.provider === "rules") return "Heuristic-based canned suggestions, free";
   const per100 = (700 * m.inputPerM + 150 * m.outputPerM) / 1e6 * 100;
   return `~$${per100 < 0.1 ? per100.toFixed(3) : per100.toFixed(2)} per 100 suggestions`;
 }

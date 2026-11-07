@@ -86,7 +86,7 @@ The **Using model … ▾** pill in the header (it replaced "AI Powered") picks 
 | GPT-5 mini | 0.25 | 2.00 | Reasoning model |
 | GPT-4.1 mini | 0.40 | 1.60 | |
 | GPT-5.4 mini | 0.75 | 4.50 | Reasoning model |
-| Rules only (no AI) | – | – | Free, deterministic |
+| None | – | – | Heuristic-based canned suggestions, free |
 
 Prices live in a versioned table (`PRICE_TABLE_VERSION`). Update it when OpenAI changes prices. GPT-5 nano and GPT-4.1 nano were cheaper, but OpenAI lists them as deprecated or shut down.
 
@@ -232,7 +232,7 @@ The endpoint accepts multipart (SendGrid's default), urlencoded or JSON. Attachm
 Every suggestion call writes one `ai_usage` row: org, opportunity, actor, model, provider, input/output tokens (from the
 API response's `usage`), `cost_usd` priced at call time from the versioned table in `retail-outreach-backend/src/ai/models.ts`
 (`PRICE_TABLE_VERSION`; changing prices never rewrites history), the featured deal, and whether it led to a send
-(`led_to_send`, `sent_channel`). "Rules only" calls are recorded with 0 tokens and $0.
+(`led_to_send`, `sent_channel`). "None" (rules) calls are recorded with 0 tokens and $0.
 
 Each send also writes an `outreach_sends` ledger row (who sent, channel, deal + its categories/products, and the model
 that wrote the suggestion), so messages sent are counted per model.

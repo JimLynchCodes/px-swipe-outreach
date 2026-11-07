@@ -37,7 +37,7 @@ describe("model catalog", () => {
   it("marks OpenAI models unavailable without a key", () => {
     const none = listModels({});
     expect(none.find(m => m.id === "gpt-4o-mini")).toMatchObject({ available: false, note: expect.stringContaining("OPENAI_API_KEY") });
-    expect(none.find(m => m.id === "rules")).toMatchObject({ available: true, costHint: "Free" });
+    expect(none.find(m => m.id === "rules")).toMatchObject({ available: true, costHint: "Heuristic-based canned suggestions, free", label: "None", inputPerM: 0 });
     expect(listModels({ OPENAI_API_KEY: "sk-x" }).every(m => m.available)).toBe(true);
   });
 });

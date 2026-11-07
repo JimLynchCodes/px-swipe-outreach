@@ -109,5 +109,9 @@ describe("metrics API (demo mode)", () => {
     expect(sends.at(-1)).toMatchObject({ model: sug.model, dealTitle: sug.deal?.title ?? null, isDemo: false });
     const usage = await store.listAiUsage({ userId: OWNER, orgId: DEMO_ORG_ID }, "2000-01-01");
     expect(usage.at(-1)).toMatchObject({ opportunityId: "opp_0001", ledToSend: true, sentChannel: "sms" });
+    // No OPENAI_API_KEY in tests → the "None" (rules) model ran: recorded as a free call.
+    expect(usage.at(-1)).toMatchObject({ model: "rules", provider: "rules", inputTokens: 0, outputTokens: 0, costUsd: 0 });
+    const costs = (await app.inject({ url: "/api/metrics/costs", headers: await as(OWNER) })).json();
+    expect(costs.ytd.byModel.find((m: { model: string }) => m.model === "rules")).toMatchObject({ label: "None", costUsd: 0 });
   });
 });

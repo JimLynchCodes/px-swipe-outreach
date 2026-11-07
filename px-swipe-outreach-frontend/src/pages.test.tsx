@@ -332,7 +332,7 @@ describe('AI model picker', () => {
   const MODELS: AiModelOption[] = [
     { id: 'gpt-4o-mini', label: 'GPT-4o mini', provider: 'openai', providerLabel: 'OpenAI', inputPerM: 0.15, outputPerM: 0.6, costHint: '~$0.020 per 100 suggestions', available: true, note: null },
     { id: 'gpt-5-mini', label: 'GPT-5 mini', provider: 'openai', providerLabel: 'OpenAI', inputPerM: 0.25, outputPerM: 2, costHint: '~$0.05 per 100 suggestions', available: true, note: null },
-    { id: 'rules', label: 'Rules only (no AI)', provider: 'rules', providerLabel: 'Built-in rules', inputPerM: 0, outputPerM: 0, costHint: 'Free', available: true, note: null },
+    { id: 'rules', label: 'None', provider: 'rules', providerLabel: 'Built-in rules', inputPerM: 0, outputPerM: 0, costHint: 'Heuristic-based canned suggestions, free', available: true, note: null },
   ]
   const routes = (selected: { v: string }, models = MODELS) => ({
     'GET /api/ai/models': () => json({ models, selected: selected.v, effective: models.find(m => m.id === selected.v)?.available ? selected.v : 'rules', priceTableVersion: '2026-11-07' }),
@@ -352,7 +352,7 @@ describe('AI model picker', () => {
     fireEvent.click(pill)
     const menu = screen.getByRole('menu', { name: 'AI model' })
     expect(within(menu).getByRole('menuitemradio', { name: /GPT-4o mini/ })).toHaveAttribute('aria-checked', 'true')
-    expect(within(menu).getByText('Free')).toBeInTheDocument()
+    expect(within(menu).getByText('Heuristic-based canned suggestions, free')).toBeInTheDocument()
     fireEvent.click(within(menu).getByRole('menuitemradio', { name: /GPT-5 mini/ }))
     await screen.findByRole('button', { name: /Using model GPT-5 mini/ })
     expect(calls.find(c => c.method === 'PUT')?.body).toMatchObject({ aiModel: 'gpt-5-mini', storeName: 'Cloud 9' })
@@ -365,10 +365,20 @@ describe('AI model picker', () => {
     const models = MODELS.map(m => m.provider === 'openai' ? { ...m, available: false, note: 'Set OPENAI_API_KEY on the server to enable OpenAI models.' } : m)
     backend(routes(sel, models))
     go('/')
-    fireEvent.click(await screen.findByRole('button', { name: /rules fallback/ }))
+    fireEvent.click(await screen.findByRole('button', { name: /fallback: None/ }))
     expect(screen.getByRole('menuitemradio', { name: /GPT-5 mini/ })).toBeDisabled()
     expect(screen.getAllByText('Unavailable').length).toBe(2)
     expect(screen.getByText(/Set OPENAI_API_KEY/)).toBeInTheDocument()
+  })
+
+  it("choosing 'None' shows 'Using model None'", async () => {
+    const sel = { v: 'gpt-4o-mini' }
+    backend(routes(sel))
+    go('/')
+    fireEvent.click(await screen.findByRole('button', { name: /Using model GPT-4o mini/ }))
+    fireEvent.click(screen.getByRole('menuitemradio', { name: /^None/ }))
+    expect(await screen.findByRole('button', { name: /^Using model None$/ })).toBeInTheDocument()
+    expect(sel.v).toBe('rules')
   })
 
   it('staff see the list read-only', async () => {
