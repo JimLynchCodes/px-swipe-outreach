@@ -3,7 +3,8 @@ import App from './App'
 import { AuthProvider, useAuth } from './auth/AuthProvider'
 import { LoginPage } from './auth/LoginPage'
 import type { AuthConfig } from './auth/supabase'
-import { ROUTES, usePathname } from './router'
+import { useEffect } from 'react'
+import { navigate, ROUTES, usePathname } from './router'
 import { AcceptInvitePage } from './team/AcceptInvitePage'
 import { TeamPage } from './team/TeamPage'
 import { SettingsPage } from './settings/SettingsPage'
@@ -45,6 +46,7 @@ function Gate() {
       </div>
     )
   }
+  if (path === ROUTES.legacyCosts) return <Redirect to={ROUTES.costs} />
   if (path === ROUTES.team) return <TeamPage key={auth.orgId} />
   if (path === ROUTES.costs) return <CostMetricsPage key={auth.orgId} />
   if (path === ROUTES.performance) return <PerformancePage key={auth.orgId} />
@@ -56,4 +58,10 @@ function Gate() {
 
 export default function Root({ config }: { config: AuthConfig }) {
   return <AuthProvider config={config}><Gate /></AuthProvider>
+}
+
+/** Replaces the current history entry (old bookmarks keep working, Back skips the old URL). */
+function Redirect({ to }: { to: string }) {
+  useEffect(() => { navigate(to, { replace: true }) }, [to])
+  return null
 }

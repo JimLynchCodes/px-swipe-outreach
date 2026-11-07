@@ -12,7 +12,8 @@ export type LeaderRow = {
 export type PerformanceReport = {
   attributionDays: number; demo: boolean; revenueVisible: boolean;
   summary: {
-    thisMonthCents: number; lastMonthCents: number; monthGrowthPct: number | null; ytdCents: number;
+    /** thisMonthCents is month-to-date; monthGrowthPct compares it with lastMonthToDateCents (same days of last month). */
+    thisMonthCents: number; lastMonthCents: number; lastMonthToDateCents: number; monthDay: number; monthGrowthPct: number | null; ytdCents: number;
     ytdSends: number; ytdConversions: number; conversionRate: number; avgOrderCents: number;
   };
   trend: Array<{ month: string; revenueCents: number; sends: number; conversions: number }>;
@@ -89,6 +90,14 @@ export function performanceReport(sends: SendRow[], purchases: PurchaseRow[], op
     if (at(s) >= yearStart) { ytdSends++; ytdCents += rev(s); if (conv(s)) { ytdConv++; ytdOrders += att.get(s.id)!.orders.size; } }
   }
   const tm = months.get(thisMonth)!.revenueCents, lm = months.get(lastMonth)!.revenueCents;
+  // Like-for-like: month-to-date vs the same span of last month (day 1 through the same day/time, clamped to its last day).
+  const lmStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const lmDays = new Date(now.getFullYear(), now.getMonth(), 0).getDate();
+  const lmCut = new Date(lmStart.getFullYear(), lmStart.getMonth(), Math.min(now.getDate(), lmDays), now.getHours(), now.getMinutes(), now.getSeconds()).getTime();
+  // Purchases are also cut at the same offset, so last month's sends don't get extra days to convert.
+  const lmSends = sends.filter(x => at(x) >= lmStart.getTime() && at(x) <= lmCut);
+  const lmAtt = attribute(lmSends, purchases.filter(p => Date.parse(p.purchasedAt) <= lmCut), days);
+  const lmtd = lmSends.reduce((a, x) => a + (lmAtt.get(x.id)?.revenueCents ?? 0), 0);
 
   const promos = new Map<string, PerformanceReport["promotions"][number]>();
   const ytdList = sends.filter(s => at(s) >= yearStart);
@@ -130,7 +139,7 @@ export function performanceReport(sends: SendRow[], purchases: PurchaseRow[], op
   }
   return {
     attributionDays: days, demo: sends.some(s => s.isDemo), revenueVisible: opts.canSeeAll,
-    summary: { thisMonthCents: tm, lastMonthCents: lm, monthGrowthPct: lm ? ((tm - lm) / lm) * 100 : null, ytdCents,
+    summary: { thisMonthCents: tm, lastMonthCents: lm, lastMonthToDateCents: lmtd, monthDay: now.getDate(), monthGrowthPct: lmtd ? ((tm - lmtd) / lmtd) * 100 : null, ytdCents,
       ytdSends, ytdConversions: ytdConv, conversionRate: rate(ytdConv, ytdSends), avgOrderCents: ytdOrders ? Math.round(ytdCents / ytdOrders) : 0 },
     trend: [...months.entries()].map(([month, v]) => ({ month, ...v })),
     promotions,

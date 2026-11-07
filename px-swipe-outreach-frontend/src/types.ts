@@ -149,7 +149,7 @@ export interface LeaderRow {
 }
 export interface PerformanceReport {
   attributionDays: number; demo: boolean; revenueVisible: boolean
-  summary: { thisMonthCents: number; lastMonthCents: number; monthGrowthPct: number | null; ytdCents: number
+  summary: { thisMonthCents: number; lastMonthCents: number; lastMonthToDateCents: number; monthDay: number; monthGrowthPct: number | null; ytdCents: number
     ytdSends: number; ytdConversions: number; conversionRate: number; avgOrderCents: number }
   trend: Array<{ month: string; revenueCents: number; sends: number; conversions: number }>
   promotions: Array<{ dealId: string | null; title: string; sends: number; usagePct: number; conversions: number; conversionRate: number; revenueCents: number }>

@@ -3,8 +3,7 @@ import { api } from '../api'
 import { useAuth } from '../auth/AuthProvider'
 import { PageShell } from '../components/PageShell'
 import { compact, monthLabel, usd } from '../lib/format'
-import { ROUTES } from '../router'
-import { SettingsTabs } from '../settings/SettingsTabs'
+import { MetricCard } from '../components/MetricCard'
 import type { CostReport, ModelCost } from '../types'
 
 export function CostMetricsPage() {
@@ -14,19 +13,19 @@ export function CostMetricsPage() {
   const [err, setErr] = useState<string | null>(null)
   useEffect(() => { if (canView) api.metrics.costs().then(setR, e => setErr(e.message)) }, [canView])
   return (
-    <PageShell title="Cost metrics" back={ROUTES.settings} backLabel="Back to settings"
+    <PageShell title="Cost metrics" wide
       subtitle={r ? <>AI spend for {r.year} · prices v{r.priceTableVersion}{r.demo && <span className="pill demo">includes demo data</span>}</> : 'AI spend per model and month'}>
-      <SettingsTabs current="costs" />
       {!canView ? <p className="error" role="alert">Only owners and admins can view cost metrics.</p>
         : err ? <p className="error" role="alert">{err}</p>
         : !r ? <p className="muted">Loading…</p>
         : <>
           <section className="panel" aria-label="Year to date">
             <h3>Year to date</h3>
-            <div className="stat-grid">
-              <Stat label="Total AI spend" value={usd(r.ytd.costUsd)} />
-              <Stat label="Messages sent" value={r.ytd.messagesSent.toLocaleString()} />
-              <Stat label="AI calls" value={r.ytd.aiCalls.toLocaleString()} />
+            <div className="metric-grid">
+              <MetricCard label="Total AI spend" value={usd(r.ytd.costUsd)} note="year to date" />
+              <MetricCard label="Messages sent" value={r.ytd.messagesSent.toLocaleString()} note={r.ytd.messagesSent ? `${usd(r.ytd.costUsd / r.ytd.messagesSent)} AI cost per send` : undefined} />
+              <MetricCard label="AI calls" value={r.ytd.aiCalls.toLocaleString()} note={r.ytd.aiCalls ? `${usd(r.ytd.costUsd / r.ytd.aiCalls)} per call` : undefined} />
+              <MetricCard label="Calls that led to a send" value={r.ytd.aiCalls ? `${Math.round((r.ytd.messagesSent / r.ytd.aiCalls) * 100)}%` : '–'} note={`${r.ytd.messagesSent.toLocaleString()} of ${r.ytd.aiCalls.toLocaleString()}`} />
             </div>
             <ModelTable rows={r.ytd.byModel} caption="By model, year to date" />
           </section>
@@ -44,10 +43,6 @@ export function CostMetricsPage() {
   )
 }
 
-function Stat({ label, value, hint }: { label: string; value: string; hint?: React.ReactNode }) {
-  return <div className="stat"><div className="stat-value">{value}</div><div className="stat-label">{label}</div>{hint && <div className="stat-hint">{hint}</div>}</div>
-}
-export { Stat }
 
 function ModelTable({ rows, total, caption }: { rows: ModelCost[]; total?: Omit<ModelCost, 'model' | 'label'>; caption: string }) {
   return (

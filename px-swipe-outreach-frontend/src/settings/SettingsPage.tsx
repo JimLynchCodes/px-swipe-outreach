@@ -3,7 +3,6 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../auth/AuthProvider'
 import { PageShell } from '../components/PageShell'
-import { SettingsTabs } from './SettingsTabs'
 import { emptyDeal, PromotionForm } from '../deals/PromotionForm'
 import { toInput, useDeals } from '../deals/useDeals'
 import { charCount } from '../lib/format'
@@ -23,7 +22,6 @@ export function SettingsPage() {
   const canEdit = auth.role === 'owner' || auth.role === 'admin'
   return (
     <PageShell title="Settings" subtitle={canEdit ? 'Saved for your whole store' : 'Only owners and admins can change settings'}>
-      <SettingsTabs current="general" />
       <StoreSettings canEdit={canEdit} />
       <Promotions canEdit={canEdit} />
     </PageShell>

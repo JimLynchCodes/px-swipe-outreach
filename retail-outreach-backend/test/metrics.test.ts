@@ -30,6 +30,30 @@ describe("attribution", () => {
   });
 });
 
+describe("month-over-month growth", () => {
+  it("compares month-to-date with the same days of last month, not the whole month", () => {
+    const now = new Date(2026, 10, 7, 12); // Nov 7 noon, local
+    const sends = [send({ id: "a", createdAt: new Date(2026, 10, 3).toISOString() }), send({ id: "b", customerId: "c2", createdAt: new Date(2026, 9, 4).toISOString() }),
+      send({ id: "c", customerId: "c3", createdAt: new Date(2026, 9, 20).toISOString() })];
+    const buys = [buy({ purchasedAt: new Date(2026, 10, 4).toISOString() }), buy({ customerId: "c2", purchaseId: "p2", purchasedAt: new Date(2026, 9, 5).toISOString() }),
+      buy({ customerId: "c3", purchaseId: "p3", priceCents: 50000, purchasedAt: new Date(2026, 9, 21).toISOString() })];
+    const r = performanceReport(sends, buys, { now, viewerId: "u1", canSeeAll: true });
+    expect(r.summary).toMatchObject({ thisMonthCents: 4000, lastMonthCents: 54000, lastMonthToDateCents: 4000, monthDay: 7, monthGrowthPct: 0 });
+  });
+  it("clamps to last month's final day (Mar 31 vs Feb 28) and is null with nothing to compare", () => {
+    const r = performanceReport([send({ createdAt: new Date(2026, 1, 28, 9).toISOString() })], [buy({ purchasedAt: new Date(2026, 1, 28, 11).toISOString() })], { now: new Date(2026, 2, 31, 12), viewerId: "u1", canSeeAll: true });
+    expect(r.summary.lastMonthToDateCents).toBe(4000);
+    expect(performanceReport([], [], { now: new Date(2026, 2, 31), viewerId: "u1", canSeeAll: true }).summary.monthGrowthPct).toBeNull();
+  });
+  it("demo: compares against a partial last month, not the full month", () => {
+    const now = new Date(2026, 10, 7, 12);
+    const d = buildDemoMetrics(now);
+    const s = performanceReport(d.sends, d.purchases, { now, viewerId: "x", canSeeAll: true }).summary;
+    expect(s.lastMonthToDateCents).toBeLessThan(s.lastMonthCents / 2);
+    expect(s.monthGrowthPct).toBeCloseTo(((s.thisMonthCents - s.lastMonthToDateCents) / s.lastMonthToDateCents) * 100);
+  });
+});
+
 describe("performance report", () => {
   const now = new Date("2026-11-07T17:00:00Z");
   it("summarises revenue, promotions and hides others' revenue from staff", () => {

@@ -227,7 +227,9 @@ Storage and matching:
 
 The endpoint accepts multipart (SendGrid's default), urlencoded or JSON. Attachments are discarded and quoted text is stripped. The sender must match the thread's address, so a spoofed or forwarded reply is ignored. Without `INBOUND_EMAIL_SECRET` the endpoint returns 503.
 
-## Cost metrics (Settings → Cost metrics, owners/admins)
+## Cost metrics (☰ → Cost metrics at `/cost-metrics`, owners/admins)
+
+Its own page, listed in the menu directly under Performance metrics. It used to live under Settings; the old `/settings/costs` URL now redirects to `/cost-metrics`.
 
 Every suggestion call writes one `ai_usage` row: org, opportunity, actor, model, provider, input/output tokens (from the
 API response's `usage`), `cost_usd` priced at call time from the versioned table in `retail-outreach-backend/src/ai/models.ts`
@@ -250,7 +252,7 @@ products, only purchase lines in those categories/products count (the POS has no
 match); a send without a promotion counts any line. Each purchase line is credited to at most one send. Attributed
 revenue is the sum of those lines; AOV = attributed revenue ÷ attributed orders.
 
-The page shows: attributed revenue this month vs last month (growth %), YTD, conversion rate, AOV and a 6-month bar
+The page shows: attributed revenue month to date vs the same days of last month (growth %, see below), YTD, conversion rate, AOV and a 6-month bar
 chart (inline SVG, no chart dependency); promotions this year with usage % (share of sends that featured it), sends,
 conversions, conversion rate and revenue; and a leaderboard (Today / This week / This month / All time) with rank,
 initials avatar, sends, conversions (progress bar), conversion rate and revenue, 🥇🥈🥉 for the top 3, an **On fire**
@@ -260,3 +262,7 @@ Staff see everyone's sends/conversions but only their own revenue (others show "
 **Demo data:** `src/data/demoMetrics.ts` generates ~5 months of usage, sends by four fictional staff ("Maya R. (demo)" …)
 and purchases, deterministically. Rows are `is_demo = true` (Postgres seed) and the pages show an "includes demo data"
 pill. Demo purchases never appear in the deck's customer history. RLS: members can't insert `is_demo` rows.
+
+**Month-over-month growth is like-for-like.** On day N of a month, "Month to date" covers day 1 through now. It is compared with sends from day 1 through the same day and time of last month (clamped to last month's final day, e.g. Mar 31 → Feb 28). For that comparison, last month only counts purchases made by the same cut-off, so neither period gets extra days to convert. The card also shows the full previous month's total for context. Previously a partial month was compared with a full one, which showed misleading drops like ▼95% early in the month. Early in a month the sample is small, so expect noisy percentages.
+
+Summary cards (here and on Cost metrics) share a `MetricCard` layout: a small uppercase label, the value, then a green ▲ / red ▼ growth pill or a gray context line. The grid is 2×2 on desktop and 1 column under 640px.

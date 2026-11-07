@@ -5,7 +5,7 @@ import { useAuth } from '../auth/AuthProvider'
 import { PageShell } from '../components/PageShell'
 import { initials, money, monthLabel, pct } from '../lib/format'
 import type { Period, PerformanceReport } from '../types'
-import { Stat } from './CostMetricsPage'
+import { MetricCard } from '../components/MetricCard'
 
 const PERIODS: Array<{ id: Period; label: string }> = [
   { id: 'today', label: 'Today' }, { id: 'week', label: 'This week' }, { id: 'month', label: 'This month' }, { id: 'all', label: 'All time' },
@@ -46,12 +46,13 @@ function Overview({ r }: { r: PerformanceReport }) {
   return (
     <section className="panel" aria-label="Revenue growth">
       <h3>Attributed revenue</h3>
-      <div className="stat-grid">
-        <Stat label="This month" value={money(s.thisMonthCents)}
-          hint={g == null ? 'no revenue last month' : <span className={g >= 0 ? 'up' : 'down'}>{g >= 0 ? '▲' : '▼'} {Math.abs(g).toFixed(1)}% vs last month ({money(s.lastMonthCents)})</span>} />
-        <Stat label="Year to date" value={money(s.ytdCents)} hint={`${s.ytdConversions.toLocaleString()} conversions from ${s.ytdSends.toLocaleString()} sends`} />
-        <Stat label="Conversion rate" value={pct(s.conversionRate)} />
-        <Stat label="Avg order (converted)" value={money(s.avgOrderCents)} />
+      <div className="metric-grid">
+        <MetricCard label={`Month to date (${s.monthDay} day${s.monthDay === 1 ? '' : 's'})`} value={money(s.thisMonthCents)}
+          delta={g == null ? undefined : { pct: g }}
+          note={g == null ? 'no revenue in the same days last month' : `vs ${money(s.lastMonthToDateCents)} same days last month`} />
+        <MetricCard label="Year to date" value={money(s.ytdCents)} note={`${s.ytdConversions.toLocaleString()} conversions · ${s.ytdSends.toLocaleString()} sends`} />
+        <MetricCard label="Conversion rate" value={pct(s.conversionRate)} note="year to date" />
+        <MetricCard label="Avg order (converted)" value={money(s.avgOrderCents)} note={`full last month ${money(s.lastMonthCents)}`} />
       </div>
       <TrendChart points={r.trend} />
     </section>
