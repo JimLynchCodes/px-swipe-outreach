@@ -2,6 +2,7 @@
  * Deal-aware targeting: picks the weekly deal most likely to bring a customer in (and lift their basket),
  * plus when to send it. Pure and deterministic, so it is shared by the rules and LLM suggestion paths.
  */
+import { purchaseInsights, restockWindow } from "./insights.js";
 import { daysSince, discountLabel, segmentOf, weekdayOf, WEEKDAYS } from "./domain.js";
 import type { CatalogProduct, Customer, Deal, PreferredTime, Recommendation, Segment } from "./types.js";
 
@@ -75,6 +76,9 @@ export function recommend(c: Customer, deals: Deal[], opts: RecommendOptions = {
   const boughtIds = new Set(c.purchases.map(p => p.productId));
   const basketBoost = Math.min(10, c.profile.avgBasketCents / 1000);
 
+  const insight = purchaseInsights(c, now);
+  const restockDue = insight.restock.filter(restockWindow);
+
   let best: { deal: Deal; day: number; score: number; reasons: string[] } | null = null;
   for (const deal of deals) {
     if (deal.discountType === "percent" && (deal.discountValue ?? 0) > maxDiscountPercent) continue;
@@ -98,6 +102,12 @@ export function recommend(c: Customer, deals: Deal[], opts: RecommendOptions = {
     }
     if (brandHits.length) { score += 15; reasons.push(`Favorite brand on deal: ${brandHits.join(", ")}`); }
     if (storewide) { score += 8; reasons.push("Storewide deal"); }
+    // Repurchase cycle: a deal on something they're about to run out of is the most timely offer.
+    const restockHit = restockDue.find(r => deal.productIds.includes(r.productId) || (!!r.category && deal.categories.includes(r.category)));
+    if (restockHit) {
+      score += 25;
+      reasons.push(`Restock due: buys ${restockHit.name} about every ${restockHit.cycleDays} days (${restockHit.dueInDays > 0 ? `due in ${restockHit.dueInDays} day${restockHit.dueInDays === 1 ? "" : "s"}` : restockHit.dueInDays === 0 ? "due today" : `${-restockHit.dueInDays} days overdue`})`);
+    }
     if (deal.schedule === "range" && deal.endsOn) {
       const left = Math.round((Date.parse(`${deal.endsOn}T00:00:00`) - Date.parse(`${isoDate(now)}T00:00:00`)) / DAY_MS);
       reasons.push(`Seasonal promotion, runs every day through ${deal.endsOn}${left >= 0 && left <= 7 ? ` (ends in ${left} day${left === 1 ? "" : "s"})` : ""}`);
@@ -117,15 +127,21 @@ export function recommend(c: Customer, deals: Deal[], opts: RecommendOptions = {
   if (best && best.score >= MIN_SCORE) {
     return {
       deal: best.deal, dealDay: best.day, score: Math.round(best.score), segment,
-      reasons: [segmentReason(c, segment, now), ...best.reasons, `Uses deal: ${best.deal.title} (${discountLabel(best.deal)})`],
+      reasons: [segmentReason(c, segment, now), ...best.reasons, ...rewardsReason(c), `Uses deal: ${best.deal.title} (${discountLabel(best.deal)})`],
       sendAt: sendTiming(best.day, c.profile.preferredTime)
     };
   }
   return {
     deal: null, dealDay: null, score: 0, segment,
-    reasons: [segmentReason(c, segment, now), "No current deal matches their favorites, so the standing offer is used"],
+    reasons: [segmentReason(c, segment, now), ...rewardsReason(c), ...restockDue.slice(0, 1).map(r => `Restock due: ${r.name} (every ~${r.cycleDays} days)`), "No current deal matches their favorites, so the standing offer is used"],
     sendAt: c.profile.preferredDay === null ? null : sendTiming(c.profile.preferredDay, c.profile.preferredTime)
   };
+}
+
+/** Rewards members get a mention of their real points balance (never more deal depth). */
+function rewardsReason(c: Customer): string[] {
+  if (!c.rewards?.member) return [];
+  return [`Rewards member${c.rewards.points !== null ? ` with ${c.rewards.points.toLocaleString("en-US")} points` : ""}: mention their points to make it personal`];
 }
 
 export const describeSegment = (s: Segment) => cap(s.replace("_", "-"));

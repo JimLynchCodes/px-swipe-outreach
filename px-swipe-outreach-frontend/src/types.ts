@@ -157,3 +157,19 @@ export interface PerformanceReport {
   promotions: Array<{ dealId: string | null; title: string; sends: number; usagePct: number; conversions: number; conversionRate: number; revenueCents: number }>
   leaderboard: Record<Period, { rows: LeaderRow[]; totals: { sends: number; conversions: number; conversionRate: number; revenueCents: number | null } }>
 }
+
+// ── Data sync ──
+export type SyncJobId = 'ai-usage' | 'twilio' | 'email' | 'quickvee-rewards' | 'quickvee-orders'
+export type SyncFrequency = 'off' | 'daily' | 'weekly' | 'monthly' | 'yearly'
+export type SyncLogLine = { at: string; level: 'info' | 'warn' | 'error'; msg: string; data?: Record<string, unknown> }
+export type SyncRun = {
+  id: string; job: SyncJobId; trigger: 'manual' | 'schedule' | 'backfill' | 'cli'; status: 'running' | 'succeeded' | 'failed'; dryRun: boolean
+  params: { from?: string; to?: string }; progress: { phase?: string; done?: number; total?: number }; rowsRead: number; rowsWritten: number
+  error: string | null; startedAt: string; finishedAt: string | null; durationMs: number | null; log?: SyncLogLine[]
+}
+export type SyncSchedule = { job: SyncJobId; frequency: SyncFrequency; startLocal: string; nextRunAt: string | null }
+export type SyncSource = {
+  id: SyncJobId; label: string; description: string; supportsBackfill: boolean; configured: boolean; missing: string[]
+  schedule: SyncSchedule; lastRun: SyncRun | null
+}
+export type SyncOverview = { timezone: string; schedulerEnabled: boolean; now: string; sources: SyncSource[] }

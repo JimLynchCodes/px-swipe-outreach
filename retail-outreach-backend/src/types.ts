@@ -36,7 +36,11 @@ export type Customer = {
   /** True once staff checked ID (21+). Age-restricted products are never marketed to unverified customers. */
   ageVerified: boolean;
   profile: BuyingProfile;
+  /** Store rewards (Quickvee via data sync). Points are the real balance; copy may only quote this number. */
+  rewards?: Rewards | null;
 };
+
+export type Rewards = { member: boolean; points: number | null; joinedAt: string | null };
 
 export type PreferredTime = "morning" | "afternoon" | "evening";
 export type Segment = "loyal" | "at_risk" | "lapsed";

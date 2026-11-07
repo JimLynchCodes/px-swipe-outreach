@@ -11,6 +11,7 @@ import { SettingsPage } from './settings/SettingsPage'
 import { OptOutsPage } from './settings/OptOutsPage'
 import { RepliesPage } from './replies/RepliesPage'
 import { CostMetricsPage } from './metrics/CostMetricsPage'
+import { DataSyncPage } from './sync/DataSyncPage'
 import { PerformancePage } from './metrics/PerformancePage'
 
 function Gate() {
@@ -50,6 +51,7 @@ function Gate() {
   if (path === ROUTES.team) return <TeamPage key={auth.orgId} />
   if (path === ROUTES.costs) return <CostMetricsPage key={auth.orgId} />
   if (path === ROUTES.performance) return <PerformancePage key={auth.orgId} />
+  if (path === ROUTES.dataSync) return <DataSyncPage key={auth.orgId} />
   if (path === ROUTES.settings) return <SettingsPage key={auth.orgId} />
   if (path === ROUTES.optOuts) return <OptOutsPage key={auth.orgId} />
   if (path === ROUTES.replies || path.startsWith(`${ROUTES.replies}/`)) return <RepliesPage key={auth.orgId} />

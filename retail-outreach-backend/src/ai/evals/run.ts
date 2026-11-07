@@ -58,7 +58,7 @@ export async function runCase(c: EvalCase, client: ChatCompletionClient, model: 
   const text = c.channel === "sms" ? s.message.split("\n")[0].replace(` ${EVAL_SIGNATURE}`, "") : s.message;
   const check = s.source !== "rules"
     ? checkCopy(c.channel === "sms" ? { smsText: text } : { emailSubject: s.subject ?? "", emailBody: text.split("\n\nYou're receiving")[0] },
-        { channel: c.channel, firstName: customer.firstName, lastName: customer.lastName, promotion: promo, offerPercent: promo ? null : c.input.opportunity.offer?.discountPercent ?? null,
+        { channel: c.channel, firstName: customer.firstName, lastName: customer.lastName, promotion: promo, rewardsPoints: customer.rewards?.member ? customer.rewards.points : null, offerPercent: promo ? null : c.input.opportunity.offer?.discountPercent ?? null,
           maxDiscountPercent: EVAL_CAP, smsSignature: EVAL_SIGNATURE, now: c.input.now })
     : { violations: [] };
   const sms = c.channel === "sms" ? (s.source !== "rules" ? assembleSms(text, EVAL_SIGNATURE) : s.message) : null;

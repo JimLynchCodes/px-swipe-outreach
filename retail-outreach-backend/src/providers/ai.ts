@@ -1,7 +1,7 @@
 import { daysSince, discountLabel, withEmailFooter, withSmsOptOut, WEEKDAYS } from "../domain.js";
 import { bestDealDay, categoryLabel, dealRunsOn, sendTiming } from "../recommend.js";
 import { checkCopy, type Violation } from "../ai/compliance.js";
-import { AI_JSON_SCHEMA, aiOutputSchema, systemPrompt, userPayload, type AiOutput, type PromptContext } from "../ai/prompt.js";
+import { AI_JSON_SCHEMA, aiOutputSchema, smsBudget, systemPrompt, userPayload, type AiOutput, type PromptContext } from "../ai/prompt.js";
 import type { BrandVoice, Channel, Deal, Opportunity, Recommendation, Suggestion } from "../types.js";
 import { DEFAULT_AI_MODEL, modelInfo, routesFor, RULES_MODEL, type AiKeys } from "../ai/models.js";
 
@@ -86,6 +86,12 @@ export class RulesSuggestionProvider implements SuggestionProvider {
       reasoning = `${habit}. A friendly heads-up about new arrivals keeps a regular coming back.`;
       sms = `Hi ${name}, it's ${businessName}! New ${favs || "arrivals"} just landed — come check them out. 21+ w/ ID.`;
       subject = `New ${favs || "arrivals"} at ${businessName}`;
+    }
+    // Rewards members: quote their real balance when it fits the SMS budget (email always has room).
+    if (c.rewards?.member && c.rewards.points !== null && c.rewards.points > 0) {
+      const perk = ` You've got ${c.rewards.points.toLocaleString("en-US")} rewards points waiting.`;
+      const withPerk = sms.replace(/ 21\+ w\/ ID\.$/, `${perk} 21+ w/ ID.`);
+      if (input.channel === "email" || withPerk.length <= smsBudget(input.signatures?.sms ?? "")) sms = withPerk;
     }
     const body = sms.replace(/^Hi [^,]+, it's [^!.]+[!.] ?/, "");
     const closing = input.signatures?.email.trim() ? "See you soon," : `See you soon,\n${businessName}`;
@@ -213,7 +219,7 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
       const promo = out.promotion_id ? promotions.find(d => d.id === out.promotion_id) ?? null : null;
       violations = out.promotion_id && !promo ? [{ code: "unknown_promotion", message: `promotion_id "${out.promotion_id}" is not in PROMOTIONS.` }] : [];
       const check = checkCopy({ smsText: out.sms_text, emailSubject: out.email_subject, emailBody: out.email_body }, {
-        channel: input.channel, firstName: c.firstName, lastName: c.lastName, promotion: promo,
+        channel: input.channel, firstName: c.firstName, lastName: c.lastName, promotion: promo, rewardsPoints: c.rewards?.member ? c.rewards.points : null,
         offerPercent: promo ? null : input.opportunity.offer?.discountPercent ?? null, maxDiscountPercent: cap, smsSignature: ctx.smsSignature, now
       });
       violations.push(...check.violations);

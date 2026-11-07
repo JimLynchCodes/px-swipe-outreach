@@ -16,6 +16,8 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      # The Quickvee scraper tests drive a real Chromium against a local mock portal (runner image ships Google Chrome).
+      - run: echo "QUICKVEE_CHROMIUM_PATH=$(command -v google-chrome || command -v chromium || command -v chromium-browser)" >> "$GITHUB_ENV"
       - run: npm test
       - run: npm run build
 

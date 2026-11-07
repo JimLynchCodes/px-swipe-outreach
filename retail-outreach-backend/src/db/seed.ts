@@ -73,6 +73,8 @@ export async function seedOrg(db: pg.PoolClient, opts: { orgId: string; name: st
         preferred_day = excluded.preferred_day, preferred_time = excluded.preferred_time`,
       [custId, orgId, c.id, c.firstName, c.lastName, c.age, c.gender, c.location, c.phone, c.email, c.smsConsent, c.emailConsent, lifetime, lastAt,
         c.ageVerified, pr.favoriteCategories, pr.favoriteBrands, pr.visitsPerMonth, pr.avgBasketCents, pr.preferredDay, pr.preferredTime]);
+    const rw = seed.SEED_REWARDS[c.id];
+    await db.query(`update public.customers set rewards_member = $2, rewards_points = $3, rewards_joined_at = $4 where id = $1`, [custId, !!rw, rw?.points ?? null, rw?.joinedAt ?? null]);
     for (const [j, [pid, daysAgo]] of c.purchases.entries()) {
       const p = seed.productById(pid);
       const purchaseId = id(`purchase:${c.id}:${j}`);

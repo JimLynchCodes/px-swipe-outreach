@@ -151,3 +151,7 @@ vite.config.ts.timestamp-*
 
 # Misc
 .DS_Store
+
+# Quickvee sync: session cookies and raw snapshots (customer PII). Never commit.
+.quickvee/
+**/.quickvee/

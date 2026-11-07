@@ -80,6 +80,10 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `AI_PROVIDER` | `openrouter` if its key is set, else `openai` | Primary provider; startup fails if its key is missing |
 | `OPENAI_MODEL` | `openai/gpt-4o-mini` | Fallback model only; each org picks its model in Settings or the header |
 | `OPENROUTER_APP_NAME` | `PX Swipe Outreach` | OpenRouter `X-Title` header (`HTTP-Referer` = `APP_URL`) |
+| `SYNC_SCHEDULER` / `SYNC_SCHEDULER_INTERVAL_SECONDS` | `true` / `60` | Data sync scheduler loop in the API process (DB-backed, multi-instance safe) |
+| `OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY` | – | ai-usage sync (OpenAI Usage/Costs APIs; OpenRouter `/activity`) |
+| `EMAIL_EVENTS_PROVIDER` / `SENDGRID_API_KEY` | `ledger` / – | email tracking source |
+| `QUICKVEE_EMAIL` / `QUICKVEE_PASSWORD` | – | Quickvee rewards/orders sync (merchant's own login; never logged). More `QUICKVEE_*` knobs in `.env.example` and [docs/DATA_SYNC.md](../docs/DATA_SYNC.md) |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
 | `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
 | `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |

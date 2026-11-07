@@ -36,6 +36,8 @@ export type PromoTerms = Pick<DealInput, "title" | "discountType" | "discountVal
 
 export type CopyCheckContext = {
   channel: "sms" | "email";
+  /** The customer's real rewards balance (null/undefined = not a member: no points may be quoted). */
+  rewardsPoints?: number | null;
   firstName: string;
   lastName?: string | null;
   /** Promotion the copy claims to use (already resolved from the model's promotion_id), or null. */
@@ -90,6 +92,12 @@ export function checkCopy(copy: { smsText?: string; emailSubject?: string; email
     if (rule.patterns.some(p => p.test(all))) violations.push({ code: rule.code, message: rule.message });
   }
   violations.push(...checkDiscounts(all, ctx));
+  for (const m of all.matchAll(/(\d[\d,]*)\s*x?\s*(?:reward\s*)?(?:points?|pts)\b/gi)) {
+    const n = Number(m[1].replace(/,/g, ""));
+    if (ctx.rewardsPoints == null || n !== ctx.rewardsPoints) {
+      violations.push({ code: "invented_points", message: ctx.rewardsPoints == null ? "The customer isn't a rewards member; don't mention points." : `"${m[0]}" doesn't match their real balance (${ctx.rewardsPoints} points).` });
+    }
+  }
   if (ctx.promotion && !new RegExp(escape(ctx.promotion.title), "i").test(all) && !all.toLowerCase().includes(discountLabel(ctx.promotion).toLowerCase())) {
     violations.push({ code: "ungrounded", message: `Name the promotion ("${ctx.promotion.title}") or its exact terms (${discountLabel(ctx.promotion)}).` });
   }

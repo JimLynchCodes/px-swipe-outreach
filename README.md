@@ -86,12 +86,23 @@ See each project's README for its env vars, API reference and internals.
 
 These pieces are still stubbed:
 
-* **POS integration.** Replace the seed data with a sync from Shopify, Square, Lightspeed or Clover into the Postgres schema.
+* **POS integration.** Quickvee rewards and orders already sync in (see Data sync). Still to do: Shopify, Square, Lightspeed and Clover.
 * **Real delivery.** Add `MessageProvider`s for Twilio (SMS) and SendGrid or Postmark (email). Inbound STOP/HELP, unsubscribe links and reply threading are done (see [docs/OUTREACH_FEATURES.md](docs/OUTREACH_FEATURES.md)). Still to do: quiet hours and per-customer frequency caps.
 * **Onboarding.** Org creation/self-serve onboarding and ownership-transfer UX.
 * **Live replies.** Replace 15 s polling with Supabase Realtime or SSE.
 * **LLM.** Set `OPENROUTER_API_KEY` (default provider) and/or `OPENAI_API_KEY` (optional direct fallback) to enable AI suggestions. It uses brand voice, a JSON schema, compliance guardrails with a validator, regeneration and a rules fallback. `npm run eval` runs the eval suite. See [docs/AI_SUGGESTIONS.md](docs/AI_SUGGESTIONS.md).
 * **Analytics.** Track send → redeem → revenue attribution.
+
+## Data sync
+
+Owners and admins open **Data sync** from the menu. Its jobs live in the backend (`retail-outreach-backend/src/sync/`) and sync:
+
+- AI usage (OpenRouter and OpenAI), reconciled with recorded spend
+- Twilio usage and per-message prices, backfilled into the send ledger
+- email tracking
+- **Quickvee** rewards members and orders (Playwright, with a deep date-range backfill)
+
+Each source shows its status, last run, rows, last error and next run, with **Force re-sync** and per-source schedules (Off, Daily, Weekly, Monthly or Yearly, from a start date and time in the store timezone). Runs are background jobs with live progress, a per-job lock and a run history with logs. A DB-backed scheduler means only one instance runs each due job, and missed runs catch up once. CLI: `npm run sync -- <job|all> [--dry-run] [--from --to]`. Full details, env vars and the Quickvee calibration steps: [docs/DATA_SYNC.md](docs/DATA_SYNC.md). The rules engine and AI prompt use the synced rewards points and purchase history (frequency, AOV, favorite categories and brands, repurchase cycles).
 
 ## Real email and SMS
 

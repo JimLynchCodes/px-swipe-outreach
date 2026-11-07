@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Ban, Layers, LogOut, Menu, MessageCircle, Receipt, Settings, Sparkles, TrendingUp, Users, X } from 'lucide-react'
+import { Ban, DatabaseZap, Layers, LogOut, Menu, MessageCircle, Receipt, Settings, Sparkles, TrendingUp, Users, X } from 'lucide-react'
 import { navigate, ROUTES, usePathname } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
 import { useUnreadCount } from '../replies/useUnread'
@@ -11,6 +11,7 @@ const LINKS = [
   { to: ROUTES.replies, label: 'Replies', icon: MessageCircle, badge: true },
   { to: ROUTES.performance, label: 'Performance metrics', icon: TrendingUp },
   { to: ROUTES.costs, label: 'Cost metrics', icon: Receipt, manage: true },
+  { to: ROUTES.dataSync, label: 'Data sync', icon: DatabaseZap, manage: true },
   { to: ROUTES.optOuts, label: 'Opt-out list', icon: Ban },
   { to: ROUTES.team, label: 'Team', icon: Users },
   { to: ROUTES.settings, label: 'Settings', icon: Settings },
