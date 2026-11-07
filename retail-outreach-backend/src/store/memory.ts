@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
+import { newReplyToken } from "../replies/tokens.js";
 import * as seed from "../data/seed.js";
-import { daysSince, ACTIONABLE_STATUSES, normalizeContact, recipientFor } from "../domain.js";
+import { daysSince, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
 import type {
-  Actor, Channel, Customer, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
+  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Customer, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
   Opportunity, Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
-import { assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
-import { StoreError, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
+import { assertCanEditDeals, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
+import { DEFAULT_SETTINGS, StoreError, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 type InvitationRow = {
   id: string; orgId: string; email: string; role: MemberRole; tokenHash: string; invitedBy: string | null;
@@ -21,11 +22,11 @@ const DAY_MS = 86_400_000;
 
 export function buildSeedOpportunities(now = Date.now(), orgId = seed.DEMO_ORG_ID): Opportunity[] {
   return seed.customers.map((sc, i) => {
-    const purchases = sc.purchases.map(([pid, daysAgo]) => {
+    const purchases = sc.purchases.map(([pid, daysAgo], j) => {
       const p = seed.productById(pid);
       return {
-        productId: p.id, name: p.name, category: p.category, priceCents: p.priceCents,
-        imageUrl: p.imageUrl, purchasedAt: new Date(now - daysAgo * DAY_MS).toISOString()
+        productId: p.id, name: p.name, category: p.category, brand: p.brand, priceCents: p.priceCents,
+        imageUrl: p.imageUrl, purchasedAt: new Date(now - daysAgo * DAY_MS - j * 60_000).toISOString()
       };
     });
     const customer: Customer = {
@@ -35,9 +36,11 @@ export function buildSeedOpportunities(now = Date.now(), orgId = seed.DEMO_ORG_I
       lifetimeSpendCents: seed.lifetimeSpend(sc),
       lastPurchaseAt: purchases[0]?.purchasedAt ?? null,
       itemsPurchased: purchases.length,
-      purchases
+      purchases,
+      ageVerified: sc.ageVerified,
+      profile: { ...sc.profile, favoriteCategories: [...sc.profile.favoriteCategories], favoriteBrands: [...sc.profile.favoriteBrands] }
     };
-    const pick = seed.chooseCampaign(daysSince(customer.lastPurchaseAt, now) ?? 9999, customer.lifetimeSpendCents);
+    const pick = seed.chooseCampaign(segmentOf(customer, now), customer.lifetimeSpendCents, daysSince(customer.lastPurchaseAt, now) ?? 999);
     const campaign = seed.campaigns.find(x => x.id === pick.campaignId)!;
     return {
       id: `opp_${String(i + 1).padStart(4, "0")}`,
@@ -52,7 +55,20 @@ export function buildSeedOpportunities(now = Date.now(), orgId = seed.DEMO_ORG_I
   });
 }
 
-type Suppression = { orgId: string; channel: Channel; value: string; reason: SuppressionReason };
+export function buildSeedDeals(orgId = seed.DEMO_ORG_ID, now = new Date()): Deal[] {
+  return seed.deals.map((d, i) => ({
+    ...structuredClone(d), id: `deal_${String(i + 1).padStart(4, "0")}`, orgId,
+    createdAt: now.toISOString(), updatedAt: now.toISOString()
+  }));
+}
+
+type ConvRow = { id: string; orgId: string; channel: Channel; value: string; customerId: string | null; unread: number };
+type MsgRow = ConversationMessage & { orgId: string; deliveryId: string | null; replyToken: string | null; providerMessageId: string | null };
+
+type Suppression = {
+  id: string; orgId: string; channel: Channel; value: string; reason: SuppressionReason; source: OptOutSource;
+  customerId: string | null; createdAt: string;
+};
 
 /**
  * In-process store for local demos and tests. Data resets on restart. Mirrors the Postgres/RLS
@@ -61,6 +77,35 @@ type Suppression = { orgId: string; channel: Channel; value: string; reason: Sup
 export class MemoryStore implements OutreachStore {
   readonly kind = "memory" as const;
   private opps: Opportunity[] = buildSeedOpportunities();
+  private convs: ConvRow[] = [];
+  private msgs: MsgRow[] = [];
+  constructor() { this.seedReplies(seed.DEMO_ORG_ID); }
+
+  /** Demo threads and per-channel opt-outs (STOP reply, unsubscribe link, manual). */
+  private seedReplies(orgId: string, now = Date.now()) {
+    const byId = (id: string) => this.opps.find(o => o.orgId === orgId && o.customer.id === id)?.customer;
+    for (const o of seed.optOuts) {
+      const c = byId(o.customerId);
+      const value = c && normalizeContact(o.channel, recipientFor(c, o.channel));
+      if (!c || !value || this.suppressions.some(s => s.orgId === orgId && s.channel === o.channel && s.value === value)) continue;
+      this.suppressions.push({ id: randomUUID(), orgId, channel: o.channel, value, reason: "opt_out", source: o.source, customerId: c.id,
+        createdAt: new Date(now - o.minutesAgo * 60_000).toISOString() });
+    }
+    if (this.convs.some(c => c.orgId === orgId)) return;
+    for (const t of seed.threads) {
+      const c = byId(t.customerId);
+      const contact = c && recipientFor(c, t.channel);
+      if (!contact) continue;
+      let convId = "";
+      for (const m of t.messages) {
+        convId = this.appendSync(orgId, t.channel, contact, {
+          direction: m.direction, kind: m.kind ?? "message", status: m.direction === "inbound" ? "received" : "sent",
+          body: m.body, subject: m.subject ?? null, createdAt: new Date(now - m.minutesAgo * 60_000)
+        }).conversationId;
+      }
+      if (t.read) this.convs.find(x => x.id === convId)!.unread = 0;
+    }
+  }
   private deliveries = new Map<string, Delivery>();
   private suppressions: Suppression[] = [];
   private memberships = new Map<string, Membership[]>([
@@ -70,6 +115,8 @@ export class MemoryStore implements OutreachStore {
   private emails = new Map<string, string>([[seed.DEMO_USER_ID, "demo@px-outreach.local"]]);
   private joined = new Map<string, Date>();
   private invitations: InvitationRow[] = [];
+  private deals: Deal[] = buildSeedDeals();
+  private settings = new Map<string, OrgSettings>([[seed.DEMO_ORG_ID, { ...seed.DEMO_SETTINGS }]]);
 
   /** Test helper: grant a user access to an org. */
   addMembership(userId: string, m: Membership, email?: string) {
@@ -158,6 +205,10 @@ export class MemoryStore implements OutreachStore {
       id: randomUUID(), orgId: actor.orgId, opportunityId, ...d, status: "queued",
       providerMessageId: null, error: null, createdAt: new Date().toISOString()
     };
+    const rec = this.appendSync(actor.orgId, d.channel, d.recipient, {
+      direction: "outbound", kind: "message", status: "queued", body: d.message, subject: d.subject, sentBy: actor.userId, deliveryId: delivery.id
+    });
+    delivery.replyToken = rec.replyToken;
     this.deliveries.set(delivery.id, delivery);
     o.status = "queued";
     this.events.push({ orgId: actor.orgId, opportunityId, actorId: actor.userId, type: "send_queued", details: { deliveryId: delivery.id } });
@@ -174,7 +225,7 @@ export class MemoryStore implements OutreachStore {
     for (const channel of channels) {
       const value = normalizeContact(channel, recipientFor(o.customer, channel));
       if (value && !this.suppressions.some(s => s.orgId === actor.orgId && s.channel === channel && s.value === value)) {
-        this.suppressions.push({ orgId: actor.orgId, channel, value, reason });
+        this.suppressions.push({ id: randomUUID(), orgId: actor.orgId, channel, value, reason, source: "manual", customerId: o.customer.id, createdAt: new Date().toISOString() });
       }
     }
     if (this.isActionable(o)) o.status = "suppressed";
@@ -190,10 +241,182 @@ export class MemoryStore implements OutreachStore {
       deliveries: [...dels].map(([k, n]) => { const [status, channel] = k.split("|"); return { status, channel, count: n }; })
     };
   }
+  async listDeals(actor: Actor) {
+    this.assertMember(actor);
+    return structuredClone(this.deals.filter(d => d.orgId === actor.orgId))
+      .sort((a, b) => Math.min(...a.days) - Math.min(...b.days) || a.createdAt.localeCompare(b.createdAt));
+  }
+  async createDeal(actor: Actor, input: DealInput) {
+    this.assertMember(actor);
+    assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
+    const now = new Date().toISOString();
+    const deal: Deal = { ...structuredClone(input), id: randomUUID(), orgId: actor.orgId, createdAt: now, updatedAt: now };
+    this.deals.push(deal);
+    this.audit(actor, "deal_created", { dealId: deal.id });
+    return structuredClone(deal);
+  }
+  async updateDeal(actor: Actor, id: string, input: DealInput) {
+    this.assertMember(actor);
+    assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
+    const d = this.deals.find(x => x.orgId === actor.orgId && x.id === id);
+    if (!d) throw new StoreError("not_found", "Deal not found");
+    Object.assign(d, structuredClone(input), { updatedAt: new Date().toISOString() });
+    this.audit(actor, "deal_updated", { dealId: id });
+    return structuredClone(d);
+  }
+  async deleteDeal(actor: Actor, id: string) {
+    this.assertMember(actor);
+    assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
+    const before = this.deals.length;
+    this.deals = this.deals.filter(x => !(x.orgId === actor.orgId && x.id === id));
+    if (this.deals.length === before) throw new StoreError("not_found", "Deal not found");
+    this.audit(actor, "deal_deleted", { dealId: id });
+  }
+  async getSettings(actor: Actor) {
+    this.assertMember(actor);
+    return { ...(this.settings.get(actor.orgId) ?? DEFAULT_SETTINGS) };
+  }
+  async updateSettings(actor: Actor, next: OrgSettings) {
+    this.assertMember(actor);
+    assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
+    this.settings.set(actor.orgId, { ...next });
+    this.audit(actor, "settings_updated", {});
+    return { ...next };
+  }
+  async listCatalog(actor: Actor): Promise<CatalogProduct[]> {
+    this.assertMember(actor);
+    return seed.products.map(p => ({ id: p.id, name: p.name, brand: p.brand, category: p.category, priceCents: p.priceCents }));
+  }
+
   async reset(actor: Actor) {
     this.assertMember(actor);
     this.opps = [...this.opps.filter(o => o.orgId !== actor.orgId), ...buildSeedOpportunities(Date.now(), actor.orgId)];
     this.suppressions = this.suppressions.filter(s => s.orgId !== actor.orgId);
+    if (actor.orgId === seed.DEMO_ORG_ID) this.seedReplies(actor.orgId);
+  }
+
+  readonly systemEvents: Array<{ orgId: string; type: string; details: unknown }> = [];
+  private customerFor(orgId: string, channel: Channel, value: string) {
+    return this.opps.find(o => o.orgId === orgId && normalizeContact(channel, recipientFor(o.customer, channel)) === value)?.customer ?? null;
+  }
+  async listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }) {
+    this.assertMember(actor);
+    const needle = q.search?.toLowerCase();
+    const rows: OptOutEntry[] = this.suppressions
+      .filter(s => s.orgId === actor.orgId && (!q.channel || s.channel === q.channel))
+      .map(s => {
+        const c = s.customerId ? this.opps.find(o => o.orgId === s.orgId && o.customer.id === s.customerId)?.customer ?? null : this.customerFor(s.orgId, s.channel, s.value);
+        return { s, c };
+      })
+      .filter(({ s, c }) => !needle || s.value.toLowerCase().includes(needle) || (c && `${c.firstName} ${c.lastName}`.toLowerCase().includes(needle)))
+      .sort((a, b) => b.s.createdAt.localeCompare(a.s.createdAt))
+      .map(({ s, c }) => ({
+        id: s.id, channel: s.channel, contact: maskRecipient(s.value), customerId: c?.id ?? null,
+        customerName: c ? `${c.firstName} ${c.lastName}`.trim() : null, source: s.source, reason: s.reason, createdAt: s.createdAt
+      }));
+    return { items: rows.slice(q.offset, q.offset + q.limit), total: rows.length };
+  }
+  async addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource) {
+    const value = normalizeContact(channel, contact);
+    if (!value || this.suppressions.some(s => s.orgId === orgId && s.channel === channel && s.value === value)) return { created: false };
+    const customer = this.customerFor(orgId, channel, value);
+    this.suppressions.push({ id: randomUUID(), orgId, channel, value, reason: "opt_out", source, customerId: customer?.id ?? null, createdAt: new Date().toISOString() });
+    this.systemEvents.push({ orgId, type: "opted_out", details: { channel, source, customerId: customer?.id ?? null } });
+    return { created: true };
+  }
+  async removeOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource) {
+    const value = normalizeContact(channel, contact);
+    const before = this.suppressions.length;
+    this.suppressions = this.suppressions.filter(s => !(s.orgId === orgId && s.channel === channel && s.value === value && s.reason === "opt_out"));
+    const removed = this.suppressions.length < before;
+    if (removed) this.systemEvents.push({ orgId, type: "opted_in", details: { channel, source } });
+    return { removed };
+  }
+  private appendSync(orgId: string, channel: Channel, contact: string, m: NewMessage) {
+    const value = normalizeContact(channel, contact) ?? contact;
+    let conv = this.convs.find(c => c.orgId === orgId && c.channel === channel && c.value === value);
+    if (!conv) {
+      conv = { id: randomUUID(), orgId, channel, value, customerId: this.customerFor(orgId, channel, value)?.id ?? null, unread: 0 };
+      this.convs.push(conv);
+    }
+    const replyToken = m.direction === "outbound" && channel === "email" ? newReplyToken() : null;
+    const row: MsgRow = {
+      id: randomUUID(), conversationId: conv.id, orgId, direction: m.direction, kind: m.kind, status: m.status, body: m.body,
+      subject: m.subject ?? null, sentBy: m.sentBy ?? null, createdAt: (m.createdAt ?? new Date()).toISOString(),
+      deliveryId: m.deliveryId ?? null, replyToken, providerMessageId: m.providerMessageId ?? null
+    };
+    this.msgs.push(row);
+    if (m.direction === "inbound") conv.unread += 1;
+    return { conversationId: conv.id, messageId: row.id, replyToken };
+  }
+  private summary(c: ConvRow): ConversationSummary {
+    const last = this.msgs.filter(m => m.conversationId === c.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).at(-1)!;
+    const cust = c.customerId ? this.opps.find(o => o.orgId === c.orgId && o.customer.id === c.customerId)?.customer : null;
+    return {
+      id: c.id, channel: c.channel, customerId: c.customerId, customerName: cust ? `${cust.firstName} ${cust.lastName}`.trim() : null,
+      contact: maskRecipient(c.value), lastMessageAt: last.createdAt, lastMessagePreview: last.body.replace(/\s+/g, " ").slice(0, 140),
+      lastDirection: last.direction, unreadCount: c.unread,
+      optedOut: this.suppressions.some(s => s.orgId === c.orgId && s.channel === c.channel && s.value === c.value)
+    };
+  }
+  private conv(actor: Actor, id: string) {
+    this.assertMember(actor);
+    return this.convs.find(c => c.orgId === actor.orgId && c.id === id) ?? null;
+  }
+  async listConversations(actor: Actor, limit: number) {
+    this.assertMember(actor);
+    return this.convs.filter(c => c.orgId === actor.orgId).map(c => this.summary(c))
+      .sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)).slice(0, limit);
+  }
+  async unreadCount(actor: Actor) {
+    this.assertMember(actor);
+    return this.convs.filter(c => c.orgId === actor.orgId && c.unread > 0).length;
+  }
+  async getThread(actor: Actor, id: string) {
+    const c = this.conv(actor, id);
+    if (!c) return null;
+    const messages = this.msgs.filter(m => m.conversationId === id).sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(({ orgId: _o, deliveryId: _d, replyToken: _r, providerMessageId: _p, ...m }) => m);
+    return { conversation: this.summary(c), messages };
+  }
+  async markRead(actor: Actor, id: string) {
+    const c = this.conv(actor, id);
+    if (!c) throw new StoreError("not_found", "Conversation not found");
+    c.unread = 0;
+  }
+  async createReply(actor: Actor, conversationId: string, msg: { body: string; subject: string | null }) {
+    const c = this.conv(actor, conversationId);
+    if (!c) throw new StoreError("not_found", "Conversation not found");
+    if (this.suppressions.some(s => s.orgId === c.orgId && s.channel === c.channel && s.value === c.value)) {
+      throw new StoreError("suppressed", `This customer opted out of ${c.channel === "sms" ? "text messages" : "email"}`);
+    }
+    const r = this.appendSync(c.orgId, c.channel, c.value, { direction: "outbound", kind: "message", status: "sending", body: msg.body, subject: msg.subject, sentBy: actor.userId });
+    this.events.push({ orgId: actor.orgId, opportunityId: null, actorId: actor.userId, type: "reply_sent", details: { conversationId } });
+    const { orgId: _o, deliveryId: _d, replyToken: _r, providerMessageId: _p, ...message } = this.msgs.find(m => m.id === r.messageId)!;
+    return { message, channel: c.channel, recipient: c.value, replyToken: r.replyToken };
+  }
+  async appendMessage(orgId: string, channel: Channel, contact: string, m: NewMessage) {
+    const r = this.appendSync(orgId, channel, contact, m);
+    this.systemEvents.push({ orgId, type: m.direction === "inbound" ? "reply_received" : "message_logged", details: { conversationId: r.conversationId, kind: m.kind } });
+    return r;
+  }
+  async findReplyToken(token: string) {
+    const m = this.msgs.find(x => x.replyToken !== null && x.replyToken === token);
+    const c = m && this.convs.find(x => x.id === m.conversationId);
+    return c ? { orgId: c.orgId, channel: c.channel, contact: c.value } : null;
+  }
+  async getOutboundMessage(id: string) {
+    const m = this.msgs.find(x => x.id === id && x.direction === "outbound");
+    const c = m && this.convs.find(x => x.id === m.conversationId);
+    return c ? { orgId: c.orgId, channel: c.channel, contact: c.value } : null;
+  }
+  async updateMessageStatus(id: string, status: "sent" | "failed", providerMessageId?: string | null) {
+    const m = this.msgs.find(x => x.id === id);
+    if (m) { m.status = status; if (providerMessageId) m.providerMessageId = providerMessageId; }
+  }
+
+  async orgDisplayName(orgId: string) {
+    return this.settings.get(orgId)?.storeName ?? this.orgMeta(orgId)?.businessName ?? this.orgMeta(orgId)?.orgName ?? null;
   }
 
   async isSuppressed(orgId: string, channel: Channel, recipient: string) {
@@ -212,6 +435,7 @@ export class MemoryStore implements OutreachStore {
     if (patch.error) d.error = patch.error;
     const o = this.opps.find(x => x.orgId === d.orgId && x.id === d.opportunityId);
     if (o && (status === "sent" || status === "failed")) o.status = status;
+    for (const m of this.msgs) if (m.deliveryId === id && status !== "delivered") m.status = status === "sending" ? "sending" : status;
   }
   async listMembers(actor: Actor): Promise<TeamMember[]> {
     this.assertMember(actor);

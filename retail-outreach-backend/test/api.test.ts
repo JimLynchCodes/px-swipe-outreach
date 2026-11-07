@@ -22,21 +22,30 @@ describe("outreach API", () => {
     expect(body.total).toBe(20);
     expect(body.items).toHaveLength(20);
     const sarah = body.items[0];
+    expect(sarah.segment).toBe("at_risk");
     expect(sarah.customer).toMatchObject({
-      displayName: "Sarah M.", age: 34, gender: "Female", location: "Downtown",
-      storesShopped: ["Downtown", "Westside"], lifetimeSpendCents: 86000,
-      daysSinceLastPurchase: 68, itemsPurchased: 3, contact: { sms: true, email: true, preferredChannel: "sms" }
+      displayName: "Sarah M.", age: 34, location: "Main St", ageVerified: true,
+      storesShopped: ["Main St", "Eastside"], lifetimeSpendCents: 8999 + 4500 + 3500 + 41000,
+      daysSinceLastPurchase: 58, itemsPurchased: 3, contact: { sms: true, email: true, preferredChannel: "sms", blockedReason: null },
+      profile: { favoriteCategories: ["cbd"], favoriteBrands: ["Charlotte's Web", "Cornbread Hemp"], visitsPerMonth: 1, avgBasketCents: 9800, preferredDay: 0, preferredTime: "evening" }
     });
-    expect(sarah.lastPurchase).toMatchObject({ name: "Leather Tote Bag", priceCents: 16000, daysAgo: 68, alsoPurchased: ["Wallet", "Scarf"] });
+    expect(sarah.lastPurchase).toMatchObject({ name: "Charlotte's Web CBD Oil 1500mg", brand: "Charlotte's Web", priceCents: 8999, daysAgo: 58, alsoPurchased: ["Cornbread Hemp Gummies 30ct", "Koi CBD Gummies 20ct"] });
+    expect(sarah.recentItems).toHaveLength(3);
+    // Unverified-age customer can't be contacted on any channel
+    const ryan = body.items.find((i: any) => i.customer.firstName === "Ryan");
+    expect(ryan.customer.contact).toMatchObject({ sms: false, email: false, blockedReason: "age_unverified" });
     expect(JSON.stringify(body)).not.toMatch(/@example\.com|\+1555/);
   });
 
-  it("generates the win-back suggestion for SMS and email", async () => {
+  it("generates a deal-based suggestion with signature and opt-out for SMS and email", async () => {
     ({ app } = await makeApp());
     const sms = (await app.inject({ method: "POST", url: "/api/outreach/opp_0001/suggestion", payload: { channel: "sms" } })).json();
-    expect(sms.suggestion).toMatchObject({ title: "Welcome them back with 10% off", channel: "sms", subject: null, source: "rules" });
-    expect(sms.suggestion.reasoning).toContain("over two months");
-    expect(sms.suggestion.message).toContain("Enjoy 10% off your next purchase");
+    expect(sms.suggestion).toMatchObject({
+      title: "Bring them in for Mellow Monday (15% off)", channel: "sms", subject: null, source: "rules", segment: "at_risk",
+      deal: { title: "Mellow Monday", day: 0, discountLabel: "15% off" }
+    });
+    expect(sms.suggestion.reasons.join(" ")).toMatch(/At risk: 58 days/);
+    expect(sms.suggestion.message).toBe("Hi Sarah, it's Cloud 9 Smoke Shop. Haven't seen you in a bit! Monday only: Mellow Monday. 15% off all CBD oils and gummies. 21+ w/ ID. -Cloud 9\nReply STOP to opt out.");
     const email = (await app.inject({ method: "POST", url: "/api/outreach/opp_0001/suggestion", payload: { channel: "email" } })).json();
     expect(email.suggestion.subject).toBeTruthy();
   });
@@ -72,7 +81,8 @@ describe("outreach API", () => {
     const r = await app.inject({ method: "POST", url: "/api/outreach/opp_0001/send", payload });
     expect(r.statusCode).toBe(200);
     expect(r.json().status).toBe("sent");
-    expect(messenger.sent).toEqual([{ channel: "sms", recipient: "+15555550001", message: "Hi Sarah! Edited.", subject: null }]);
+    // The opt-out line is enforced server-side even when staff edit it away.
+    expect(messenger.sent).toEqual([{ channel: "sms", recipient: "+15555550001", message: "Hi Sarah! Edited.\nReply STOP to opt out.", subject: null }]);
 
     const again = await app.inject({ method: "POST", url: "/api/outreach/opp_0001/send", payload });
     expect(again.json()).toMatchObject({ duplicate: true, status: "sent" });
@@ -92,7 +102,7 @@ describe("outreach API", () => {
     const r = await app.inject({ method: "POST", url: "/api/outreach/opp_0001/send", payload: { channel: "email", message: "Hi", idempotencyKey: "key-12345678" } });
     expect(r.statusCode).toBe(502);
     const d = (await app.inject("/api/outreach/opp_0001/deliveries")).json().deliveries[0];
-    expect(d).toMatchObject({ status: "failed", error: "down", subject: "A note from our store" });
+    expect(d).toMatchObject({ status: "failed", error: "down", subject: "A note from Cloud 9 Smoke Shop" });
   });
 
   it("dev reset restores the deck", async () => {

@@ -50,6 +50,11 @@ CORS_ORIGIN=https://outreach.example.com
 APP_URL=https://outreach.example.com
 INVITE_MAILER=supabase
 SUPABASE_SERVICE_ROLE_KEY=<service_role / sb_secret_ key>   # backend only, used solely to send invite emails
+PUBLIC_API_URL=https://api.outreach.example.com
+UNSUBSCRIBE_SIGNING_SECRET=<openssl rand -base64 48>
+TWILIO_AUTH_TOKEN=<twilio auth token>
+INBOUND_EMAIL_DOMAIN=reply.outreach.example.com
+INBOUND_EMAIL_SECRET=<openssl rand -hex 24>
 ```
 Frontend build env:
 ```
@@ -61,7 +66,8 @@ VITE_SUPABASE_ANON_KEY=<anon or publishable key>
 - The backend verifies the user's JWT (issuer, audience, `role=authenticated`, expiry), then checks the `X-Org-Id` header against `memberships`.
 - Each request runs in a transaction that sets `request.jwt.claims` and `SET LOCAL ROLE authenticated`, so **RLS policies are enforced on every query**, even if application code has a bug.
 - Background work (the BullMQ worker, demo reset) uses the privileged connection. This requires the connecting role (Supabase's `postgres`) to be a member of `authenticated` and have `BYPASSRLS`. Both are true on Supabase by default.
-- Opt-outs live in `suppressions`; a trigger on `message_deliveries` rejects any delivery to a suppressed recipient (defence in depth on top of the API check).
+- Promotions (`deals`) and `org_settings`: members read, owners/admins write. `conversations` / `messages`: members read and mark read; staff can insert outbound messages only with `sent_by = auth.uid()`. Inbound messages, STOP/unsubscribe opt-outs and webhook work use the privileged connection, scoped by org in code.
+- Opt-outs live in `suppressions` (with a `source`: `sms_stop`, `email_unsubscribe`, `manual` or `provider`); a trigger on `message_deliveries` rejects any delivery to a suppressed recipient (defence in depth on top of the API check).
 
 ## Team invitations
 Owners and admins invite teammates from **Team** (header icon → `/team`).

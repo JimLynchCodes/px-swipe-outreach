@@ -54,7 +54,18 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
   INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(168),
   INVITE_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
-  INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60)
+  INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60),
+
+  /** Public base URL of this API (unsubscribe links, Twilio signature validation). */
+  PUBLIC_API_URL: z.string().url().default("http://localhost:3000"),
+  /** BACKEND SECRET. HMAC key for email unsubscribe links. Required in production. */
+  UNSUBSCRIBE_SIGNING_SECRET: z.string().min(32).optional(),
+  /** BACKEND SECRET. When set, inbound SMS webhooks must carry a valid X-Twilio-Signature. */
+  TWILIO_AUTH_TOKEN: z.string().min(16).optional(),
+  /** Domain whose mail is routed to the inbound email webhook; outbound email uses Reply-To: reply+<token>@domain. */
+  INBOUND_EMAIL_DOMAIN: z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i, "must be a domain name").optional(),
+  /** BACKEND SECRET. Required by the inbound email webhook (?key= or X-Inbound-Secret). */
+  INBOUND_EMAIL_SECRET: z.string().min(24).optional()
 }).superRefine((c, ctx) => {
   const issue = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
   if (c.AUTH_MODE === "supabase" && !c.SUPABASE_URL) issue("SUPABASE_URL", "required when AUTH_MODE=supabase");
@@ -64,6 +75,8 @@ const schema = z.object({
     if (!c.SUPABASE_SERVICE_ROLE_KEY) issue("SUPABASE_SERVICE_ROLE_KEY", "required when INVITE_MAILER=supabase");
   }
   if (c.NODE_ENV === "production") {
+    if (!c.UNSUBSCRIBE_SIGNING_SECRET) issue("UNSUBSCRIBE_SIGNING_SECRET", "required in production (signs email unsubscribe links)");
+    if (!/^https:\/\//.test(c.PUBLIC_API_URL)) issue("PUBLIC_API_URL", "must be an https:// URL in production");
     if (c.INVITE_MAILER !== "supabase") issue("INVITE_MAILER", "must be 'supabase' in production (console logs invite links)");
     if (!/^https:\/\//.test(c.APP_URL)) issue("APP_URL", "must be an https:// URL in production");
     if (c.AUTH_MODE !== "supabase") issue("AUTH_MODE", "must be 'supabase' in production (demo auth is dev-only)");
@@ -77,6 +90,9 @@ const schema = z.object({
   ENABLE_DEMO_RESET: c.ENABLE_DEMO_RESET ?? c.NODE_ENV !== "production",
   SUPABASE_URL: c.SUPABASE_URL?.replace(/\/+$/, ""),
   APP_URL: c.APP_URL.replace(/\/+$/, ""),
+  PUBLIC_API_URL: c.PUBLIC_API_URL.replace(/\/+$/, ""),
+  // Dev/test only (production requires a real secret, enforced above).
+  UNSUBSCRIBE_SIGNING_SECRET: c.UNSUBSCRIBE_SIGNING_SECRET ?? "dev-only-insecure-unsubscribe-signing-secret",
   DATABASE_CA_CERT: c.DATABASE_CA_CERT && !c.DATABASE_CA_CERT.includes("BEGIN CERTIFICATE")
     ? readFileSync(c.DATABASE_CA_CERT, "utf8") : c.DATABASE_CA_CERT
 }));

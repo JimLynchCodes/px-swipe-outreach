@@ -20,4 +20,6 @@ export function usePathname(): string {
   return path
 }
 
-export const ROUTES = { home: '/', team: '/team', acceptInvite: '/invite/accept' } as const
+export const ROUTES = {
+  home: '/', team: '/team', acceptInvite: '/invite/accept', settings: '/settings', optOuts: '/opt-outs', replies: '/replies',
+} as const

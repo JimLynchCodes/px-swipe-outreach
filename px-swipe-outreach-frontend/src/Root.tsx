@@ -6,6 +6,9 @@ import type { AuthConfig } from './auth/supabase'
 import { ROUTES, usePathname } from './router'
 import { AcceptInvitePage } from './team/AcceptInvitePage'
 import { TeamPage } from './team/TeamPage'
+import { SettingsPage } from './settings/SettingsPage'
+import { OptOutsPage } from './settings/OptOutsPage'
+import { RepliesPage } from './replies/RepliesPage'
 
 function Gate() {
   const auth = useAuth()
@@ -33,6 +36,9 @@ function Gate() {
     )
   }
   if (path === ROUTES.team) return <TeamPage key={auth.orgId} />
+  if (path === ROUTES.settings) return <SettingsPage key={auth.orgId} />
+  if (path === ROUTES.optOuts) return <OptOutsPage key={auth.orgId} />
+  if (path === ROUTES.replies || path.startsWith(`${ROUTES.replies}/`)) return <RepliesPage key={auth.orgId} />
   return <App key={auth.orgId} />
 }
 

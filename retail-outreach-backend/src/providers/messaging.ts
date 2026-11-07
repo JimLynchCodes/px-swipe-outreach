@@ -1,6 +1,10 @@
 import type { Channel } from "../types.js";
 
-export type OutboundMessage = { channel: Channel; recipient: string; message: string; subject?: string | null };
+export type OutboundMessage = {
+  channel: Channel; recipient: string; message: string; subject?: string | null;
+  /** Extra email headers, e.g. List-Unsubscribe. */
+  headers?: Record<string, string>;
+};
 
 /** Implement this for Twilio, SendGrid, Postmark, etc. Keep credentials server-side. */
 export interface MessageProvider {

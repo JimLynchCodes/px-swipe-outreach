@@ -1,0 +1,74 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import type { OutreachStore } from "../store/types.js";
+import type { Actor } from "../types.js";
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const date = z.string().regex(ISO_DATE, "must be YYYY-MM-DD").refine(s => !Number.isNaN(Date.parse(s)), "invalid date").nullable();
+const text = (max: number) => z.string().trim().max(max);
+
+export const dealInput = z.object({
+  days: z.array(z.number().int().min(0).max(6)).min(1).max(7).transform(d => [...new Set(d)].sort()),
+  title: text(80).min(1),
+  description: text(300).default(""),
+  discountType: z.enum(["percent", "amount", "bogo", "freebie"]),
+  discountValue: z.number().int().positive().nullable().default(null),
+  categories: z.array(text(40).min(1).toLowerCase()).max(20).default([]).transform(c => [...new Set(c)]),
+  productIds: z.array(z.string().min(1).max(100)).max(50).default([]).transform(p => [...new Set(p)]),
+  startsOn: date.default(null),
+  endsOn: date.default(null),
+  active: z.boolean().default(true)
+}).strict().superRefine((d, ctx) => {
+  if (d.discountType === "percent" && (d.discountValue === null || d.discountValue > 100)) ctx.addIssue({ code: "custom", path: ["discountValue"], message: "percent must be 1-100" });
+  if (d.discountType === "amount" && (d.discountValue === null || d.discountValue > 100_000)) ctx.addIssue({ code: "custom", path: ["discountValue"], message: "amount (cents) must be 1-100000" });
+  if ((d.discountType === "bogo" || d.discountType === "freebie") && d.discountValue !== null) ctx.addIssue({ code: "custom", path: ["discountValue"], message: "must be null for this discount type" });
+  if (d.startsOn && d.endsOn && d.endsOn < d.startsOn) ctx.addIssue({ code: "custom", path: ["endsOn"], message: "must be on or after startsOn" });
+});
+
+export const settingsInput = z.object({
+  storeName: text(100).nullable().transform(s => s || null),
+  emailSignature: z.string().max(1000).transform(s => s.replace(/\r\n/g, "\n").trimEnd()),
+  smsSignature: text(60).refine(s => !/[\r\n]/.test(s), "must be a single line"),
+  defaultChannel: z.enum(["sms", "email"]).nullable(),
+  maxDiscountPercent: z.number().int().min(0).max(100)
+}).strict();
+
+type Deps = { store: OutreachStore; actorOf: (req: any) => Actor };
+
+/** Promotions (weekly deals), the product catalog they can target, and org outreach settings. */
+export async function dealRoutes(app: FastifyInstance, { store, actorOf }: Deps) {
+  const idParam = z.object({ id: z.string().min(1).max(100) });
+
+  async function validated(actor: Actor, body: unknown) {
+    const input = dealInput.parse(body);
+    if (input.productIds.length) {
+      const known = new Set((await store.listCatalog(actor)).map(p => p.id));
+      const unknown = input.productIds.filter(id => !known.has(id));
+      if (unknown.length) throw new z.ZodError([{ code: "custom", path: ["productIds"], message: `unknown product(s): ${unknown.join(", ")}` }]);
+    }
+    return input;
+  }
+
+  app.get("/api/deals", async request => ({ deals: await store.listDeals(actorOf(request)) }));
+  app.post("/api/deals", async (request, reply) => {
+    const actor = actorOf(request);
+    return reply.code(201).send({ deal: await store.createDeal(actor, await validated(actor, request.body ?? {})) });
+  });
+  app.put("/api/deals/:id", async request => {
+    const { id } = idParam.parse(request.params);
+    const actor = actorOf(request);
+    return { deal: await store.updateDeal(actor, id, await validated(actor, request.body ?? {})) };
+  });
+  app.delete("/api/deals/:id", async request => {
+    const { id } = idParam.parse(request.params);
+    await store.deleteDeal(actorOf(request), id);
+    return { ok: true };
+  });
+  app.get("/api/catalog", async request => {
+    const products = await store.listCatalog(actorOf(request));
+    return { products, categories: [...new Set(products.map(p => p.category).filter(Boolean))].sort() };
+  });
+
+  app.get("/api/settings", async request => ({ settings: await store.getSettings(actorOf(request)) }));
+  app.put("/api/settings", async request => ({ settings: await store.updateSettings(actorOf(request), settingsInput.parse(request.body ?? {})) }));
+}

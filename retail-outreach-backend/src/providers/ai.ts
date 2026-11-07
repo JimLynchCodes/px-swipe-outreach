@@ -1,8 +1,13 @@
 import { z } from "zod";
-import { daysSince, humanizeDays } from "../domain.js";
-import type { Channel, Opportunity, Suggestion } from "../types.js";
+import { daysSince, discountLabel, withEmailFooter, withSmsOptOut, WEEKDAYS } from "../domain.js";
+import { categoryLabel } from "../recommend.js";
+import type { Channel, Opportunity, Recommendation, Suggestion } from "../types.js";
 
-export type SuggestionInput = { opportunity: Opportunity; channel: Channel; businessName: string };
+export type SuggestionInput = {
+  opportunity: Opportunity; channel: Channel; businessName: string; recommendation: Recommendation;
+  /** Org signatures appended to the generated message for the matching channel. */
+  signatures?: { sms: string; email: string };
+};
 
 /** Anything that can turn an opportunity into a suggested outreach message. */
 export interface SuggestionProvider {
@@ -11,43 +16,71 @@ export interface SuggestionProvider {
 }
 
 const money = (cents: number) => `$${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`;
+const list = (xs: string[]) => xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
 
-/** Deterministic, offline suggestions. Used when no OPENAI_API_KEY is set, and as a fallback on AI errors. */
+/** Adds the deal/targeting metadata and the compliance lines every message must carry. */
+export function finalizeSuggestion(
+  copy: { title: string; reasoning: string; message: string; subject: string | null },
+  input: SuggestionInput, source: Suggestion["source"]
+): Suggestion {
+  const { recommendation: rec, channel } = input;
+  const sig = (channel === "sms" ? input.signatures?.sms : input.signatures?.email)?.trim();
+  const signed = sig && !copy.message.includes(sig) ? `${copy.message.trim()}${channel === "sms" ? " " : "\n\n"}${sig}` : copy.message;
+  return {
+    ...copy, channel, source,
+    message: channel === "sms" ? withSmsOptOut(signed) : withEmailFooter(signed),
+    subject: channel === "email" ? copy.subject || `A note from ${input.businessName}` : null,
+    deal: rec.deal ? { id: rec.deal.id, title: rec.deal.title, day: rec.dealDay ?? rec.deal.days[0], discountLabel: discountLabel(rec.deal) } : null,
+    reasons: rec.reasons, segment: rec.segment, sendAt: rec.sendAt
+  };
+}
+
+/** Deterministic, offline copy. Used when no OPENAI_API_KEY is set, and as a fallback on AI errors. */
 export class RulesSuggestionProvider implements SuggestionProvider {
   readonly name = "rules" as const;
 
-  async suggest({ opportunity, channel, businessName }: SuggestionInput): Promise<Suggestion> {
-    const { customer: c, offer, campaign } = opportunity;
-    const days = daysSince(c.lastPurchaseAt);
-    const last = c.purchases[0];
+  async suggest(input: SuggestionInput): Promise<Suggestion> {
+    const { opportunity, businessName, recommendation: rec } = input;
+    const { customer: c, offer } = opportunity;
     const name = c.firstName;
-    const pronoun = c.gender === "Female" ? "her" : c.gender === "Male" ? "him" : "them";
-    const combinable = offer?.combinable ? " — and it can be combined with other discounts" : "";
-    const offerText = offer ? `${offer.discountPercent}% off your next purchase with us${combinable}` : "";
+    const pr = c.profile;
+    const days = daysSince(c.lastPurchaseAt);
+    const favs = list(pr.favoriteCategories.map(categoryLabel));
+    const brand = pr.favoriteBrands[0];
+    const deal = rec.deal;
+    const habit = `${name} buys ${favs || "with us"}${pr.favoriteBrands.length ? ` (${list(pr.favoriteBrands.slice(0, 2))})` : ""} about ${pr.visitsPerMonth}×/month, ~${money(pr.avgBasketCents)} a visit`;
 
     let title: string, reasoning: string, sms: string, subject: string;
-    if (campaign.type === "vip_thanks") {
-      title = offer ? `Thank a VIP with ${offer.discountPercent}% off` : "Thank a VIP";
-      reasoning = `${name} has spent ${money(c.lifetimeSpendCents)} with us. A personal thank-you${offer ? ` with ${offer.discountPercent}% off` : ""} keeps a top customer feeling valued.`;
-      sms = `Hi ${name}! Thank you for being one of our favorite customers.${offer ? ` Here's ${offerText} as a little thank-you.` : ""} We'd love to see you soon!`;
-      subject = `A thank-you from ${businessName}`;
-    } else if (campaign.type === "win_back") {
-      title = offer ? `Welcome them back with ${offer.discountPercent}% off` : "Welcome them back";
-      reasoning = `${name} hasn't shopped with us in ${humanizeDays(days)}. A friendly reminder${offer ? ` with ${offer.discountPercent}% off${offer.combinable ? " (combinable with other discounts)" : ""}` : ""} could bring ${pronoun} back.`;
-      sms = `Hi ${name}! We miss you!${offer ? ` Enjoy ${offerText}.` : ""} Come find something you'll love!`;
-      subject = `We miss you, ${name}`;
+    if (deal) {
+      const dealDay = rec.dealDay ?? deal.days[0];
+      const day = WEEKDAYS[dealDay];
+      const label = discountLabel(deal);
+      const dayMatch = pr.preferredDay === dealDay;
+      title = rec.segment === "lapsed" ? `Win them back with ${deal.title} (${label})`
+        : rec.segment === "at_risk" ? `Bring them in for ${deal.title} (${label})`
+        : `Invite them to ${deal.title} (${label})`;
+      reasoning = `${habit}. ${deal.title} lines up with that${dayMatch ? ` and runs ${day}, the day they usually shop` : ` and runs ${day}`}${rec.segment === "lapsed" ? `; it's been ${days} days, so a real discount is worth it` : ""}.`;
+      const opener = rec.segment === "lapsed" ? `Hi ${name}, it's ${businessName}. We miss you!`
+        : rec.segment === "at_risk" ? `Hi ${name}, it's ${businessName}. Haven't seen you in a bit!`
+        : `Hi ${name}, it's ${businessName}!`;
+      sms = `${opener} ${day} only: ${deal.title}. ${deal.description}${brand && rec.segment === "loyal" ? ` Your ${brand} is in stock.` : ""} 21+ w/ ID.`;
+      subject = `${deal.title} this ${day}, ${name}`;
+    } else if (offer) {
+      // offer percent is already capped by the route to the org's max discount
+      title = rec.segment === "lapsed" ? `Win them back with ${offer.discountPercent}% off` : `Thank them with ${offer.discountPercent}% off`;
+      reasoning = `${habit}. No weekly deal matches their favorites, so use the standing ${offer.name} offer.`;
+      sms = `Hi ${name}, it's ${businessName}! Here's ${offer.discountPercent}% off your next visit${favs ? ` — stock up on ${favs}` : ""}. 21+ w/ ID.`;
+      subject = `${offer.discountPercent}% off your next visit, ${name}`;
     } else {
-      title = last ? `Suggest something to pair with the ${last.name}` : "Share what's new";
-      reasoning = `${name} shopped ${days ?? "a few"} days ago${last ? ` (${last.name})` : ""}. A personal follow-up while the visit is fresh can lead to a second purchase.`;
-      sms = `Hi ${name}! Hope you're loving your ${last?.name ?? "recent pick"}. We just got new arrivals that pair perfectly with it. Stop by and take a look!`;
-      subject = `New pieces to go with your ${last?.name ?? "recent purchase"}`;
+      title = "Share what's new";
+      reasoning = `${habit}. A friendly heads-up about new arrivals keeps a regular coming back.`;
+      sms = `Hi ${name}, it's ${businessName}! New ${favs || "arrivals"} just landed — come check them out. 21+ w/ ID.`;
+      subject = `New ${favs || "arrivals"} at ${businessName}`;
     }
-    const emailBody = `Hi ${name},\n\n${sms.replace(/^Hi [^!]+! /, "")}\n\nSee you soon,\n${businessName}`;
-    return {
-      title, reasoning, channel, source: this.name,
-      message: channel === "sms" ? sms : emailBody,
-      subject: channel === "email" ? subject : null
-    };
+    const body = sms.replace(/^Hi [^,]+, it's [^!.]+[!.] ?/, "");
+    const closing = input.signatures?.email.trim() ? "See you soon," : `See you soon,\n${businessName}`;
+    const message = input.channel === "sms" ? sms : `Hi ${name},\n\n${body}\n\n${closing}`;
+    return finalizeSuggestion({ title, reasoning, message, subject }, input, this.name);
   }
 }
 
@@ -58,12 +91,13 @@ const outputSchema = z.object({
   subject: z.string().max(200).nullable()
 });
 
-/** OpenAI structured-output provider. Only minimal, non-sensitive customer facts are sent. */
+/** OpenAI structured-output provider. Writes copy for the deal the engine already chose; minimal customer facts only. */
 export class OpenAISuggestionProvider implements SuggestionProvider {
   readonly name = "openai" as const;
   constructor(private apiKey: string, private model: string) {}
 
-  async suggest({ opportunity, channel, businessName }: SuggestionInput): Promise<Suggestion> {
+  async suggest(input: SuggestionInput): Promise<Suggestion> {
+    const { opportunity, channel, businessName, recommendation: rec } = input;
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: this.apiKey });
     const c = opportunity.customer;
@@ -87,11 +121,11 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
       messages: [
         {
           role: "system",
-          content: `You write friendly, warm, never-pushy retail outreach for ${businessName}.
-Only use supplied facts. Never invent prices, discount terms, availability, expiration dates, or eligibility.
-Do not mention internal scores or analytics. Do not use age or gender to personalize.
-"title" is a short action for store staff (e.g. "Welcome them back with 10% off"); "reasoning" is 1-2 sentences for staff.
-${channel === "sms" ? 'Write an SMS under 160 characters if possible; "subject" must be null.' : 'Write a short email; include a subject.'}`
+          content: `You write friendly, never-pushy outreach for ${businessName}, a licensed smoke shop (vape, CBD, glass, papers, cigars, hookah). Customers are verified adults 21+.
+Goal: get the customer to visit and grow their basket, using ONLY the supplied deal (or fallback offer).
+Rules: only use supplied facts; never invent prices, discounts, stock, or dates. Identify the shop by name. No health or medical claims (especially about CBD), no claims about effects, nothing appealing to minors, no cartoon/youth language. Include "21+" once. Do not mention internal scores, segments, or analytics.
+"title" is a short action for staff (e.g. "Invite them to Cigar Friday (20% off)"); "reasoning" is 1-2 sentences for staff explaining why this deal fits this customer.
+${channel === "sms" ? 'SMS under 130 characters; do not add a signature or opt-out text (both are appended automatically); "subject" must be null.' : "Short email with a subject; do not sign it (the store signature and unsubscribe footer are appended automatically)."}`
         },
         {
           role: "user",
@@ -99,20 +133,21 @@ ${channel === "sms" ? 'Write an SMS under 160 characters if possible; "subject" 
             channel,
             customer: {
               firstName: c.firstName,
-              daysSinceLastPurchase: daysSince(c.lastPurchaseAt),
-              storesShopped: c.storesShopped,
+              daysSinceLastVisit: daysSince(c.lastPurchaseAt),
+              favoriteCategories: c.profile.favoriteCategories, favoriteBrands: c.profile.favoriteBrands,
+              visitsPerMonth: c.profile.visitsPerMonth, preferredDay: c.profile.preferredDay === null ? null : WEEKDAYS[c.profile.preferredDay],
               recentItems: c.purchases.slice(0, 5).map(p => p.name)
             },
-            campaign: { type: opportunity.campaign.type, rationale: opportunity.rationale },
-            approvedOffer: opportunity.offer
+            whyChosen: rec.reasons,
+            deal: rec.deal ? { title: rec.deal.title, description: rec.deal.description, day: WEEKDAYS[rec.dealDay ?? rec.deal.days[0]], discount: discountLabel(rec.deal) } : null,
+            fallbackOffer: rec.deal ? null : opportunity.offer
           })
         }
       ]
     });
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error("AI returned an empty response");
-    const out = outputSchema.parse(JSON.parse(content));
-    return { ...out, subject: channel === "email" ? out.subject : null, channel, source: this.name };
+    return finalizeSuggestion(outputSchema.parse(JSON.parse(content)), input, this.name);
   }
 }
 

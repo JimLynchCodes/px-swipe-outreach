@@ -33,6 +33,11 @@ services:
       REDIS_URL: redis://redis:6379
       CORS_ORIGIN: http://localhost:8080
       TRUST_PROXY: "true"
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3000}
+      UNSUBSCRIBE_SIGNING_SECRET: ${UNSUBSCRIBE_SIGNING_SECRET:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      INBOUND_EMAIL_DOMAIN: ${INBOUND_EMAIL_DOMAIN:-}
+      INBOUND_EMAIL_SECRET: ${INBOUND_EMAIL_SECRET:-}
     ports: ["3000:3000"]
     depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
   worker:
@@ -44,6 +49,9 @@ services:
       DATABASE_URL: "postgres://postgres:postgres@postgres:5432/outreach"
       DELIVERY_MODE: queue
       REDIS_URL: redis://redis:6379
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3000}
+      UNSUBSCRIBE_SIGNING_SECRET: ${UNSUBSCRIBE_SIGNING_SECRET:-}
+      INBOUND_EMAIL_DOMAIN: ${INBOUND_EMAIL_DOMAIN:-}
     depends_on: [api]
   web:
     build:

@@ -1,13 +1,58 @@
-import { LogOut, Sparkles, Users } from 'lucide-react'
-import { navigate, ROUTES } from '../router'
+import { useEffect, useRef, useState } from 'react'
+import { Ban, Layers, LogOut, Menu, MessageCircle, Settings, Sparkles, Users, X } from 'lucide-react'
+import { navigate, ROUTES, usePathname } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
+import { useUnreadCount } from '../replies/useUnread'
+
+const LINKS = [
+  { to: ROUTES.home, label: 'Outreach deck', icon: Layers },
+  { to: ROUTES.replies, label: 'Replies', icon: MessageCircle, badge: true },
+  { to: ROUTES.optOuts, label: 'Opt-out list', icon: Ban },
+  { to: ROUTES.team, label: 'Team', icon: Users },
+  { to: ROUTES.settings, label: 'Settings', icon: Settings },
+] as const
 
 export function Header() {
   const auth = useOptionalAuth()
   const orgs = auth?.memberships ?? []
+  const path = usePathname()
+  const [open, setOpen] = useState(false)
+  const unread = useUnreadCount(Boolean(auth?.orgId))
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onClick = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onClick)
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('mousedown', onClick) }
+  }, [open])
+
+  const badge = unread > 99 ? '99+' : String(unread)
   return (
     <header className="header">
       <div className="brand">
+        {auth?.orgId && (
+          <div className="menu-wrap" ref={menuRef}>
+            <button className="icon-btn hamburger" aria-label={unread ? `Menu, ${unread} unread replies` : 'Menu'} aria-expanded={open}
+              aria-haspopup="menu" onClick={() => setOpen(o => !o)}>
+              {open ? <X size={20} /> : <Menu size={20} />}
+              {unread > 0 && <span className="badge" aria-hidden>{badge}</span>}
+            </button>
+            {open && (
+              <nav className="menu" role="menu" aria-label="Main menu">
+                {LINKS.map(l => (
+                  <a key={l.to} role="menuitem" href={l.to} className={path === l.to || (l.to !== '/' && path.startsWith(l.to)) ? 'active' : ''}
+                    onClick={e => { e.preventDefault(); setOpen(false); navigate(l.to) }}>
+                    <l.icon size={17} aria-hidden /> <span>{l.label}</span>
+                    {'badge' in l && unread > 0 && <span className="badge inline" aria-label={`${unread} unread`}>{badge}</span>}
+                  </a>
+                ))}
+              </nav>
+            )}
+          </div>
+        )}
         <img src="/flame.svg" alt="" className="brand-logo" width={36} height={36} />
         <div>
           <h1>Outreach</h1>
@@ -20,12 +65,6 @@ export function Header() {
           <select aria-label="Organization" className="org-select" value={auth.orgId ?? ''} onChange={e => auth.setOrgId(e.target.value)}>
             {orgs.map(m => <option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}
           </select>
-        )}
-        {auth?.orgId && (
-          <a className="icon-btn" href={ROUTES.team} aria-label="Team" title="Team"
-            onClick={e => { e.preventDefault(); navigate(ROUTES.team) }}>
-            <Users size={18} />
-          </a>
         )}
         {auth?.mode === 'supabase' && (
           <button className="icon-btn" onClick={() => void auth.signOut()} aria-label="Sign out" title={auth.email ?? 'Sign out'}>

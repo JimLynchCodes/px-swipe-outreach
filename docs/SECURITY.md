@@ -24,7 +24,12 @@ Only `VITE_SUPABASE_URL` and the anon/publishable key are shipped to browsers. T
 - Destructive operations (demo reset) require `owner`/`admin` and are disabled in production.
 
 ## Messaging safety
-- **Opt-out**: `suppressions` per org, channel and normalized recipient. Enforced in the API, again in the worker right before sending, and by a database trigger.
+- **Opt-out**: `suppressions` per org, channel and normalized recipient. Enforced in the API, again in the worker right before sending, on replies, and by a database trigger.
+- **Webhooks**:
+  - Twilio requests are verified with `X-Twilio-Signature` (HMAC-SHA1 over `PUBLIC_API_URL` + path + sorted params, timing-safe compare). Without `TWILIO_AUTH_TOKEN` the endpoint returns 503 in production.
+  - Inbound email requires `INBOUND_EMAIL_SECRET` (timing-safe compare). It only accepts a reply whose 144-bit Reply-To token matches a message and whose sender matches the thread's contact.
+- **Unsubscribe links**: `<id>.<HMAC-SHA256>` with `UNSUBSCRIBE_SIGNING_SECRET` (required in production). GET never mutates. POST is idempotent and rate-limited, and the pages show no PII and send a strict CSP. Emails carry RFC 8058 `List-Unsubscribe` / `List-Unsubscribe-Post`.
+- **Age-restricted products**: only age-verified customers aged 21+ can be contacted (API check). Every SMS gets "Reply STOP to opt out." server-side.
 - **Idempotent sends**: clients send an `idempotencyKey`. Retries return the original delivery, and a partial unique index allows only one live delivery per opportunity.
 - Separate, stricter rate limit on the send endpoint.
 

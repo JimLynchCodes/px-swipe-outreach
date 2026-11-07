@@ -11,7 +11,8 @@ afterEach(async () => { await app?.close(); });
 const PROD_OK = {
   NODE_ENV: "production", AUTH_MODE: "supabase", SUPABASE_URL: "https://abc.supabase.co",
   DATA_STORE: "postgres", DATABASE_URL: "postgres://u:p@db:5432/postgres", CORS_ORIGIN: "https://app.example.com",
-  APP_URL: "https://app.example.com/", INVITE_MAILER: "supabase", SUPABASE_SERVICE_ROLE_KEY: "service-role-key-for-tests-only"
+  APP_URL: "https://app.example.com/", INVITE_MAILER: "supabase", SUPABASE_SERVICE_ROLE_KEY: "service-role-key-for-tests-only",
+  UNSUBSCRIBE_SIGNING_SECRET: "x".repeat(40), PUBLIC_API_URL: "https://api.example.com"
 };
 
 describe("config validation (fail fast)", () => {
@@ -24,6 +25,9 @@ describe("config validation (fail fast)", () => {
 
   it.each([
     [{ AUTH_MODE: "demo" }, "AUTH_MODE"],
+    [{ UNSUBSCRIBE_SIGNING_SECRET: "" }, "UNSUBSCRIBE_SIGNING_SECRET"],
+    [{ UNSUBSCRIBE_SIGNING_SECRET: "short" }, "UNSUBSCRIBE_SIGNING_SECRET"],
+    [{ PUBLIC_API_URL: "http://api.example.com" }, "PUBLIC_API_URL"],
     [{ DATA_STORE: "memory" }, "DATA_STORE"],
     [{ CORS_ORIGIN: "*" }, "CORS_ORIGIN"],
     [{ CORS_ORIGIN: "http://app.example.com" }, "CORS_ORIGIN"],

@@ -3,14 +3,18 @@ import { ArrowLeft, ArrowRight, PartyPopper, RotateCcw } from 'lucide-react'
 import { api, ApiError, newIdempotencyKey } from './api'
 import { Header } from './components/Header'
 import { CustomerCard, type CardDraft } from './components/CustomerCard'
-import type { Channel, OutreachCard } from './types'
+import { DealsPanel } from './deals/DealsPanel'
+import type { Channel, OrgSettings, OutreachCard } from './types'
 
 const SWIPE_THRESHOLD = 110
 
 type Load = { state: 'loading' } | { state: 'error'; message: string } | { state: 'ready' }
 
-function initialDraft(card: OutreachCard): CardDraft {
-  const channel: Channel = card.customer.contact.preferredChannel ?? 'sms'
+/** Store default channel (Settings) → customer's preference → whichever channel is reachable. */
+export function initialDraft(card: OutreachCard, defaultChannel: Channel | null = null): CardDraft {
+  const { contact } = card.customer
+  const ok = (ch: Channel | null) => ch != null && (ch === 'sms' ? contact.sms : contact.email)
+  const channel: Channel = [defaultChannel, contact.preferredChannel, 'sms' as const, 'email' as const].find(ok) ?? contact.preferredChannel ?? 'sms'
   return { channel, suggestion: null, loading: true, error: null, message: '', subject: '', editing: false }
 }
 
@@ -28,6 +32,8 @@ export default function App() {
   const sendKey = useRef<string>(newIdempotencyKey())
 
   const current = cards[0]
+  const [settings, setSettings] = useState<OrgSettings | null | undefined>(undefined)
+  useEffect(() => { api.settings.get().then(setSettings, () => setSettings(null)) }, [])
 
   const loadQueue = useCallback(async () => {
     setLoad({ state: 'loading' })
@@ -61,11 +67,12 @@ export default function App() {
   // New top card → fresh draft + suggestion + idempotency key.
   useEffect(() => {
     if (!current) { setDraft(null); return }
-    const d = initialDraft(current)
+    if (settings === undefined) return // wait for the default channel
+    const d = initialDraft(current, settings?.defaultChannel ?? null)
     setDraft(d)
     sendKey.current = newIdempotencyKey()
     void fetchSuggestion(current, d.channel)
-  }, [current, fetchSuggestion])
+  }, [current, fetchSuggestion, settings])
 
   useEffect(() => {
     if (!toast) return
@@ -98,6 +105,11 @@ export default function App() {
   const send = useCallback(async () => {
     if (!current || !draft || busy) return
     const reachable = draft.channel === 'sms' ? current.customer.contact.sms : current.customer.contact.email
+    if (current.customer.contact.blockedReason === 'age_unverified') {
+      setDragX(0)
+      setToast({ kind: 'err', text: 'Verify this customer is 21+ before sending' })
+      return
+    }
     if (!reachable || !draft.message.trim()) {
       setDragX(0)
       setToast({ kind: 'err', text: !reachable ? 'Customer cannot be reached on this channel' : 'Message is empty' })
@@ -122,16 +134,18 @@ export default function App() {
 
   const optOut = useCallback(async () => {
     if (!current || busy) return
-    if (!window.confirm(`Stop all outreach to ${current.customer.firstName}? They will be added to the do-not-contact list.`)) return
+    const ch = draft?.channel ?? 'sms'
+    const what = ch === 'sms' ? 'texts' : 'emails'
+    if (!window.confirm(`Stop ${what} to ${current.customer.firstName}? Their ${ch === 'sms' ? 'number' : 'address'} goes on the opt-out list.`)) return
     setBusy('skip')
     try {
-      await api.optOut(current.id, 'all')
-      setToast({ kind: 'ok', text: `${current.customer.firstName} won't be contacted again` })
+      await api.optOut(current.id, ch)
+      setToast({ kind: 'ok', text: `${current.customer.firstName} won't get ${what} again` })
       advance('left')
     } catch (e) {
       setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
     } finally { setBusy(null) }
-  }, [current, busy, advance])
+  }, [current, busy, advance, draft?.channel])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -161,12 +175,20 @@ export default function App() {
     else setDragX(0)
   }
 
+  const draftChannel = draft?.channel
+  const onDealsChanged = useCallback(() => {
+    if (current && draftChannel) void fetchSuggestion(current, draftChannel)
+  }, [current, draftChannel, fetchSuggestion])
+
+  const blocked = current?.customer.contact.blockedReason ?? null
   const position = done + 1
   const offset = leaving === 'left' ? -600 : leaving === 'right' ? 600 : dragX
 
   return (
-    <div className="app">
+    <div className="app wide">
       <Header />
+      <div className="layout">
+      <div className="deck-col">
       <main className="deck-area">
         {load.state === 'loading' && <div className="state">Loading customers…</div>}
         {load.state === 'error' && (
@@ -214,19 +236,24 @@ export default function App() {
           <button className="action skip" onClick={() => void skip()} disabled={!!busy} aria-label="Skip customer">
             <span className="circle"><ArrowLeft size={22} /></span><span>{busy === 'skip' ? 'Skipping…' : 'Skip'}</span>
           </button>
-          <button className="action send" onClick={() => void send()} disabled={!!busy || !draft?.suggestion} aria-label="Send message">
+          <button className="action send" onClick={() => void send()} disabled={!!busy || !draft?.suggestion || !!blocked} aria-label="Send message">
             <span>{busy === 'send' ? 'Sending…' : 'Send'}</span><span className="circle"><ArrowRight size={22} /></span>
           </button>
         </footer>
       )}
       {load.state === 'ready' && current && (
-        <button className="link optout" onClick={() => void optOut()} disabled={!!busy}>Customer opted out? Stop contacting them</button>
+        <button className="link optout" onClick={() => void optOut()} disabled={!!busy || !!blocked}>
+          Customer opted out? Stop {draft?.channel === 'email' ? 'emails' : 'texts'}
+        </button>
       )}
       {load.state === 'ready' && current && (
         <div className="dots" aria-hidden>
           {[0, 1, 2].map(i => <span key={i} className={i === done % 3 ? 'on' : ''} />)}
         </div>
       )}
+      </div>
+      <DealsPanel onChange={onDealsChanged} />
+      </div>
       {toast && <div className={`toast ${toast.kind}`} role="status">{toast.text}</div>}
     </div>
   )

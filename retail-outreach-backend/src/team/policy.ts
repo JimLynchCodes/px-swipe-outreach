@@ -19,3 +19,7 @@ export function assertCanModify(actor: MemberRole | undefined, current: MemberRo
   assertCanManage(actor);
   if (current === "owner" && actor !== "owner") throw new StoreError("forbidden", "Only owners can change or remove an owner", "insufficient_role");
 }
+
+export function assertCanEditDeals(role: MemberRole | undefined) {
+  if (!role || !canManageTeam(role)) throw new StoreError("forbidden", "Only owners and admins can edit deals", "insufficient_role");
+}

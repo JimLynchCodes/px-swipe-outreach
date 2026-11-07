@@ -1,4 +1,7 @@
-import type { Channel, OutreachCard, SendResult, Suggestion } from './types'
+import type {
+  CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
+  SendResult, Suggestion,
+} from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
@@ -96,6 +99,34 @@ export const api = {
       request<{ ok: true; orgId: string; role: Role; alreadyMember: boolean; memberships: Membership[] }>('/api/invitations/accept', {
         method: 'POST', body: JSON.stringify({ token }), noOrg: true,
       }),
+  },
+  deals: {
+    list: () => request<{ deals: Deal[] }>('/api/deals').then(r => r.deals),
+    create: (d: DealInput) => request<{ deal: Deal }>('/api/deals', { method: 'POST', body: JSON.stringify(d) }).then(r => r.deal),
+    update: (id: string, d: DealInput) =>
+      request<{ deal: Deal }>(`/api/deals/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(d) }).then(r => r.deal),
+    remove: (id: string) => request<{ ok: true }>(`/api/deals/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+  catalog: () => request<{ products: CatalogProduct[]; categories: string[] }>('/api/catalog'),
+  settings: {
+    get: () => request<{ settings: OrgSettings }>('/api/settings').then(r => r.settings),
+    save: (s: OrgSettings) => request<{ settings: OrgSettings }>('/api/settings', { method: 'PUT', body: JSON.stringify(s) }).then(r => r.settings),
+  },
+  optOuts: (q: { channel?: Channel; q?: string; page: number; pageSize: number }) => {
+    const p = new URLSearchParams({ page: String(q.page), pageSize: String(q.pageSize) })
+    if (q.channel) p.set('channel', q.channel)
+    if (q.q) p.set('q', q.q)
+    return request<{ items: OptOutEntry[]; total: number; page: number; pageSize: number }>(`/api/opt-outs?${p}`)
+  },
+  replies: {
+    list: () => request<{ conversations: ConversationSummary[] }>('/api/conversations').then(r => r.conversations),
+    unread: () => request<{ count: number }>('/api/conversations/unread-count').then(r => r.count),
+    thread: (id: string) => request<{ conversation: ConversationSummary; messages: ConversationMessage[] }>(`/api/conversations/${encodeURIComponent(id)}`),
+    markRead: (id: string) => request<{ ok: true }>(`/api/conversations/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+    send: (id: string, body: string, subject?: string | null) =>
+      request<{ message: ConversationMessage }>(`/api/conversations/${encodeURIComponent(id)}/messages`, {
+        method: 'POST', body: JSON.stringify({ body, ...(subject ? { subject } : {}) }),
+      }).then(r => r.message),
   },
   resetDemo: () => request<{ ok: true }>('/api/dev/reset', { method: 'POST' }),
 }

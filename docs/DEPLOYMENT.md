@@ -20,6 +20,7 @@ docker build -f px-swipe-outreach-frontend/Dockerfile \
 
 ## Production checklist
 - `NODE_ENV=production`. Config validation then **refuses to boot** unless `AUTH_MODE=supabase`, `DATA_STORE=postgres`, `CORS_ORIGIN` lists explicit https origins, and the demo reset is off.
+- Set `PUBLIC_API_URL` (https) and `UNSUBSCRIBE_SIGNING_SECRET` (≥ 32 random chars). The server refuses to boot in production without them. Set `TWILIO_AUTH_TOKEN` before pointing Twilio at `/webhooks/twilio/sms/<orgId>`, and `INBOUND_EMAIL_DOMAIN` + `INBOUND_EMAIL_SECRET` for email replies. See [OUTREACH_FEATURES.md](OUTREACH_FEATURES.md).
 - `TRUST_PROXY=true` behind a load balancer (correct client IPs for rate limiting and logs).
 - Set `DATABASE_CA_CERT` for verified TLS to Supabase.
 - Tune `RATE_LIMIT_PER_MINUTE` / `SEND_RATE_LIMIT_PER_MINUTE`. Limits are in-memory per instance; use a Redis store if you run many replicas.

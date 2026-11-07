@@ -1,5 +1,5 @@
 import type {
-  Actor, Channel, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
+  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
   Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
 
@@ -67,6 +67,36 @@ export interface OutreachStore {
   /** Demo helper: put every opportunity back to pending and clear suppressions. */
   reset(actor: Actor): Promise<void>;
 
+  // ── Weekly deals. Members read; owners/admins write (enforced here and by RLS). ──
+  listDeals(actor: Actor): Promise<Deal[]>;
+  createDeal(actor: Actor, input: DealInput): Promise<Deal>;
+  /** Throws not_found. */
+  updateDeal(actor: Actor, id: string, input: DealInput): Promise<Deal>;
+  /** Throws not_found. */
+  deleteDeal(actor: Actor, id: string): Promise<void>;
+  /** Products deals can target. */
+  listCatalog(actor: Actor): Promise<CatalogProduct[]>;
+
+  /** Paged opt-out list, newest first. `search` matches customer name or contact. */
+  listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }): Promise<{ items: OptOutEntry[]; total: number }>;
+
+  // ── Replies (conversations). Members read, mark read and reply. ──
+  listConversations(actor: Actor, limit: number): Promise<ConversationSummary[]>;
+  /** Number of conversations with unread inbound messages. */
+  unreadCount(actor: Actor): Promise<number>;
+  getThread(actor: Actor, id: string): Promise<{ conversation: ConversationSummary; messages: ConversationMessage[] } | null>;
+  markRead(actor: Actor, id: string): Promise<void>;
+  /**
+   * Records an outbound reply (status "sending") and returns what the route needs to send it.
+   * Throws not_found, suppressed (customer opted out of this channel).
+   */
+  createReply(actor: Actor, conversationId: string, msg: { body: string; subject: string | null }):
+    Promise<{ message: ConversationMessage; channel: Channel; recipient: string; replyToken: string | null }>;
+
+  /** Org settings (defaults when never saved). Members read; owners/admins write. */
+  getSettings(actor: Actor): Promise<OrgSettings>;
+  updateSettings(actor: Actor, settings: OrgSettings): Promise<OrgSettings>;
+
   // ── Team management. Mutations require owner/admin (enforced here and by RLS). ──
   listMembers(actor: Actor): Promise<TeamMember[]>;
   listInvitations(actor: Actor): Promise<Invitation[]>;
@@ -83,6 +113,19 @@ export interface OutreachStore {
   acceptInvitation(user: { id: string; email: string | null }, tokenHash: string): Promise<{ orgId: string; role: MemberRole; alreadyMember: boolean }>;
 
   // System operations (no user context).
+  /** Idempotent per (org, channel, contact). Audited. Returns created=false when already opted out. */
+  addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource): Promise<{ created: boolean }>;
+  /** Re-subscribe (e.g. SMS START): removes only opt-outs (never bounces/complaints). Audited. */
+  removeOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource): Promise<{ removed: boolean }>;
+  /** Appends to the (org, channel, contact) thread, creating it if needed; inbound messages count as unread. */
+  appendMessage(orgId: string, channel: Channel, contact: string, msg: NewMessage): Promise<{ conversationId: string; messageId: string; replyToken: string | null }>;
+  /** Resolves a reply-to token from an outbound email. */
+  findReplyToken(token: string): Promise<{ orgId: string; channel: Channel; contact: string } | null>;
+  /** Org/contact of an outbound message (for unsubscribe links on replies). */
+  getOutboundMessage(id: string): Promise<{ orgId: string; channel: Channel; contact: string } | null>;
+  updateMessageStatus(id: string, status: "sent" | "failed", providerMessageId?: string | null): Promise<void>;
+  /** Store name used in customer-facing replies (settings → business name → org name). */
+  orgDisplayName(orgId: string): Promise<string | null>;
   /** Public accept-page details for a token holder; null when unknown. */
   previewInvitation(tokenHash: string): Promise<InvitationPreview | null>;
   /** True when the org's suppression list blocks this recipient (re-checked right before sending). */
@@ -91,3 +134,5 @@ export interface OutreachStore {
   updateDelivery(id: string, status: DeliveryStatus, patch?: { providerMessageId?: string; error?: string }): Promise<void>;
   close(): Promise<void>;
 }
+
+export const DEFAULT_SETTINGS: OrgSettings = { storeName: null, emailSignature: "", smsSignature: "", defaultChannel: null, maxDiscountPercent: 25 };

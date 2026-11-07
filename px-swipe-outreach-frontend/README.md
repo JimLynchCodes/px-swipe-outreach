@@ -2,11 +2,23 @@
 
 The swipe UI for PX Swipe Outreach. Each card shows one past customer:
 
-* Their name, age, gender, location and the stores they shop at.
+* Their name, age, segment (loyal / at risk / lapsed), 21+ verification, location and the stores they shop at.
 * Lifetime spend, days since their last purchase, and how many items they've bought.
-* Their last purchase.
-* An **AI suggestion** (offer title and reasoning).
-* An editable **suggested message** with a Text/Email toggle and a character count.
+* **Buying patterns**: favorite categories and brands, visits per month, average basket, and usual day and time.
+* Their last purchase and recent items.
+* An **AI suggestion**: title and reasoning, the chosen deal, why it was chosen, and the best time to send.
+* An editable **suggested message** with a Text/Email toggle and a character count. Texts count toward the 480-char limit, including the signature and "Reply STOP to opt out.".
+
+Next to the deck, **Deals this week** shows Mon–Sun slots of enabled promotions. Owners and admins can add, edit and remove deals there.
+
+The ☰ menu (with an unread badge) links to:
+
+* **Replies**: an iMessage-style inbox, polled every 15 s
+* **Opt-out list**
+* **Team**
+* **Settings**: store name, default channel, max discount, email and text signatures, and promotions with enable checkboxes
+
+See [docs/OUTREACH_FEATURES.md](../docs/OUTREACH_FEATURES.md).
 
 **Send** (swipe right or `→`) delivers the message through the backend. **Skip** (swipe left or `←`) moves on to the next customer.
 
@@ -50,8 +62,13 @@ src/
 ├── App.tsx                    # deck state, suggestion loading, skip/send, swipe + keyboard, toasts, empty/error states
 ├── api.ts                     # typed fetch client (ApiError, idempotency keys)
 ├── types.ts                   # Card / Suggestion shapes (mirror the backend DTOs)
-├── components/Header.tsx      # logo, tagline, "AI Powered" pill
+├── components/Header.tsx      # logo, ☰ menu with unread badge, "AI Powered" pill
+├── components/PageShell.tsx   # header + back link + title for secondary pages
 ├── components/CustomerCard.tsx# the card itself
+├── deals/                     # DealsPanel (weekly slots), PromotionForm, useDeals
+├── settings/                  # SettingsPage (signatures, defaults, promotions), OptOutsPage
+├── replies/                   # RepliesPage (list + thread + composer), useUnreadCount (15 s polling)
+├── lib/week.ts                # weekday, discount, category and relative-time helpers
 ├── team/                      # TeamPage, AcceptInvitePage, role helpers + tests
 ├── router.ts                  # pushState navigation
 ├── lib/format.ts              # money / days / char count
@@ -73,3 +90,6 @@ Behavior worth knowing:
 * Editing the message, sending it, and advancing to the next card.
 * Switching to email (subject shown) and skipping with the arrow key.
 * The backend-down error state.
+* Deals panel slots, segment and patterns, the chosen-deal chip, age-unverified blocking, the default channel from settings, and per-channel opt-out.
+
+`src/pages.test.tsx` covers the hamburger menu and badge, Settings (save, promotions toggle/add/delete, read-only for staff), the Opt-out list (filter, search, pagination), and Replies (ordering, unread, mark read, reply with signature and count, opted-out block).

@@ -6,7 +6,13 @@ import rateLimit from "@fastify/rate-limit";
 import { z, ZodError } from "zod";
 import type { AppConfig } from "./config.js";
 import { AuthError, createAuthenticator, resolveOrg, type Authenticator, type AuthUser, type OrgContext } from "./auth.js";
-import { canContact, maskRecipient, recipientFor, toCardDto } from "./domain.js";
+import { canContact, maskRecipient, recipientFor, SMS_MAX, toCardDto, withSmsOptOut } from "./domain.js";
+import { dealRoutes } from "./deals/routes.js";
+import { recommend } from "./recommend.js";
+import { optOutRoutes, TWILIO_WEBHOOK_PREFIX, UNSUBSCRIBE_PATH } from "./optout/routes.js";
+import { unsubscribeLink } from "./optout/unsubscribe.js";
+import multipart from "@fastify/multipart";
+import { INBOUND_EMAIL_PATH, replyRoutes, replyToAddress } from "./replies/routes.js";
 import { processDelivery } from "./delivery.js";
 import { loggerOptions } from "./logger.js";
 import type { SuggestionProvider } from "./providers/ai.js";
@@ -37,7 +43,6 @@ export type AppDeps = {
   logger?: boolean;
 };
 
-const SMS_MAX = 480; // ~3 SMS segments
 const idParams = z.object({ id: z.string().min(1).max(100) });
 const channel = z.enum(["sms", "email"]);
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{8,128}$/;
@@ -45,7 +50,8 @@ const PUBLIC_PATHS = new Set(["/health", "/health/live", "/health/ready"]);
 /** Routes that need a user but not an org (e.g. to list orgs before choosing one). */
 const NO_ORG_PATHS = new Set(["/api/me", INVITE_ACCEPT_PATH]);
 /** API routes reachable without a session (still rate limited per IP). */
-const ANON_PATHS = new Set([INVITE_PREVIEW_PATH]);
+const ANON_PATHS = new Set([INVITE_PREVIEW_PATH, UNSUBSCRIBE_PATH]);
+const isAnon = (path: string) => ANON_PATHS.has(path) || path === INBOUND_EMAIL_PATH || path.startsWith(TWILIO_WEBHOOK_PREFIX);
 
 /** Uniform error body: { error, code, requestId, details? }. */
 function sendError(reply: FastifyReply, status: number, code: string, error: string, details?: string[]) {
@@ -86,7 +92,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const anyOrigin = config.CORS_ORIGIN.includes("*");
   await app.register(cors, {
     origin: anyOrigin ? true : config.CORS_ORIGIN,
-    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Request-Id"],
     exposedHeaders: ["X-Request-Id", "Retry-After"],
     maxAge: 600
@@ -96,7 +102,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorateRequest("auth", null);
   app.addHook("onRequest", async (request, reply) => {
     const path = request.url.split("?")[0];
-    if (PUBLIC_PATHS.has(path) || ANON_PATHS.has(path) || request.method === "OPTIONS") return;
+    if (PUBLIC_PATHS.has(path) || isAnon(path) || request.method === "OPTIONS") return;
     try {
       const user = await authenticator.authenticate(request.headers.authorization);
       let org: OrgContext | null = null;
@@ -189,8 +195,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!canContact(opp.customer, body.channel)) {
       return sendError(reply, 422, "not_contactable", `Customer cannot be contacted by ${body.channel}`);
     }
-    const businessName = request.auth!.org!.businessName ?? config.BUSINESS_NAME;
-    const suggestion = await suggestions.suggest({ opportunity: opp, channel: body.channel, businessName });
+    const [deals, catalog, settings] = await Promise.all([store.listDeals(actor), store.listCatalog(actor), store.getSettings(actor)]);
+    const businessName = settings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
+    const recommendation = recommend(opp.customer, deals, { catalog, maxDiscountPercent: settings.maxDiscountPercent });
+    // The standing fallback offer never exceeds the org's discount cap.
+    const offer = opp.offer && { ...opp.offer, discountPercent: Math.min(opp.offer.discountPercent, settings.maxDiscountPercent) };
+    const suggestion = await suggestions.suggest({
+      opportunity: { ...opp, offer: offer && offer.discountPercent > 0 ? offer : null }, channel: body.channel, businessName, recommendation,
+      signatures: { sms: settings.smsSignature, email: settings.emailSignature }
+    });
     await store.saveSuggestion(actor, id, suggestion);
     return { suggestion };
   });
@@ -224,7 +237,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       subject: z.string().trim().max(200).nullish(),
       idempotencyKey: z.string().min(8).max(200).regex(/^[A-Za-z0-9._:-]+$/, "must be URL-safe")
     }).strict().parse(request.body ?? {});
-    if (body.channel === "sms" && body.message.length > SMS_MAX) {
+    // Compliance: every marketing SMS carries opt-out instructions, even if staff edited them out.
+    const message = body.channel === "sms" ? withSmsOptOut(body.message) : body.message;
+    if (body.channel === "sms" && message.length > SMS_MAX) {
       return sendError(reply, 400, "invalid_request", `SMS must be ${SMS_MAX} characters or fewer`);
     }
     const actor = actorOf(request);
@@ -236,11 +251,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!canContact(opp.customer, body.channel)) {
       return sendError(reply, 422, "not_contactable", `Customer cannot be contacted by ${body.channel}`);
     }
-    const businessName = request.auth!.org!.businessName ?? config.BUSINESS_NAME;
+    const businessName = (await store.getSettings(actor)).storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
     const subject = body.channel === "email" ? (body.subject || `A note from ${businessName}`) : null;
     const { delivery, duplicate } = await store.createDelivery(actor, id, {
       channel: body.channel, recipient: recipientFor(opp.customer, body.channel)!,
-      message: body.message, subject, idempotencyKey: body.idempotencyKey
+      message, subject, idempotencyKey: body.idempotencyKey
     });
     if (duplicate) return reply.code(200).send({ deliveryId: delivery.id, status: delivery.status, duplicate: true });
 
@@ -249,7 +264,10 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return reply.code(202).send({ deliveryId: delivery.id, status: "queued" });
     }
     try {
-      const done = await processDelivery(store, messenger, delivery.id);
+      const done = await processDelivery(store, messenger, delivery.id, {
+        unsubscribe: id => unsubscribeLink(config.PUBLIC_API_URL, config.UNSUBSCRIBE_SIGNING_SECRET, id),
+        replyTo: token => replyToAddress(config, token)
+      });
       return reply.code(200).send({ deliveryId: done.id, status: done.status });
     } catch (e) {
       request.log.error({ err: e, deliveryId: delivery.id }, "delivery failed");
@@ -265,6 +283,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get("/api/metrics", async request => store.metrics(actorOf(request)));
+
+  // ── Promotions & settings ───────────────────────────────────────────
+  await dealRoutes(app, { store, actorOf });
+  await optOutRoutes(app, { config, store, actorOf, sendError });
+  // Inbound email webhooks may be multipart (SendGrid Inbound Parse). Attachments are discarded.
+  await app.register(multipart, {
+    attachFieldsToBody: "keyValues", limits: { fields: 50, fieldSize: 1024 * 1024, files: 20, fileSize: 10 * 1024 * 1024 },
+    onFile: async (part: any) => { part.file.resume(); }
+  } as any);
+  await replyRoutes(app, { config, store, messenger, actorOf, sendError });
 
   // ── Team ────────────────────────────────────────────────────────────
   const inviteMailer = deps.inviteMailer ?? (config.INVITE_MAILER === "supabase"
