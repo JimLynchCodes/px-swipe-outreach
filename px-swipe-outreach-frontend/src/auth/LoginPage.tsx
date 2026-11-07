@@ -1,3 +1,4 @@
+import { PineappleLogo } from '../components/PineappleLogo'
 import { useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
@@ -14,9 +15,11 @@ type Props = {
   title?: string
   subtitle?: string
   initialMode?: Mode
+  /** Show "Create an account". Off by default: access is invite-only (accounts come from invitations). */
+  allowSignup?: boolean
 }
 
-export function LoginPage({ client, redirectTo: redirect, email: fixedEmail, allowCreate = false, title, subtitle, initialMode }: Props) {
+export function LoginPage({ client, redirectTo: redirect, email: fixedEmail, allowCreate = false, title, subtitle, initialMode, allowSignup = false }: Props) {
   const [mode, setMode] = useState<Mode>(initialMode ?? 'password')
   const [email, setEmail] = useState(fixedEmail ?? '')
   const [password, setPassword] = useState('')
@@ -50,7 +53,7 @@ export function LoginPage({ client, redirectTo: redirect, email: fixedEmail, all
     <div className="login">
       <form className="login-card" onSubmit={submit} aria-label="Sign in">
         <div className="brand">
-          <img src="/flame.svg" alt="" className="brand-logo" width={36} height={36} />
+          <PineappleLogo size={36} />
           <div><h1>{title ?? 'Outreach'}</h1><p>{subtitle ?? (mode === 'signup' ? 'Create your account' : 'Sign in to continue')}</p></div>
         </div>
         <label>Email
@@ -69,8 +72,9 @@ export function LoginPage({ client, redirectTo: redirect, email: fixedEmail, all
         <div className="login-links">
           {mode !== 'password' && <button type="button" className="link" onClick={() => setMode('password')}>Use password</button>}
           {mode !== 'magic' && <button type="button" className="link" onClick={() => setMode('magic')}>Email me a magic link</button>}
-          {mode !== 'signup' && <button type="button" className="link" onClick={() => setMode('signup')}>Create an account</button>}
+          {allowSignup && mode !== 'signup' && <button type="button" className="link" onClick={() => setMode('signup')}>Create an account</button>}
         </div>
+        {!allowSignup && <p className="muted small">Access is by invitation only. Ask your store's owner to invite you.</p>}
       </form>
     </div>
   )

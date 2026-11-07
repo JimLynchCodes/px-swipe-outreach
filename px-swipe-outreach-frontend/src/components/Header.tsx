@@ -1,31 +1,80 @@
-import { LogOut, Sparkles, Users } from 'lucide-react'
-import { navigate, ROUTES } from '../router'
+import { useEffect, useRef, useState } from 'react'
+import { Ban, Layers, LogOut, Menu, MessageCircle, Receipt, Settings, Sparkles, TrendingUp, Users, X } from 'lucide-react'
+import { navigate, ROUTES, usePathname } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
+import { useUnreadCount } from '../replies/useUnread'
+import { PineappleLogo } from './PineappleLogo'
+import { ModelPicker } from '../ai/ModelPicker'
+
+const LINKS = [
+  { to: ROUTES.home, label: 'Outreach deck', icon: Layers },
+  { to: ROUTES.replies, label: 'Replies', icon: MessageCircle, badge: true },
+  { to: ROUTES.performance, label: 'Performance metrics', icon: TrendingUp },
+  { to: ROUTES.costs, label: 'Cost metrics', icon: Receipt, manage: true },
+  { to: ROUTES.optOuts, label: 'Opt-out list', icon: Ban },
+  { to: ROUTES.team, label: 'Team', icon: Users },
+  { to: ROUTES.settings, label: 'Settings', icon: Settings },
+] as const
 
 export function Header() {
   const auth = useOptionalAuth()
   const orgs = auth?.memberships ?? []
+  const path = usePathname()
+  const [open, setOpen] = useState(false)
+  const unread = useUnreadCount(Boolean(auth?.orgId))
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    const onClick = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setOpen(false) }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onClick)
+    return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('mousedown', onClick) }
+  }, [open])
+
+  const badge = unread > 99 ? '99+' : String(unread)
   return (
     <header className="header">
       <div className="brand">
-        <img src="/flame.svg" alt="" className="brand-logo" width={36} height={36} />
+        {auth?.orgId && (
+          <div className="menu-wrap" ref={menuRef}>
+            <button className="icon-btn hamburger" aria-label={unread ? `Menu, ${unread} unread replies` : 'Menu'} aria-expanded={open}
+              aria-haspopup="menu" onClick={() => setOpen(o => !o)}>
+              {open ? <X size={20} /> : <Menu size={20} />}
+              {unread > 0 && <span className="badge" aria-hidden>{badge}</span>}
+            </button>
+            {open && (
+              <nav className="menu" role="menu" aria-label="Main menu">
+                {LINKS.filter(l => !('manage' in l) || auth?.role === 'owner' || auth?.role === 'admin').map(l => (
+                  <a key={l.to} role="menuitem" href={l.to}
+                    className={path === l.to || (l.to !== '/' && path.startsWith(l.to)) ? 'active' : undefined}
+                    onClick={e => { e.preventDefault(); setOpen(false); navigate(l.to) }}>
+                    <l.icon size={17} aria-hidden /> <span>{l.label}</span>
+                    {'badge' in l && unread > 0 && <span className="badge inline" aria-label={`${unread} unread`}>{badge}</span>}
+                  </a>
+                ))}
+              </nav>
+            )}
+          </div>
+        )}
+        <PineappleLogo size={36} />
+        {auth?.dataSource && (
+          <span className={`pill data-source ${auth.dataSource}`} title={auth.dataSource === 'demo' ? 'In-memory demo data (resets on restart)' : 'Live data from Supabase'}>
+            {auth.dataSource === 'demo' ? 'Demo data' : 'Supabase'}
+          </span>
+        )}
         <div>
           <h1>Outreach</h1>
           <p>Turn past customers into future sales</p>
         </div>
       </div>
       <div className="header-right">
-        <span className="pill"><Sparkles size={14} aria-hidden /> AI Powered</span>
+        {auth?.orgId ? <ModelPicker /> : <span className="pill"><Sparkles size={14} aria-hidden /> AI suggestions</span>}
         {auth && orgs.length > 1 && (
           <select aria-label="Organization" className="org-select" value={auth.orgId ?? ''} onChange={e => auth.setOrgId(e.target.value)}>
             {orgs.map(m => <option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}
           </select>
-        )}
-        {auth?.orgId && (
-          <a className="icon-btn" href={ROUTES.team} aria-label="Team" title="Team"
-            onClick={e => { e.preventDefault(); navigate(ROUTES.team) }}>
-            <Users size={18} />
-          </a>
         )}
         {auth?.mode === 'supabase' && (
           <button className="icon-btn" onClick={() => void auth.signOut()} aria-label="Sign out" title={auth.email ?? 'Sign out'}>

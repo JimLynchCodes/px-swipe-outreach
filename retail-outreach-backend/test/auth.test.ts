@@ -56,18 +56,63 @@ describe("Supabase JWT auth middleware", () => {
   it("returns 403 for a signed-in user with no membership, and for an org they don't belong to", async () => {
     const { sign, store } = await setup();
     const stranger = await sign(OTHER_USER);
-    expect((await app.inject({ url: "/api/outreach/queue", headers: { authorization: `Bearer ${stranger}` } })).json().code).toBe("no_membership");
+    expect((await app.inject({ url: "/api/outreach/queue", headers: { authorization: `Bearer ${stranger}` } })).json().code).toBe("not_approved");
     store.addMembership(OTHER_USER, { orgId: OTHER_ORG, orgName: "Other", businessName: null, role: "owner" });
     const r = await app.inject({ url: "/api/outreach/queue", headers: { authorization: `Bearer ${stranger}`, "x-org-id": DEMO_ORG_ID } });
     expect(r.statusCode).toBe(403);
     expect(r.json().code).toBe("not_a_member");
   });
 
-  it("/api/me works without an org and lists memberships", async () => {
-    const { sign } = await setup();
+  it("/api/me works without an org header and lists memberships", async () => {
+    const { sign, store } = await setup();
+    store.addMembership(OTHER_USER, { orgId: OTHER_ORG, orgName: "Other", businessName: null, role: "staff" });
     const r = await app.inject({ url: "/api/me", headers: { authorization: `Bearer ${await sign(OTHER_USER)}` } });
     expect(r.statusCode).toBe(200);
-    expect(r.json()).toMatchObject({ user: { id: OTHER_USER }, memberships: [], authMode: "supabase" });
+    expect(r.json()).toMatchObject({ user: { id: OTHER_USER }, memberships: [{ orgId: OTHER_ORG }], authMode: "supabase" });
+  });
+
+  describe("approval gate (Team list only)", () => {
+    const STRANGER = "22222222-2222-4222-8222-222222222222";
+    const as = (t: string) => ({ authorization: `Bearer ${t}` });
+    const invite = (store: MemoryStore, email: string, o: { expiresAt?: Date } = {}) =>
+      store.createInvitation({ userId: DEMO_USER_ID, orgId: DEMO_ORG_ID },
+        { email, role: "staff", tokenHash: Math.random().toString(16).slice(2).padEnd(64, "0").slice(0, 64), expiresAt: o.expiresAt ?? new Date(Date.now() + 86_400_000) });
+
+    it("a signed-in stranger gets 403 not_approved with the exact message on every API route, /api/me included", async () => {
+      const { sign } = await setup();
+      const t = await sign(STRANGER, { claims: { email: "Nobody@Example.com" } });
+      for (const url of ["/api/me", "/api/outreach/queue", "/api/settings", "/api/opt-outs", "/api/metrics/performance", "/api/team"]) {
+        const r = await app.inject({ url, headers: as(t) });
+        expect(r.statusCode, url).toBe(403);
+        expect(r.json()).toMatchObject({ code: "not_approved",
+          error: "Nobody@Example.com has not been approved for this application. If this is in error, please contact your administrator." });
+      }
+    });
+
+    it("a pending invitee who signs in directly is auto-joined (case-insensitive email)", async () => {
+      const { sign, store } = await setup();
+      await invite(store, "new.hire@example.com");
+      const r = await app.inject({ url: "/api/me", headers: as(await sign(STRANGER, { claims: { email: "New.Hire@EXAMPLE.com" } })) });
+      expect(r.statusCode).toBe(200);
+      expect(r.json().memberships).toMatchObject([{ orgId: DEMO_ORG_ID, role: "staff" }]);
+      const inv = (await store.listInvitations({ userId: DEMO_USER_ID, orgId: DEMO_ORG_ID })).find(i => i.email === "new.hire@example.com");
+      expect(inv === undefined || inv.status === "accepted").toBe(true); // no longer pending
+    });
+
+    it("expired or revoked invites and removed members do not get in", async () => {
+      const { sign, store } = await setup();
+      const exp = await invite(store, "late@example.com");
+      store._patchInvitation(exp.id, { expiresAt: new Date(Date.now() - 1000) });
+      expect((await app.inject({ url: "/api/me", headers: as(await sign(STRANGER, { claims: { email: "late@example.com" } })) })).statusCode).toBe(403);
+      const rev = await invite(store, "revoked@example.com");
+      await store.revokeInvitation({ userId: DEMO_USER_ID, orgId: DEMO_ORG_ID }, rev.id);
+      expect((await app.inject({ url: "/api/me", headers: as(await sign(STRANGER, { claims: { email: "revoked@example.com" } })) })).statusCode).toBe(403);
+      await invite(store, "temp@example.com");
+      const t = await sign(OTHER_USER, { claims: { email: "temp@example.com" } });
+      expect((await app.inject({ url: "/api/me", headers: as(t) })).statusCode).toBe(200);
+      await store.removeMember({ userId: DEMO_USER_ID, orgId: DEMO_ORG_ID }, OTHER_USER);
+      expect((await app.inject({ url: "/api/me", headers: as(t) })).json().code).toBe("not_approved"); // accepted invite alone isn't access
+    });
   });
 
   it("verifies legacy HS256 tokens with SUPABASE_JWT_SECRET and rejects alg confusion", async () => {

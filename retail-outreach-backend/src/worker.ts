@@ -1,9 +1,12 @@
 import { Worker } from "bullmq";
 import { loadConfigOrExit } from "./config.js";
 import { processDelivery } from "./delivery.js";
+import { unsubscribeLink } from "./optout/unsubscribe.js";
+import { replyToAddress } from "./replies/routes.js";
 import { createMessageProvider } from "./providers/messaging.js";
 import { createRedis, QUEUE_NAME } from "./queue.js";
 import { createStore } from "./store/index.js";
+import { CostTrackingMessenger } from "./metrics/smsCost.js";
 
 const config = loadConfigOrExit();
 if (config.DATA_STORE !== "postgres") {
@@ -12,8 +15,10 @@ if (config.DATA_STORE !== "postgres") {
 }
 
 const store = await createStore(config);
-const messenger = createMessageProvider({ sms: config.SMS_PROVIDER, email: config.EMAIL_PROVIDER });
-const worker = new Worker(QUEUE_NAME, job => processDelivery(store, messenger, job.data.deliveryId),
+// Wrapped so queued SMS sends also record Twilio spend (sms_costs).
+const messenger = new CostTrackingMessenger(createMessageProvider(config), store, { estimatePerSegment: config.TWILIO_SMS_PRICE_ESTIMATE });
+const worker = new Worker(QUEUE_NAME, job => processDelivery(store, messenger, job.data.deliveryId,
+  { unsubscribe: id => unsubscribeLink(config.PUBLIC_API_URL, config.UNSUBSCRIBE_SIGNING_SECRET, id), replyTo: token => replyToAddress(config, token) }),
   { connection: createRedis(config.REDIS_URL), concurrency: 5 });
 
 worker.on("completed", job => console.log(`Delivery job ${job.id} completed`));

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:supabase": "vite --mode supabase",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",

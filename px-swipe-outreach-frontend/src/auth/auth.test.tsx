@@ -68,6 +68,34 @@ describe('auth gate', () => {
     expect(await screen.findByText('No store access yet')).toBeInTheDocument()
   })
 
+  it('a signed-in user who is not on the Team list sees exactly the not-approved message and can sign out', async () => {
+    const client = fakeClient({ access_token: 't', user: { id: 'u9' } })
+    const msg = 'stranger@x.co has not been approved for this application. If this is in error, please contact your administrator.'
+    vi.stubGlobal('fetch', vi.fn(() => json({ error: msg, code: 'not_approved' }, 403)))
+    render(<Root config={{ mode: 'supabase', client }} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent(new RegExp(`^${msg.replace(/\./g, '\\.')}Sign out$`))
+    expect(screen.queryByRole('menu')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
+    await waitFor(() => expect(client.auth.signOut).toHaveBeenCalled())
+    expect(await screen.findByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('the login page is invite-only: no public "Create an account"', async () => {
+    render(<Root config={{ mode: 'supabase', client: fakeClient(null) }} />)
+    await screen.findByLabelText('Email')
+    expect(screen.queryByText('Create an account')).toBeNull()
+    expect(screen.getByText(/invitation only/)).toBeInTheDocument()
+  })
+
+  it('shows a Supabase vs Demo data badge', async () => {
+    const client = fakeClient({ access_token: 't', user: { id: 'u1' } })
+    vi.stubGlobal('fetch', vi.fn((url: string) => url.endsWith('/api/me')
+      ? json({ user: { id: 'u1', email: 'a@b.co' }, memberships: [{ orgId: 'org-1', orgName: 'Acme', businessName: 'Acme', role: 'owner' }], authMode: 'supabase', dataStore: 'postgres' })
+      : json({ items: [], total: 0, deals: [], products: [], categories: [], count: 0, models: [], selected: 'rules', effective: 'rules' })))
+    render(<Root config={{ mode: 'supabase', client }} />)
+    expect(await screen.findByText('Supabase')).toHaveClass('data-source')
+  })
+
   it('refuses to start when misconfigured', () => {
     render(<Root config={{ mode: 'misconfigured', reason: 'VITE_SUPABASE_URL is not set' }} />)
     expect(screen.getByRole('alert')).toHaveTextContent('VITE_SUPABASE_URL is not set')

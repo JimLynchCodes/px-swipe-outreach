@@ -40,9 +40,34 @@ const schema = z.object({
   DELIVERY_MODE: z.enum(["inline", "queue"]).default("inline"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
-  SMS_PROVIDER: z.enum(["console"]).default("console"),
-  EMAIL_PROVIDER: z.enum(["console"]).default("console"),
+  /** Fallback model when an org has none set (orgs pick theirs in Settings / the header). */
+  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
+  /** log = print only (dev); smtp = real email via Nodemailer. "console" is accepted as an alias for log. */
+  EMAIL_PROVIDER: z.preprocess(v => (v === "console" ? "log" : v), z.enum(["log", "smtp"]).default("log")),
+  /** log = print to the console/log only; twilio = real SMS via the official Twilio SDK. "console" is an alias for log. */
+  SMS_PROVIDER: z.preprocess(v => (v === "console" ? "log" : v), z.enum(["log", "twilio"]).default("log")),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  /** TLS from the first byte (port 465). Defaults to true only for port 465; 587/1025 use STARTTLS/plain. */
+  SMTP_SECURE: z.enum(["true", "false"]).optional(),
+  SMTP_USER: z.string().optional(),
+  /** BACKEND SECRET. SMTP password (e.g. a Gmail app password). */
+  SMTP_PASS: z.string().optional(),
+  /** From header, e.g. "Cloud 9 Smoke Shop <deals@example.com>". With Gmail it must be your Gmail address (or a verified alias). */
+  SMTP_FROM: z.string().optional(),
+  TWILIO_ACCOUNT_SID: z.string().regex(/^AC[0-9a-f]{32}$/i, "must look like AC…").optional(),
+  /** Twilio sender number in E.164 (+15551234567). Set this or TWILIO_MESSAGING_SERVICE_SID. */
+  TWILIO_FROM_NUMBER: z.string().regex(/^\+[1-9]\d{6,14}$/, "must be an E.164 number like +15551234567").optional(),
+  /** Twilio Messaging Service SID (MG…); takes precedence over TWILIO_FROM_NUMBER. */
+  TWILIO_MESSAGING_SERVICE_SID: z.string().regex(/^MG[0-9a-f]{32}$/i, "must look like MG…").optional(),
+  /** Per-segment USD estimate used until Twilio reports the actual price ($0.0083 Twilio + ~$0.0042 carrier fee, US long code, Oct 2026). */
+  TWILIO_SMS_PRICE_ESTIMATE: z.coerce.number().min(0).max(1).default(0.0125),
+  /** Optional flat monthly phone-number fee (USD) added to each month with Twilio sends. 0 = off. Long code ≈ $1.15. */
+  TWILIO_NUMBER_MONTHLY_FEE: z.coerce.number().min(0).max(1000).default(0),
+  /** Ask Twilio to POST status callbacks (we then fetch the final price). Needs a public PUBLIC_API_URL. */
+  TWILIO_STATUS_CALLBACKS: z.preprocess(v => v === undefined ? undefined : !["false", "0", "no", ""].includes(String(v).toLowerCase()), z.boolean().default(true)),
+  /** Minutes between price reconcile runs (fetches prices still on an estimate). 0 = off. */
+  TWILIO_RECONCILE_MINUTES: z.coerce.number().int().min(0).max(1440).default(10),
   BUSINESS_NAME: z.string().default("our store"),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 
@@ -54,7 +79,23 @@ const schema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
   INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(168),
   INVITE_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
-  INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60)
+  INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60),
+
+  /** Public base URL of this API (unsubscribe links, Twilio signature validation). */
+  PUBLIC_API_URL: z.string().url().default("http://localhost:3000"),
+  /** BACKEND SECRET. HMAC key for email unsubscribe links. Required in production. */
+  UNSUBSCRIBE_SIGNING_SECRET: z.string().min(32).optional(),
+  /** BACKEND SECRET. When set, inbound SMS webhooks must carry a valid X-Twilio-Signature. */
+  TWILIO_AUTH_TOKEN: z.string().min(16).optional(),
+  /**
+   * Texting a number that replied STOP is restricted (TCPA/CTIA): off by default, so SMS re-opt-in requests are refused.
+   * Only enable after confirming with counsel that a one-time re-permission text is acceptable for your program.
+   */
+  ALLOW_SMS_REOPTIN_REQUEST: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
+  /** Domain whose mail is routed to the inbound email webhook; outbound email uses Reply-To: reply+<token>@domain. */
+  INBOUND_EMAIL_DOMAIN: z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i, "must be a domain name").optional(),
+  /** BACKEND SECRET. Required by the inbound email webhook (?key= or X-Inbound-Secret). */
+  INBOUND_EMAIL_SECRET: z.string().min(24).optional()
 }).superRefine((c, ctx) => {
   const issue = (path: string, message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: [path], message });
   if (c.AUTH_MODE === "supabase" && !c.SUPABASE_URL) issue("SUPABASE_URL", "required when AUTH_MODE=supabase");
@@ -63,7 +104,22 @@ const schema = z.object({
     if (!c.SUPABASE_URL) issue("SUPABASE_URL", "required when INVITE_MAILER=supabase");
     if (!c.SUPABASE_SERVICE_ROLE_KEY) issue("SUPABASE_SERVICE_ROLE_KEY", "required when INVITE_MAILER=supabase");
   }
+  if (c.EMAIL_PROVIDER === "smtp") {
+    if (!c.SMTP_HOST) issue("SMTP_HOST", "required when EMAIL_PROVIDER=smtp");
+    if (!c.SMTP_FROM) issue("SMTP_FROM", "required when EMAIL_PROVIDER=smtp");
+    if (c.SMTP_USER && !c.SMTP_PASS) issue("SMTP_PASS", "required when SMTP_USER is set");
+  }
+  if (c.SMS_PROVIDER === "twilio") {
+    if (!c.TWILIO_ACCOUNT_SID) issue("TWILIO_ACCOUNT_SID", "required when SMS_PROVIDER=twilio");
+    if (!c.TWILIO_AUTH_TOKEN) issue("TWILIO_AUTH_TOKEN", "required when SMS_PROVIDER=twilio");
+    if (!c.TWILIO_FROM_NUMBER && !c.TWILIO_MESSAGING_SERVICE_SID) issue("TWILIO_FROM_NUMBER", "set TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID when SMS_PROVIDER=twilio");
+  }
   if (c.NODE_ENV === "production") {
+    if (c.EMAIL_PROVIDER === "log") issue("EMAIL_PROVIDER", "must be 'smtp' in production ('log' sends nothing)");
+    if (c.SMS_PROVIDER !== "twilio") issue("SMS_PROVIDER", "must be 'twilio' in production ('log' sends nothing)");
+    if (c.EMAIL_PROVIDER === "smtp" && c.SMTP_HOST && /^(localhost|127\.|mailpit$)/i.test(c.SMTP_HOST)) issue("SMTP_HOST", "points at a local test server (Mailpit) in production");
+    if (!c.UNSUBSCRIBE_SIGNING_SECRET) issue("UNSUBSCRIBE_SIGNING_SECRET", "required in production (signs email unsubscribe links)");
+    if (!/^https:\/\//.test(c.PUBLIC_API_URL)) issue("PUBLIC_API_URL", "must be an https:// URL in production");
     if (c.INVITE_MAILER !== "supabase") issue("INVITE_MAILER", "must be 'supabase' in production (console logs invite links)");
     if (!/^https:\/\//.test(c.APP_URL)) issue("APP_URL", "must be an https:// URL in production");
     if (c.AUTH_MODE !== "supabase") issue("AUTH_MODE", "must be 'supabase' in production (demo auth is dev-only)");
@@ -77,6 +133,10 @@ const schema = z.object({
   ENABLE_DEMO_RESET: c.ENABLE_DEMO_RESET ?? c.NODE_ENV !== "production",
   SUPABASE_URL: c.SUPABASE_URL?.replace(/\/+$/, ""),
   APP_URL: c.APP_URL.replace(/\/+$/, ""),
+  PUBLIC_API_URL: c.PUBLIC_API_URL.replace(/\/+$/, ""),
+  SMTP_SECURE: c.SMTP_SECURE ? c.SMTP_SECURE === "true" : c.SMTP_PORT === 465,
+  // Dev/test only (production requires a real secret, enforced above).
+  UNSUBSCRIBE_SIGNING_SECRET: c.UNSUBSCRIBE_SIGNING_SECRET ?? "dev-only-insecure-unsubscribe-signing-secret",
   DATABASE_CA_CERT: c.DATABASE_CA_CERT && !c.DATABASE_CA_CERT.includes("BEGIN CERTIFICATE")
     ? readFileSync(c.DATABASE_CA_CERT, "utf8") : c.DATABASE_CA_CERT
 }));

@@ -1,3 +1,4 @@
+import { PineappleLogo } from '../components/PineappleLogo'
 import { useEffect, useState } from 'react'
 import { CheckCircle2, MailWarning } from 'lucide-react'
 import { api, ApiError, type InvitationPreview } from '../api'
@@ -85,7 +86,7 @@ export function AcceptInvitePage() {
     return (
       <div className="invite-wrap">
         <p className="invite-intro">{intro} Sign in or create an account with <strong>{inv.email}</strong> to accept.</p>
-        <LoginPage client={auth.client} email={inv.email} allowCreate initialMode="magic"
+        <LoginPage client={auth.client} email={inv.email} allowCreate allowSignup initialMode="magic"
           redirectTo={`${window.location.origin}${ROUTES.acceptInvite}?token=${encodeURIComponent(token!)}`}
           title={`Join ${inv.orgName}`} subtitle="Sign in to accept your invitation" />
       </div>
@@ -99,7 +100,7 @@ export function AcceptInvitePage() {
     <div className="login">
       <div className="login-card">
         <div className="brand">
-          <img src="/flame.svg" alt="" className="brand-logo" width={36} height={36} />
+          <PineappleLogo size={36} />
           <div><h1>Join {inv.orgName}</h1><p>Team invitation</p></div>
         </div>
         <p>{intro}</p>

@@ -11,7 +11,10 @@ afterEach(async () => { await app?.close(); });
 const PROD_OK = {
   NODE_ENV: "production", AUTH_MODE: "supabase", SUPABASE_URL: "https://abc.supabase.co",
   DATA_STORE: "postgres", DATABASE_URL: "postgres://u:p@db:5432/postgres", CORS_ORIGIN: "https://app.example.com",
-  APP_URL: "https://app.example.com/", INVITE_MAILER: "supabase", SUPABASE_SERVICE_ROLE_KEY: "service-role-key-for-tests-only"
+  APP_URL: "https://app.example.com/", INVITE_MAILER: "supabase", SUPABASE_SERVICE_ROLE_KEY: "service-role-key-for-tests-only",
+  UNSUBSCRIBE_SIGNING_SECRET: "x".repeat(40), PUBLIC_API_URL: "https://api.example.com",
+  EMAIL_PROVIDER: "smtp", SMTP_HOST: "smtp.gmail.com", SMTP_PORT: "465", SMTP_USER: "store@gmail.com", SMTP_PASS: "app-password", SMTP_FROM: "Cloud 9 <store@gmail.com>",
+  SMS_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: `AC${"a".repeat(32)}`, TWILIO_AUTH_TOKEN: "t".repeat(32), TWILIO_FROM_NUMBER: "+15551234567"
 };
 
 describe("config validation (fail fast)", () => {
@@ -20,10 +23,25 @@ describe("config validation (fail fast)", () => {
     expect(c.ENABLE_DEMO_RESET).toBe(false);
     expect(c.CORS_ORIGIN).toEqual(["https://app.example.com"]);
     expect(c.APP_URL).toBe("https://app.example.com");
+    expect(c.SMTP_SECURE).toBe(true); // port 465
+    expect(c.INBOUND_EMAIL_DOMAIN).toBeUndefined(); // no dev reply.localhost default in production
+  });
+
+  it("dev defaults: log providers; 'console' is an alias for log; a Messaging Service SID can replace the number", () => {
+    const d = loadConfig({ NODE_ENV: "development" });
+    expect([d.EMAIL_PROVIDER, d.SMS_PROVIDER]).toEqual(["log", "log"]);
+    expect(loadConfig({ EMAIL_PROVIDER: "console", SMS_PROVIDER: "console" }).SMS_PROVIDER).toBe("log");
+    const m = loadConfig({ NODE_ENV: "development", EMAIL_PROVIDER: "smtp", SMTP_HOST: "127.0.0.1", SMTP_PORT: "1025", SMTP_FROM: "dev@localhost.test" });
+    expect(m).toMatchObject({ SMTP_SECURE: false, EMAIL_PROVIDER: "smtp" });
+    expect(() => loadConfig({ SMS_PROVIDER: "simulator" })).toThrow(ConfigError);
+    expect(loadConfig({ SMS_PROVIDER: "twilio", TWILIO_ACCOUNT_SID: `AC${"a".repeat(32)}`, TWILIO_AUTH_TOKEN: "t".repeat(32), TWILIO_MESSAGING_SERVICE_SID: `MG${"b".repeat(32)}` }).SMS_PROVIDER).toBe("twilio");
   });
 
   it.each([
     [{ AUTH_MODE: "demo" }, "AUTH_MODE"],
+    [{ UNSUBSCRIBE_SIGNING_SECRET: "" }, "UNSUBSCRIBE_SIGNING_SECRET"],
+    [{ UNSUBSCRIBE_SIGNING_SECRET: "short" }, "UNSUBSCRIBE_SIGNING_SECRET"],
+    [{ PUBLIC_API_URL: "http://api.example.com" }, "PUBLIC_API_URL"],
     [{ DATA_STORE: "memory" }, "DATA_STORE"],
     [{ CORS_ORIGIN: "*" }, "CORS_ORIGIN"],
     [{ CORS_ORIGIN: "http://app.example.com" }, "CORS_ORIGIN"],
@@ -33,7 +51,19 @@ describe("config validation (fail fast)", () => {
     [{ SUPABASE_JWT_SECRET: "short" }, "SUPABASE_JWT_SECRET"],
     [{ INVITE_MAILER: "console" }, "INVITE_MAILER"],
     [{ SUPABASE_SERVICE_ROLE_KEY: "" }, "SUPABASE_SERVICE_ROLE_KEY"],
-    [{ APP_URL: "http://app.example.com" }, "APP_URL"]
+    [{ APP_URL: "http://app.example.com" }, "APP_URL"],
+    [{ EMAIL_PROVIDER: "log" }, "EMAIL_PROVIDER"],
+    [{ EMAIL_PROVIDER: "console" }, "EMAIL_PROVIDER"],
+    [{ SMS_PROVIDER: "log" }, "SMS_PROVIDER"],
+    [{ SMTP_HOST: "" }, "SMTP_HOST"],
+    [{ SMTP_FROM: "" }, "SMTP_FROM"],
+    [{ SMTP_PASS: "" }, "SMTP_PASS"],
+    [{ SMTP_HOST: "mailpit" }, "SMTP_HOST"],
+    [{ TWILIO_ACCOUNT_SID: "" }, "TWILIO_ACCOUNT_SID"],
+    [{ TWILIO_FROM_NUMBER: "5551234" }, "TWILIO_FROM_NUMBER"],
+    [{ TWILIO_FROM_NUMBER: "" }, "TWILIO_FROM_NUMBER"],
+    [{ TWILIO_AUTH_TOKEN: "" }, "TWILIO_AUTH_TOKEN"],
+    [{ SMS_PROVIDER: "carrier-gateway" }, "SMS_PROVIDER"]
   ])("rejects unsafe production config %j", (patch, field) => {
     expect(() => loadConfig({ ...PROD_OK, ...patch })).toThrow(ConfigError);
     expect(() => loadConfig({ ...PROD_OK, ...patch })).toThrow(field);

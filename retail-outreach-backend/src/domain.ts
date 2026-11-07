@@ -1,4 +1,4 @@
-import type { Channel, Customer, Opportunity } from "./types.js";
+import type { Channel, Customer, DealInput, Opportunity, Segment } from "./types.js";
 
 const DAY_MS = 86_400_000;
 
@@ -16,8 +16,15 @@ export function isValidEmail(email: string | null): boolean {
   return Boolean(email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
 }
 
+export const MIN_AGE = 21;
+/** Age-restricted retail: only market to customers whose ID was checked and who are 21+. */
+export function isAgeEligible(customer: Pick<Customer, "age" | "ageVerified">): boolean {
+  return customer.ageVerified && customer.age !== null && customer.age >= MIN_AGE;
+}
+
 export function canContact(customer: Customer, channel: Channel): boolean {
   if (customer.suppressed.includes(channel)) return false;
+  if (!isAgeEligible(customer)) return false;
   return channel === "sms"
     ? customer.smsConsent && isValidPhone(customer.phone)
     : customer.emailConsent && isValidEmail(customer.email);
@@ -48,6 +55,43 @@ export function maskRecipient(value: string): string {
   return value.length <= 5 ? "***" : `${value.slice(0, 3)}***${value.slice(-2)}`;
 }
 
+export const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
+/** JS getDay() (0 = Sunday) → our 0 = Monday convention. */
+export const weekdayOf = (d: Date) => (d.getDay() + 6) % 7;
+
+/** loyal / at_risk / lapsed, judged against the customer's own visit rhythm. */
+export function segmentOf(customer: Customer, now = Date.now()): Segment {
+  const days = daysSince(customer.lastPurchaseAt, now);
+  if (days === null) return "lapsed";
+  const interval = 30 / Math.max(0.1, customer.profile.visitsPerMonth || 0.1);
+  if (days >= Math.max(60, interval * 3)) return "lapsed";
+  if (days >= Math.max(21, interval * 1.75)) return "at_risk";
+  return "loyal";
+}
+
+const money0 = (cents: number) => `$${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`;
+export function discountLabel(d: Pick<DealInput, "discountType" | "discountValue">): string {
+  switch (d.discountType) {
+    case "percent": return `${d.discountValue ?? 0}% off`;
+    case "amount": return `${money0(d.discountValue ?? 0)} off`;
+    case "bogo": return "Buy one, get one";
+    case "freebie": return "Free gift";
+  }
+}
+
+export const SMS_OPT_OUT = "Reply STOP to opt out.";
+export const SMS_MAX = 480; // ~3 SMS segments
+/** Every marketing SMS must carry opt-out instructions. Appends them when the text doesn't already have them. */
+export function withSmsOptOut(message: string): string {
+  const m = message.trim();
+  return /\bstop\b/i.test(m) && /opt[ -]?out|unsubscribe/i.test(m) ? m : `${m}\n${SMS_OPT_OUT}`;
+}
+export const EMAIL_FOOTER = "You're receiving this because you opted in to offers from us. Must be 21+ to purchase. Use the unsubscribe link below to stop these emails.";
+export function withEmailFooter(message: string): string {
+  const m = message.trim();
+  return /unsubscribe/i.test(m) ? m : `${m}\n\n${EMAIL_FOOTER}`;
+}
+
 export const ACTIONABLE_STATUSES = ["pending", "drafted"] as const;
 
 /** Shape returned to the browser. No raw phone/email. */
@@ -59,6 +103,7 @@ export function toCardDto(opp: Opportunity, now = Date.now()) {
     status: opp.status,
     campaign: opp.campaign,
     rationale: opp.rationale,
+    segment: segmentOf(c, now),
     offer: opp.offer,
     customer: {
       id: c.id,
@@ -71,15 +116,21 @@ export function toCardDto(opp: Opportunity, now = Date.now()) {
       lifetimeSpendCents: c.lifetimeSpendCents,
       daysSinceLastPurchase: daysSince(c.lastPurchaseAt, now),
       itemsPurchased: c.itemsPurchased,
+      ageVerified: isAgeEligible(c),
+      profile: c.profile,
       contact: {
         sms: canContact(c, "sms"),
         email: canContact(c, "email"),
-        preferredChannel: preferredChannel(c)
+        preferredChannel: preferredChannel(c),
+        blockedReason: !isAgeEligible(c) ? "age_unverified" as const
+          : c.suppressed.length === 2 ? "opted_out" as const : null
       }
     },
+    recentItems: c.purchases.slice(0, 5).map(p => ({ name: p.name, brand: p.brand, category: p.category, daysAgo: daysSince(p.purchasedAt, now) })),
     lastPurchase: last ? {
       name: last.name,
       category: last.category,
+      brand: last.brand,
       priceCents: last.priceCents,
       imageUrl: last.imageUrl,
       daysAgo: daysSince(last.purchasedAt, now),

@@ -50,6 +50,11 @@ CORS_ORIGIN=https://outreach.example.com
 APP_URL=https://outreach.example.com
 INVITE_MAILER=supabase
 SUPABASE_SERVICE_ROLE_KEY=<service_role / sb_secret_ key>   # backend only, used solely to send invite emails
+PUBLIC_API_URL=https://api.outreach.example.com
+UNSUBSCRIBE_SIGNING_SECRET=<openssl rand -base64 48>
+TWILIO_AUTH_TOKEN=<twilio auth token>
+INBOUND_EMAIL_DOMAIN=reply.outreach.example.com
+INBOUND_EMAIL_SECRET=<openssl rand -hex 24>
 ```
 Frontend build env:
 ```
@@ -61,7 +66,8 @@ VITE_SUPABASE_ANON_KEY=<anon or publishable key>
 - The backend verifies the user's JWT (issuer, audience, `role=authenticated`, expiry), then checks the `X-Org-Id` header against `memberships`.
 - Each request runs in a transaction that sets `request.jwt.claims` and `SET LOCAL ROLE authenticated`, so **RLS policies are enforced on every query**, even if application code has a bug.
 - Background work (the BullMQ worker, demo reset) uses the privileged connection. This requires the connecting role (Supabase's `postgres`) to be a member of `authenticated` and have `BYPASSRLS`. Both are true on Supabase by default.
-- Opt-outs live in `suppressions`; a trigger on `message_deliveries` rejects any delivery to a suppressed recipient (defence in depth on top of the API check).
+- Promotions (`deals`) and `org_settings`: members read, owners/admins write. `conversations` / `messages`: members read and mark read; staff can insert outbound messages only with `sent_by = auth.uid()`. Inbound messages, STOP/unsubscribe opt-outs and webhook work use the privileged connection, scoped by org in code.
+- Opt-outs live in `suppressions` (with a `source`: `sms_stop`, `email_unsubscribe`, `manual` or `provider`); a trigger on `message_deliveries` rejects any delivery to a suppressed recipient (defence in depth on top of the API check).
 
 ## Team invitations
 Owners and admins invite teammates from **Team** (header icon → `/team`).
@@ -77,3 +83,40 @@ In development `INVITE_MAILER=console` logs the link instead, and the Team scree
 - `npm run dev` with no Supabase env: frontend demo mode + backend `AUTH_MODE=demo` + in-memory data.
 - Plain Postgres: `npm run db:migrate:local` creates stand-ins for Supabase's roles and `auth` schema (`supabase/tests/bootstrap_plain_postgres.sql`). Never run that against a real Supabase project.
 - `supabase start` also works (see `supabase/config.toml`).
+
+## Switching between demo data and Supabase
+
+| Command (repo root) | Data | Auth | Reads |
+|---|---|---|---|
+| `npm run dev` | In-memory demo data (resets on restart) | Demo user, no login | nothing (forces `DATA_STORE=memory AUTH_MODE=demo`, log delivery) |
+| `npm run dev:supabase` | Your Supabase Postgres | Supabase login page | `retail-outreach-backend/.env.supabase.local` + `px-swipe-outreach-frontend/.env.supabase.local` |
+
+Setup once: copy both `.env.supabase.example` files to `.env.supabase.local` and fill them in (the backend file holds
+`DATABASE_URL` and the service-role key; the frontend file holds only the URL and the anon key). Then, once:
+```bash
+cd retail-outreach-backend
+npx tsx --env-file=.env.supabase.local src/db/migrate.ts
+npx tsx --env-file=.env.supabase.local src/db/seed.ts --owner-email you@example.com   # an existing Supabase Auth user becomes owner
+``` The header shows a badge,
+**Demo data** or **Supabase**, so you always know which one you're looking at (it comes from the API's `DATA_STORE`).
+
+## Who can get in (approval gate)
+
+In Supabase mode everything sits behind the login page, and **only people on an org's Team list can use the app**:
+
+- **Active members** get in.
+- **Pending invitees:** if the signed-in email matches (case-insensitive) an unexpired, unrevoked pending invitation, the user is
+  **auto-joined** with the invited role on first sign-in, the same as clicking the invite link
+  (`public.claim_pending_invitations()`, a narrow `security definer` function). The invite is marked accepted and audited
+  (`invitation_accepted`, `via: sign_in`).
+- **Everyone else** sees exactly: "`<email>` has not been approved for this application. If this is in error, please contact your
+  administrator." along with a Sign out button. The API answers **403 `not_approved`** on every `/api` route, including `/api/me`.
+  The only exception is the invite-accept endpoint, so an invite link can still turn someone into a member.
+- Removed members whose old invitation was "accepted" do **not** get back in. Access follows current membership, so removing someone
+  from the team revokes it. Expired and revoked invitations don't count either.
+- The database enforces this too: every table's RLS is keyed on `is_org_member`/`has_org_role`, so a signed-in user without a
+  membership reads and writes nothing even when going straight at PostgREST with their JWT.
+
+**Sign-ups:** the login page has no "Create an account" link (invite links still let invitees create their account). **Also turn
+off open sign-ups in the dashboard**: Authentication → Sign In / Providers → uncheck *Allow new users to sign up*. Invitations
+(`auth.admin.inviteUserByEmail`) keep working. The first owner is bootstrapped with the seed script (above).

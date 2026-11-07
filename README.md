@@ -1,6 +1,6 @@
 # PX Swipe Outreach
 
-Swipe-to-send customer outreach for retailers. Each card is a past customer: their spend, what they last bought, and an AI-suggested win-back message. **Swipe right (or tap Send)** to send the message by SMS or email. **Swipe left (or tap Skip)** to move to the next customer.
+Swipe-to-send customer outreach for a smoke shop (vape, CBD, glass, papers, cigars, hookah, accessories; customers are 21+). Each card is a past customer: their spend, buying patterns, segment (loyal / at risk / lapsed), what they last bought, and an AI-suggested message built around the best deal of the week, which you can edit. **Swipe right (or tap Send)** to send the message by SMS or email. **Swipe left (or tap Skip)** to move to the next customer.
 
 | Project | Stack | Port |
 | --- | --- | --- |
@@ -18,6 +18,14 @@ npm run dev           # backend on :3000 and frontend on :5173 together
 
 Then open http://localhost:5173. With no Supabase config this runs in **demo mode** (no login, in-memory data).
 
+The ☰ menu in the header links to:
+
+* the **Outreach deck**, with the weekly **Deals this week** panel beside it
+* **Replies**, with an unread badge
+* the **Opt-out list**
+* **Team**
+* **Settings**: signatures, default channel, max discount and promotions
+
 ## Production setup
 
 Production uses **Supabase** for auth (email + password, magic links) and Postgres, with multi-tenant orgs and RLS on every table.
@@ -25,6 +33,7 @@ Production uses **Supabase** for auth (email + password, magic links) and Postgr
 * [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md): create the project, apply migrations, configure auth, and create the first org.
 * [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): Docker images, the production checklist, and compose.
 * [docs/SECURITY.md](docs/SECURITY.md): secrets, auth, tenancy/RLS, opt-out and HTTP hardening.
+* [docs/OUTREACH_FEATURES.md](docs/OUTREACH_FEATURES.md): promotions model, settings, compliance, per-channel opt-outs (Twilio STOP webhook, email unsubscribe), and the Replies inbox.
 
 CI (`.github/workflows/ci.yml`) runs lint, typecheck, tests and build for both projects, RLS integration tests against Postgres, and Docker builds.
 
@@ -78,8 +87,16 @@ See each project's README for its env vars, API reference and internals.
 These pieces are still stubbed:
 
 * **POS integration.** Replace the seed data with a sync from Shopify, Square, Lightspeed or Clover into the Postgres schema.
-* **Real delivery.** Add `MessageProvider`s for Twilio (SMS) and SendGrid or Postmark (email). This also needs opt-out (STOP) handling, quiet hours and per-customer frequency caps.
-* **Team management.** Done: invites, roles and removal at `/team` (see [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md#team-invitations)). Still to do: org creation/self-serve onboarding and ownership-transfer UX.
-* **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. Prompt tuning, brand voice and evals still need work.
+* **Real delivery.** Add `MessageProvider`s for Twilio (SMS) and SendGrid or Postmark (email). Inbound STOP/HELP, unsubscribe links and reply threading are done (see [docs/OUTREACH_FEATURES.md](docs/OUTREACH_FEATURES.md)). Still to do: quiet hours and per-customer frequency caps.
+* **Onboarding.** Org creation/self-serve onboarding and ownership-transfer UX.
+* **Live replies.** Replace 15 s polling with Supabase Realtime or SSE.
+* **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. It uses brand voice, a JSON schema, compliance guardrails with a validator, regeneration and a rules fallback. `npm run eval` runs the eval suite. See [docs/AI_SUGGESTIONS.md](docs/AI_SUGGESTIONS.md).
 * **Analytics.** Track send → redeem → revenue attribution.
-* **Inbound STOP handling.** Wire provider webhooks into `suppressions`.
+
+## Real email and SMS
+
+`npm run dev` prints messages to the API log (`EMAIL_PROVIDER=log`, `SMS_PROVIDER=log`). Put SMTP and Twilio settings in `retail-outreach-backend/.env.local`, then run `npm run dev:live` to send for real. Step by step: [docs/LOCAL_DELIVERY_TESTING.md](docs/LOCAL_DELIVERY_TESTING.md).
+
+## Demo data vs Supabase
+
+`npm run dev` runs on in-memory demo data with a demo user. `npm run dev:supabase` uses your Supabase project behind its login page (invite-only; users not on a Team list are refused). The header badge shows which one you're on. See [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md#switching-between-demo-data-and-supabase).

@@ -9,6 +9,13 @@ services:
     ports: ["5432:5432"]
     volumes: [outreach_pg:/var/lib/postgresql/data]
     healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres"], interval: 5s, retries: 10 }
+  # OPTIONAL free, open-source local mail catcher (MIT): SMTP 1025, UI http://localhost:8025.
+  #   docker compose --profile mail up -d mailpit   then EMAIL_PROVIDER=smtp SMTP_HOST=mailpit SMTP_PORT=1025
+  mailpit:
+    image: axllent/mailpit:v1.33
+    profiles: [mail]
+    ports: ["8025:8025", "1025:1025"]
+    environment: { MP_SMTP_AUTH_ACCEPT_ANY: "1", MP_SMTP_AUTH_ALLOW_INSECURE: "1" }
   redis:
     image: redis:7-alpine
     ports: ["6379:6379"]
@@ -33,6 +40,22 @@ services:
       REDIS_URL: redis://redis:6379
       CORS_ORIGIN: http://localhost:8080
       TRUST_PROXY: "true"
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3000}
+      UNSUBSCRIBE_SIGNING_SECRET: ${UNSUBSCRIBE_SIGNING_SECRET:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      INBOUND_EMAIL_DOMAIN: ${INBOUND_EMAIL_DOMAIN:-}
+      INBOUND_EMAIL_SECRET: ${INBOUND_EMAIL_SECRET:-}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}    # log = print only; smtp = real email (SMTP_*)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-Cloud 9 Smoke Shop <deals@cloud9.test>}
+      SMS_PROVIDER: ${SMS_PROVIDER:-log}      # log = print only; twilio = real SMS (TWILIO_*)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      TWILIO_MESSAGING_SERVICE_SID: ${TWILIO_MESSAGING_SERVICE_SID:-}
     ports: ["3000:3000"]
     depends_on: { postgres: { condition: service_healthy }, redis: { condition: service_started } }
   worker:
@@ -44,6 +67,21 @@ services:
       DATABASE_URL: "postgres://postgres:postgres@postgres:5432/outreach"
       DELIVERY_MODE: queue
       REDIS_URL: redis://redis:6379
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:3000}
+      UNSUBSCRIBE_SIGNING_SECRET: ${UNSUBSCRIBE_SIGNING_SECRET:-}
+      INBOUND_EMAIL_DOMAIN: ${INBOUND_EMAIL_DOMAIN:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-log}    # log = print only; smtp = real email (SMTP_*)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-Cloud 9 Smoke Shop <deals@cloud9.test>}
+      SMS_PROVIDER: ${SMS_PROVIDER:-log}      # log = print only; twilio = real SMS (TWILIO_*)
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_FROM_NUMBER: ${TWILIO_FROM_NUMBER:-}
+      TWILIO_MESSAGING_SERVICE_SID: ${TWILIO_MESSAGING_SERVICE_SID:-}
     depends_on: [api]
   web:
     build:

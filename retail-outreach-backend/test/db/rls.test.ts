@@ -116,7 +116,9 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     expect(ms).toEqual([{ orgId: ORG_A, orgName: "Org A", businessName: "Shop A", role: "owner" }]);
     const q = await store.listQueue({ userId: ALICE, orgId: ORG_A }, 5);
     expect(q.total).toBe(20);
-    expect(q.items[0].customer).toMatchObject({ firstName: "Sarah", storesShopped: expect.arrayContaining(["Downtown"]), suppressed: [] });
+    expect(q.items[0].customer).toMatchObject({ firstName: "Sarah", storesShopped: expect.arrayContaining(["Main St"]), suppressed: [], ageVerified: true,
+      profile: { favoriteCategories: ["cbd"], visitsPerMonth: 1, avgBasketCents: 9800, preferredDay: 0, preferredTime: "evening" } });
+    expect(q.items[0].customer.purchases[0]).toMatchObject({ brand: "Charlotte's Web", category: "cbd" });
     expect(q.items[0].customer.purchases.length).toBe(3);
     // Bob passing Org A's id still gets nothing: RLS, not just the WHERE clause, protects it.
     const leak = await store.listQueue({ userId: BOB, orgId: ORG_A }, 5);
@@ -156,9 +158,8 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     // Even a direct insert (bypassing the app checks) is refused by the trigger.
     await expect(admin.query(`insert into public.message_deliveries (org_id, opportunity_id, channel, recipient, message, idempotency_key)
       values ($1, $2, 'sms', '+15555550003', 'hi', 'direct-insert-1')`, [ORG_A, id])).rejects.toThrow(/recipient_suppressed/);
-    // Only admins can remove a suppression.
-    const staffDel = await asUser(STAFF, `delete from public.suppressions where org_id = $1`, [ORG_A]);
-    expect(staffDel.rowCount).toBe(0);
+    // Nobody signed in (staff, admin or owner) can remove a suppression; only the customer's own action does.
+    await expect(asUser(STAFF, `delete from public.suppressions where org_id = $1`, [ORG_A])).rejects.toThrow(/permission denied/);
   });
 
   it("demo reset requires owner/admin", async () => {
@@ -272,6 +273,214 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       await admin.query(`delete from public.organizations where id = $1`, [ORG_C]);
       expect((await admin.query(`select 1 from public.memberships where org_id = $1`, [ORG_C])).rowCount).toBe(0);
       expect((await admin.query(`select 1 from public.invitations where org_id = $1`, [ORG_C])).rowCount).toBe(0);
+    });
+  });
+  describe("promotions & settings", () => {
+    const A = { userId: ALICE, orgId: ORG_A };
+    const input = { schedule: "weekly" as const, days: [4, 5], title: "Weekend glass", description: "", discountType: "percent" as const, discountValue: 10,
+      categories: ["glass"], productIds: [] as string[], startsOn: "2026-11-01", endsOn: null, active: true };
+
+    it("seeds promotions and settings; product ids map to the org's catalog", async () => {
+      const deals = await store.listDeals(A);
+      expect(deals.map(d => d.title)).toEqual(expect.arrayContaining(["Mellow Monday", "Cigar Friday"]));
+      const thursday = deals.find(d => d.title === "Throwback Thursday")!;
+      const catalog = await store.listCatalog(A);
+      expect(thursday.productIds.map(id => catalog.find(p => p.id === id)?.brand).sort()).toEqual(["Elf Bar", "Geek Bar"]);
+      expect(await store.getSettings(A)).toMatchObject({ storeName: "Cloud 9 Smoke Shop", smsSignature: "-Cloud 9" });
+    });
+
+    it("date-range promotions round-trip and the DB enforces their dates", async () => {
+      const r = await store.createDeal(A, { ...input, schedule: "range", days: [0, 1, 2, 3, 4, 5, 6], startsOn: "2026-11-20", endsOn: "2026-12-31" });
+      expect(r).toMatchObject({ schedule: "range", days: [0, 1, 2, 3, 4, 5, 6], startsOn: "2026-11-20", endsOn: "2026-12-31" });
+      await expect(admin.query(`update public.deals set ends_on = null where id = $1`, [r.id])).rejects.toThrow(/deals_range_dates_check/);
+      await expect(admin.query(`update public.deals set schedule = 'monthly' where id = $1`, [r.id])).rejects.toThrow(/deals_schedule_check/);
+      expect((await store.listDeals(A)).some(d => d.id === r.id && d.schedule === "range")).toBe(true);
+      await store.deleteDeal(A, r.id);
+    });
+
+    it("owner CRUD round-trips; other orgs and staff are blocked by RLS", async () => {
+      const d = await store.createDeal(A, input);
+      expect(d).toMatchObject({ days: [4, 5], startsOn: "2026-11-01", endsOn: null, active: true });
+      expect((await store.updateDeal(A, d.id, { ...input, active: false })).active).toBe(false);
+      await expect(store.updateDeal({ userId: BOB, orgId: ORG_B }, d.id, input)).rejects.toMatchObject({ code: "not_found" });
+      expect((await asUser(BOB, `select * from public.deals where org_id = $1`, [ORG_A])).rowCount).toBe(0);
+      expect((await asUser(STAFF, `update public.deals set active = true where id = $1`, [d.id])).rowCount).toBe(0);
+      await expect(asUser(STAFF, `insert into public.deals (org_id, days, title, discount_type, discount_value) values ($1, '{1}', 'x', 'percent', 5)`, [ORG_A]))
+        .rejects.toThrow(/row-level security/);
+      await expect(asUser(ALICE, `insert into public.deals (org_id, days, title, discount_type, discount_value) values ($1, '{9}', 'x', 'percent', 5)`, [ORG_A]))
+        .rejects.toThrow(/check constraint/);
+      await store.deleteDeal(A, d.id);
+      await expect(store.deleteDeal(A, d.id)).rejects.toMatchObject({ code: "not_found" });
+    });
+
+    it("settings upsert is owner/admin only and readable by members", async () => {
+      const next = { storeName: "Shop A+", emailSignature: "A\nB", smsSignature: "-A", defaultChannel: "email" as const, maxDiscountPercent: 15, aiModel: "gpt-5-mini",
+        brandVoice: { preset: "premium" as const, emoji: true, signOff: "Cheers", about: "Lounge" } };
+      expect(await store.updateSettings(A, next)).toEqual(next);
+      await expect(asUser(ALICE, `update public.org_settings set brand_voice = '{"preset":"edgy"}' where org_id = $1`, [ORG_A])).rejects.toThrow(/check constraint/);
+      expect((await asUser(STAFF, `select store_name from public.org_settings where org_id = $1`, [ORG_A])).rows[0].store_name).toBe("Shop A+");
+      expect((await asUser(STAFF, `update public.org_settings set store_name = 'X' where org_id = $1`, [ORG_A])).rowCount).toBe(0);
+      expect((await asUser(BOB, `select 1 from public.org_settings where org_id = $1`, [ORG_A])).rowCount).toBe(0);
+      await expect(asUser(ALICE, `update public.org_settings set sms_signature = 'a' || chr(10) || 'b' where org_id = $1`, [ORG_A])).rejects.toThrow(/check constraint/);
+    });
+
+    it("suggestion drafts record the deal used", async () => {
+      const id = opp(ORG_A, "cust_0002");
+      const deal = (await store.listDeals(A)).find(d => d.title === "Cigar Friday")!;
+      await store.saveSuggestion(A, id, { title: "t", reasoning: "r", channel: "sms", message: "m", subject: null, source: "rules", model: "rules",
+        deal: { id: deal.id, title: deal.title, day: 4, discountLabel: "20% off" }, reasons: [], segment: "loyal", sendAt: null });
+      const r = await admin.query(`select deal_id from public.outreach_drafts where opportunity_id = $1 order by created_at desc limit 1`, [id]);
+      expect(r.rows[0].deal_id).toBe(deal.id);
+    });
+  });
+  describe("opt-outs & replies", () => {
+    const A = { userId: ALICE, orgId: ORG_A };
+    beforeAll(async () => {
+      // Earlier tests reset/alter suppressions; re-seed (idempotent) to restore the demo opt-outs.
+      await admin.query(`delete from public.suppressions where org_id = $1`, [ORG_A]);
+      const c = await admin.connect();
+      await seedOrg(c, { orgId: ORG_A, name: "Org A", slug: "org-a", businessName: "Shop A", ownerId: ALICE });
+      c.release();
+    });
+    it("seeded per-channel opt-outs are listed with masked contacts, filter, search and paging", async () => {
+      const all = await store.listOptOuts(A, { limit: 10, offset: 0 });
+      expect(all.total).toBe(3);
+      expect(all.items[0]).toMatchObject({ customerName: "Chris Ortiz", channel: "sms", source: "sms_stop", contact: "+15***08" });
+      expect((await store.listOptOuts(A, { channel: "email", limit: 10, offset: 0 })).items.map(i => i.customerName)).toEqual(["Hannah Wright"]);
+      expect((await store.listOptOuts(A, { search: "fisch", limit: 10, offset: 0 })).total).toBe(1);
+      expect((await store.listOptOuts(A, { search: "%", limit: 10, offset: 0 })).total).toBe(0);
+      expect((await store.listOptOuts(A, { limit: 1, offset: 2 })).items).toHaveLength(1);
+      expect((await store.listOptOuts({ userId: BOB, orgId: ORG_A }, { limit: 10, offset: 0 })).total).toBe(0);
+    });
+
+    it("addOptOut/removeOptOut are idempotent, per channel and audited", async () => {
+      expect(await store.addOptOut(ORG_A, "sms", "+1 555 555 0003", "sms_stop")).toEqual({ created: true });
+      expect(await store.addOptOut(ORG_A, "sms", "+15555550003", "sms_stop")).toEqual({ created: false });
+      expect(await store.isSuppressed(ORG_A, "sms", "+15555550003")).toBe(true);
+      expect(await store.isSuppressed(ORG_A, "email", "priya@example.com")).toBe(false);
+      expect(await store.removeOptOut(ORG_A, "sms", "+15555550003", "sms_start")).toEqual({ removed: true });
+      expect(await store.removeOptOut(ORG_A, "sms", "+15555550003", "sms_start")).toEqual({ removed: false });
+      const ev = await admin.query(`select event_type from public.outreach_events where org_id = $1 and event_type in ('opted_out','opted_in')
+        and details->>'source' in ('sms_stop', 'sms_start')`, [ORG_A]);
+      expect(ev.rows.map(r => r.event_type).sort()).toEqual(["opted_in", "opted_out"]);
+      expect((await asUser(ALICE, `update public.suppressions set source = 'bogus'`)).rowCount).toBe(0);
+    });
+
+    it("consent history, re-opt-in requests and their RLS", async () => {
+      await store.addOptOut(ORG_A, "email", "priya@example.com", "email_unsubscribe", { requestId: "req-1" });
+      const sid = (await admin.query(`select id from public.suppressions where org_id = $1 and channel = 'email' and value = 'priya@example.com'`, [ORG_A])).rows[0].id;
+      const entry = (await store.listOptOuts(A, { channel: "email", limit: 100, offset: 0 })).items.find(i => i.id === sid)!;
+      expect(entry.reoptIn).toBeNull();
+      expect((await store.listConsentEvents(A, entry.id))[0]).toMatchObject({ event: "opt_out", source: "email_unsubscribe", requestId: "req-1" });
+      await expect(store.listConsentEvents({ userId: BOB, orgId: ORG_A }, entry.id)).rejects.toBeTruthy();
+      await expect(store.createReoptInRequest({ userId: STAFF, orgId: ORG_A }, entry.id)).rejects.toMatchObject({ code: "forbidden" });
+      const { request, recipient } = await store.createReoptInRequest(A, entry.id, { actorId: ALICE, requestId: "req-2" });
+      expect(recipient).toBe("priya@example.com");
+      await expect(store.createReoptInRequest(A, entry.id)).rejects.toMatchObject({ reason: "reoptin_pending" });
+      expect((await store.listOptOuts(A, { channel: "email", limit: 100, offset: 0 })).items.find(i => i.id === sid)!.reoptIn).toMatchObject({ status: "pending" });
+      // RLS: staff can't create requests or delete opt-outs; nobody can rewrite consent history.
+      await expect(asUser(STAFF, `insert into public.reoptin_requests (org_id, channel, value, requested_by) values ($1, 'email', 'x@y.z', $2)`, [ORG_A, STAFF])).rejects.toThrow();
+      expect((await asUser(ALICE, `delete from public.suppressions where org_id = $1`, [ORG_A]).catch(e => e)).message ?? "").toMatch(/permission denied/);
+      await expect(admin.query(`delete from public.consent_events where org_id = $1`, [ORG_A])).rejects.toThrow(/append-only/);
+      expect((await asUser(BOB, `select * from public.consent_events where org_id = $1`, [ORG_A])).rowCount).toBe(0);
+      expect((await store.getReoptInRequest(request.id))?.status).toBe("pending");
+      expect(await store.confirmReoptIn(request.id, { requestId: "req-3" })).toEqual({ removed: true });
+      expect(await store.confirmReoptIn(request.id)).toEqual({ removed: false });
+      expect((await store.getReoptInRequest(request.id))?.status).toBe("confirmed");
+      const ev = await admin.query(`select event, source, request_id from public.consent_events where org_id = $1 and value = 'priya@example.com' order by created_at`, [ORG_A]);
+      expect(ev.rows.map(r => `${r.event}:${r.source}:${r.request_id}`)).toEqual(["opt_out:email_unsubscribe:req-1", "reoptin_requested:store_request:req-2", "opt_in:reoptin_link:req-3"]);
+    });
+
+    it("threads: seeded, unread, mark read, reply blocked on opt-out, inbound via privileged path only", async () => {
+      const convs = await store.listConversations(A, 50);
+      expect(convs[0]).toMatchObject({ customerName: "Jamal Carter", unreadCount: 1, channel: "sms" });
+      expect(await store.unreadCount(A)).toBe(4);
+      expect(await store.listConversations({ userId: BOB, orgId: ORG_A }, 50)).toEqual([]);
+      const jamal = convs[0];
+      await store.markRead(A, jamal.id);
+      expect(await store.unreadCount(A)).toBe(3);
+      const reply = await store.createReply(A, jamal.id, { body: "Holding 3 for you -Cloud 9", subject: null });
+      expect(reply).toMatchObject({ channel: "sms", recipient: "+15555550002", replyToken: null, message: { status: "sending" } });
+      await store.updateMessageStatus(reply.message.id, "sent", "SM123");
+      const t = (await store.getThread(A, jamal.id))!;
+      expect(t.messages.at(-1)).toMatchObject({ direction: "outbound", status: "sent", sentBy: ALICE });
+      const chris = convs.find(c => c.customerName === "Chris Ortiz")!;
+      await expect(store.createReply(A, chris.id, { body: "x", subject: null })).rejects.toMatchObject({ code: "suppressed" });
+      await expect(asUser(ALICE, `insert into public.messages (org_id, conversation_id, direction, status, body) values ($1,$2,'inbound','received','fake')`, [ORG_A, jamal.id]))
+        .rejects.toThrow(/row-level security/);
+      await store.appendMessage(ORG_A, "sms", "+15555550002", { direction: "inbound", kind: "message", status: "received", body: "thanks!" });
+      expect((await store.listConversations(A, 1))[0]).toMatchObject({ id: jamal.id, unreadCount: 1, lastMessagePreview: "thanks!" });
+    });
+
+    it("email reply tokens resolve to the thread; deck sends are recorded", async () => {
+      const sarah = (await store.listConversations(A, 50)).find(c => c.customerName === "Sarah Mitchell")!;
+      const r = await store.createReply(A, sarah.id, { body: "Hi", subject: "Re: x" });
+      expect(r.replyToken).toMatch(/^[A-Za-z0-9_-]{24}$/);
+      expect(await store.findReplyToken(r.replyToken!)).toEqual({ orgId: ORG_A, channel: "email", contact: "sarah@example.com" });
+      expect(await store.getOutboundMessage(r.message.id)).toMatchObject({ channel: "email" });
+      const id = opp(ORG_A, "cust_0006");
+      const { delivery } = await store.createDelivery(A, id, { channel: "email", recipient: "tyler@example.com", message: "Hi Tyler", subject: "s", idempotencyKey: "deck-key-0001" });
+      expect((await store.getDelivery(delivery.id))!.replyToken).toMatch(/^[A-Za-z0-9_-]{24}$/);
+      await store.updateDelivery(delivery.id, "sent", { providerMessageId: "p1" });
+      const tyler = (await store.listConversations(A, 50)).find(c => c.customerName === "Tyler Nguyen")!;
+      expect((await store.getThread(A, tyler.id))!.messages[0]).toMatchObject({ body: "Hi Tyler", status: "sent" });
+      expect(await store.orgDisplayName(ORG_A)).toBe("Shop A+"); // set by the settings test above
+    });
+  });
+
+  describe("cost & performance metrics", () => {
+    const A = { userId: ALICE, orgId: ORG_A }, S = { userId: STAFF, orgId: ORG_A }, B = { userId: BOB, orgId: ORG_B };
+    it("demo rows are seeded; ai_usage is owner/admin-only; sends/purchases are org-scoped; members can't forge demo rows", async () => {
+      expect((await store.listSends(A, "2000-01-01")).filter(s => s.isDemo).length).toBeGreaterThan(300);
+      expect((await store.listPurchaseRows(A, "2000-01-01")).some(p => p.isDemo && p.category)).toBe(true);
+      expect((await store.listAiUsage(A, "2000-01-01")).length).toBeGreaterThan(300);
+      await expect(store.listAiUsage(S, "2000-01-01")).rejects.toMatchObject({ code: "forbidden" });
+      expect((await asUser(STAFF, `select count(*)::int n from public.ai_usage`)).rows[0].n).toBe(0);
+      expect((await asUser(BOB, `select count(*)::int n from public.outreach_sends where org_id = $1`, [ORG_A])).rows[0].n).toBe(0);
+      await expect(asUser(STAFF, `insert into public.ai_usage (org_id, actor_id, model, provider, price_version, is_demo) values ($1,$2,'x','rules','v',true)`, [ORG_A, STAFF])).rejects.toThrow();
+      await expect(asUser(BOB, `insert into public.ai_usage (org_id, actor_id, model, provider, price_version) values ($1,$2,'x','rules','v')`, [ORG_A, BOB])).rejects.toThrow();
+
+      const opp = (await store.listQueue(S, 50)).items[0];
+      await store.recordAiUsage(S, { opportunityId: opp.id, model: "gpt-4o-mini", provider: "openai", inputTokens: 700, outputTokens: 150, costUsd: 0.000195, priceVersion: "t", dealId: null, dealTitle: "Vape Monday" });
+      expect(await store.markAiUsageSent(S, opp.id, "sms")).toMatchObject({ model: "gpt-4o-mini", dealTitle: "Vape Monday" });
+      await store.recordSend(S, { deliveryId: null, userLabel: "staff", customerId: opp.customer.id, channel: "sms", dealId: null, dealTitle: "Vape Monday", dealCategories: ["vape"], dealProductIds: [], model: "gpt-4o-mini" });
+      const mine = (await store.listSends(A, "2000-01-01")).filter(s => !s.isDemo);
+      expect(mine.at(-1)).toMatchObject({ userId: STAFF, model: "gpt-4o-mini", dealCategories: ["vape"] });
+      expect((await store.listAiUsage(A, "2000-01-01")).at(-1)).toMatchObject({ ledToSend: true, sentChannel: "sms", costUsd: 0.000195 });
+      expect((await store.listSends(B, "2000-01-01")).some(s => s.userId === STAFF)).toBe(false);
+    });
+
+    it("sms_costs: demo Twilio costs seeded; owner/admin read only; written only by the backend; estimate → actual price", async () => {
+      expect((await store.listSmsCosts(A, "2000-01-01")).filter(c => c.isDemo && c.provider === "twilio").length).toBeGreaterThan(100);
+      await expect(store.listSmsCosts(S, "2000-01-01")).rejects.toMatchObject({ code: "forbidden" });
+      expect((await asUser(STAFF, `select count(*)::int n from public.sms_costs`)).rows[0].n).toBe(0);
+      expect((await asUser(BOB, `select count(*)::int n from public.sms_costs where org_id = $1`, [ORG_A])).rows[0].n).toBe(0);
+      await expect(asUser(ALICE, `insert into public.sms_costs (org_id, provider) values ($1,'twilio')`, [ORG_A])).rejects.toThrow();
+      await expect(asUser(ALICE, `update public.sms_costs set price_usd = 0`)).rejects.toThrow();
+      await store.recordSmsCost(ORG_A, { provider: "twilio", messageSid: "SMdbtest000000000001", segments: 2, priceUsd: 0.025, estimated: true });
+      await admin.query(`update public.sms_costs set created_at = now() - interval '10 minutes' where message_sid = 'SMdbtest000000000001'`);
+      expect((await store.listEstimatedSmsCosts({ olderThanIso: new Date().toISOString(), newerThanIso: "2000-01-01", limit: 10 })).map(x => x.messageSid)).toContain("SMdbtest000000000001");
+      expect(await store.updateSmsCost("SMdbtest000000000001", { priceUsd: -0.0236, status: "delivered" })).toBe(true);
+      expect(await store.updateSmsCost("SMnope", { status: "x" })).toBe(false);
+      expect((await store.listSmsCosts(A, "2000-01-01")).find(c => c.messageSid === "SMdbtest000000000001")).toMatchObject({ priceUsd: 0.0236, estimated: false, segments: 2, status: "delivered" });
+    });
+  });
+
+  describe("approval gate", () => {
+    const CAROL = "ca201000-0000-4000-8000-000000000007", DAVE = "da7e0000-0000-4000-8000-000000000008";
+    it("claim_pending_invitations auto-joins a matching unexpired invite (case-insensitive); strangers get nothing", async () => {
+      await admin.query(`insert into auth.users (id, email) values ($1,'Carol@Shop.test'),($2,'dave@shop.test') on conflict do nothing`, [CAROL, DAVE]);
+      await admin.query(`insert into public.invitations (org_id, email, role, token_hash, invited_by, expires_at) values ($1,'carol@shop.test','staff',repeat('c',64),$2, now() + interval '1 day')`, [ORG_A, ALICE]);
+      await admin.query(`insert into public.invitations (org_id, email, role, token_hash, invited_by, created_at, expires_at) values ($1,'dave@shop.test','staff',repeat('d',64),$2, now() - interval '2 days', now() - interval '1 day')`, [ORG_A, ALICE]);
+      expect(await store.claimPendingInvitations({ id: CAROL, email: "CAROL@shop.test" })).toBe(1);
+      expect(await store.listMemberships(CAROL)).toMatchObject([{ orgId: ORG_A, role: "staff" }]);
+      expect(await store.claimPendingInvitations({ id: CAROL, email: "carol@shop.test" })).toBe(0); // idempotent
+      expect(await store.claimPendingInvitations({ id: DAVE, email: "dave@shop.test" })).toBe(0);    // expired
+      expect(await store.listMemberships(DAVE)).toEqual([]);
+      // With no membership, RLS shows nothing: the database itself denies unapproved users.
+      expect((await asUser(DAVE, `select count(*)::int n from public.customers`)).rows[0].n).toBe(0);
+      expect((await asUser(DAVE, `select count(*)::int n from public.invitations`)).rows[0].n).toBe(0);
+      await expect(asUser(DAVE, `select public.claim_pending_invitations()`)).resolves.toBeTruthy();
     });
   });
 });

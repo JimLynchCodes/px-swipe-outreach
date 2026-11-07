@@ -1,7 +1,8 @@
-import { buildApp } from "./app.js";
+import { buildApp, twilioFetcherOf } from "./app.js";
 import { loadConfigOrExit } from "./config.js";
 import { createSuggestionProvider } from "./providers/ai.js";
 import { createMessageProvider } from "./providers/messaging.js";
+import { reconcileSmsCosts } from "./metrics/smsCost.js";
 import { createStore } from "./store/index.js";
 
 const config = loadConfigOrExit();
@@ -10,13 +11,14 @@ const queue = config.DELIVERY_MODE === "queue"
   ? await import("./queue.js").then(m => m.createDeliveryQueue(config.REDIS_URL))
   : null;
 
+const messenger = createMessageProvider(config, { log: line => app.log.info(line) });
 const app = await buildApp({
   config, store,
   suggestions: createSuggestionProvider({
     apiKey: config.OPENAI_API_KEY, model: config.OPENAI_MODEL,
     onError: e => app.log.warn({ err: e }, "AI suggestion failed; using rules fallback")
   }),
-  messenger: createMessageProvider({ sms: config.SMS_PROVIDER, email: config.EMAIL_PROVIDER }, line => app.log.info(line)),
+  messenger,
   enqueueDelivery: queue ? id => queue.enqueue(id) : undefined
 });
 
@@ -48,4 +50,14 @@ try {
   process.exit(1);
 }
 await app.listen({ port: config.PORT, host: config.HOST });
-app.log.info(`Outreach API ready (env=${config.NODE_ENV}, auth=${config.AUTH_MODE}, store=${config.DATA_STORE}, delivery=${config.DELIVERY_MODE}, ai=${config.OPENAI_API_KEY ? "openai" : "rules"})`);
+app.log.info(`Outreach API ready (env=${config.NODE_ENV}, auth=${config.AUTH_MODE}, store=${config.DATA_STORE}, delivery=${config.DELIVERY_MODE}, ai=${config.OPENAI_API_KEY ? "openai" : "rules"}, email=${config.EMAIL_PROVIDER}, sms=${config.SMS_PROVIDER})`);
+
+// Twilio price reconcile: replaces estimated SMS costs with Twilio's actual price (covers missed status callbacks).
+const fetchTwilio = twilioFetcherOf(messenger);
+if (fetchTwilio && config.TWILIO_RECONCILE_MINUTES > 0) {
+  const run = () => reconcileSmsCosts(store, fetchTwilio, { log: app.log })
+    .then(r => { if (r.checked) app.log.info(r, "Twilio price reconcile"); })
+    .catch(e => app.log.warn({ err: e }, "Twilio price reconcile failed"));
+  setInterval(run, config.TWILIO_RECONCILE_MINUTES * 60_000).unref();
+  void run();
+}

@@ -1,9 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
 import type { Session, SupabaseClient } from '@supabase/supabase-js'
-import { api, configureApi, type Membership } from '../api'
+import { api, ApiError, configureApi, type Membership } from '../api'
 import type { AuthConfig } from './supabase'
 
-type Status = 'loading' | 'signedOut' | 'signedIn' | 'error'
+type Status = 'loading' | 'signedOut' | 'signedIn' | 'error' | 'notApproved'
 
 interface AuthState {
   mode: AuthConfig['mode']
@@ -16,6 +16,8 @@ interface AuthState {
   /** Role in the selected org. */
   role: Membership['role'] | null
   client: SupabaseClient | null
+  /** Where data comes from: in-memory demo data or Supabase Postgres. */
+  dataSource: 'demo' | 'supabase' | null
   signOut: () => Promise<void>
   /** Reload identity + memberships (e.g. after accepting an invitation). */
   refresh: () => Promise<Membership[]>
@@ -41,6 +43,7 @@ export function AuthProvider({ config, children }: { config: AuthConfig; childre
   const [memberships, setMemberships] = useState<Membership[]>([])
   const [email, setEmail] = useState<string | null>(null)
   const [orgId, setOrgIdState] = useState<string | null>(null)
+  const [dataSource, setDataSource] = useState<'demo' | 'supabase' | null>(null)
 
   const signOut = useCallback(async () => {
     if (client) await client.auth.signOut().catch(() => {})
@@ -81,15 +84,21 @@ export function AuthProvider({ config, children }: { config: AuthConfig; childre
       if (!alive) return
       setEmail(me.user.email ?? null)
       setMemberships(me.memberships)
+      setDataSource(me.dataStore === 'postgres' ? 'supabase' : 'demo')
       const saved = localStorage.getItem(ORG_KEY)
       const pick = me.memberships.find(m => m.orgId === saved) ?? me.memberships[0]
       setOrgIdState(pick?.orgId ?? null)
       setStatus('signedIn'); setError(null)
     }).catch(e => {
       if (!alive) return
+      // Signed in but not on any Team list: the server says so (403) with the exact message to show.
+      if (e instanceof ApiError && e.code === 'not_approved') {
+        setEmail(session?.user.email ?? null); setError(e.message); setStatus('notApproved'); return
+      }
       setError(e instanceof Error ? e.message : String(e)); setStatus('error')
     })
     return () => { alive = false }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- session email is only read on failure
   }, [userKey, config.mode])
 
   const refresh = useCallback(async () => {
@@ -110,8 +119,8 @@ export function AuthProvider({ config, children }: { config: AuthConfig; childre
 
   const role = memberships.find(m => m.orgId === orgId)?.role ?? null
   const value = useMemo<AuthState>(() => ({
-    mode: config.mode, status, error, email, memberships, orgId, setOrgId, role, client, signOut, refresh,
-  }), [config.mode, status, error, email, memberships, orgId, setOrgId, role, client, signOut, refresh])
+    mode: config.mode, status, error, email, memberships, orgId, setOrgId, role, client, dataSource, signOut, refresh,
+  }), [config.mode, status, error, email, memberships, orgId, setOrgId, role, client, dataSource, signOut, refresh])
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }

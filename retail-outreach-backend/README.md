@@ -52,6 +52,12 @@ In queue mode, `POST /send` returns `202 {status:"queued"}` and the BullMQ worke
 | `npm run db:seed` | `--demo-user` or `--owner-email <email>` |
 | `npm run worker` | BullMQ delivery worker (queue mode only) |
 
+### Metrics
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | `/api/metrics/costs` | owner/admin | YTD AI spend per month × model (see docs/OUTREACH_FEATURES.md) |
+| GET | `/api/metrics/performance?days=7` | members | attributed revenue, promotions, leaderboard; others' revenue owner/admin only |
+
 ## Environment variables
 
 See [`.env.example`](.env.example) for the full annotated list. Empty values count as unset. With `NODE_ENV=production` the server **refuses to boot** unless `AUTH_MODE=supabase`, `DATA_STORE=postgres`, and `CORS_ORIGIN` lists https origins.
@@ -70,12 +76,18 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `RATE_LIMIT_PER_MINUTE` / `SEND_RATE_LIMIT_PER_MINUTE` | `300` / `30` | Per user (or IP when unauthenticated) |
 | `ENABLE_DEMO_RESET` | on outside production | `POST /api/dev/reset` (owner/admin only) |
 | `DELIVERY_MODE` / `REDIS_URL` | `inline` / – | `queue` needs Postgres and Redis |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4.1-mini` | Rules-based suggestions when unset |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4o-mini` | Without a key, OpenAI models are unavailable and rules are used. Each org picks its model in Settings or the header; `OPENAI_MODEL` is only the fallback |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
 | `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
 | `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |
 | `SUPABASE_SERVICE_ROLE_KEY` | – | Required for `INVITE_MAILER=supabase`. Backend secret, only used to send invite emails |
 | `INVITE_TTL_HOURS` / `INVITE_RATE_LIMIT_PER_HOUR` / `INVITE_RESEND_COOLDOWN_SECONDS` | `168` / `30` / `60` | |
+| `PUBLIC_API_URL` | `http://localhost:3000` | Public origin of this API, used in unsubscribe links and Twilio signature checks. Must be `https` in production |
+| `UNSUBSCRIBE_SIGNING_SECRET` | dev default | ≥ 32 chars. HMAC key for unsubscribe links. **Required in production** (the server refuses to boot) |
+| `TWILIO_AUTH_TOKEN` | – | Verifies `X-Twilio-Signature` on `/webhooks/twilio/sms/:orgId`. Without it, the webhook returns 503 in production |
+| `INBOUND_EMAIL_DOMAIN` | – | e.g. `reply.yourstore.com`. Outbound email gets `Reply-To: reply+<token>@` this domain |
+| `INBOUND_EMAIL_SECRET` | – | Shared secret for `/webhooks/email/inbound` (`?key=` or `X-Inbound-Secret`). Returns 503 when unset |
+| `ALLOW_SMS_REOPTIN_REQUEST` | `false` | Allows one "reply START" text to a number that opted out. Off by default for TCPA/CTIA reasons |
 | `LOG_LEVEL` / `SHUTDOWN_TIMEOUT_MS` | `info` / `10000` | |
 
 ## Auth
@@ -115,7 +127,8 @@ In demo mode all `/api/*` routes run as the demo tenant. Errors look like `{ "er
 | `GET /health` | – | `{ok, store, delivery, ai, messaging}` |
 | `GET /api/outreach/queue?limit=20` | – | `{items: Card[], total}`, with actionable cards in queue order (`limit` 1–100) |
 | `GET /api/outreach/:id` | – | `Card` |
-| `POST /api/outreach/:id/suggestion` | `{channel: "sms"\|"email"}` | `{suggestion: {title, reasoning, channel, message, subject, source}}` |
+| `POST /api/outreach/:id/suggestion` | `{channel: "sms"\|"email"}` | `{suggestion: {title, reasoning, channel, message, subject, source, deal, reasons, segment, sendAt}}` |
+| `POST /api/outreach/:id/opt-out` | `{channel: "sms"\|"email"\|"all"}` | Manual opt-out (source `manual`) |
 | `POST /api/outreach/:id/skip` | – | `{ok, status: "skipped"}` |
 | `POST /api/outreach/:id/send` | `{channel, message, subject?, idempotencyKey}` | `200 {deliveryId, status:"sent"}` inline, or `202 {…status:"queued"}` in queue mode. Duplicates add `duplicate:true` |
 | `GET /api/outreach/:id/deliveries` | – | `{deliveries: [...]}`, with recipients masked |
@@ -128,6 +141,23 @@ In demo mode all `/api/*` routes run as the demo tenant. Errors look like `{ "er
 | `DELETE /api/team/invitations/:id` | – | Revokes |
 | `PATCH /api/team/members/:userId` | `{role}` | Changes a role. `409 last_owner` |
 | `DELETE /api/team/members/:userId` | – | Removes a member (or yourself = leave) |
+| `GET /api/deals` / `POST /api/deals` | – / `DealInput` | Promotions (see [docs/OUTREACH_FEATURES.md](../docs/OUTREACH_FEATURES.md)). Writes are owner/admin only |
+| `PUT /api/deals/:id` / `DELETE /api/deals/:id` | `DealInput` / – | `DealInput = {schedule: "weekly"\|"range", days[], title, description, discountType, discountValue, categories[], productIds[], startsOn, endsOn, active}` |
+| `GET /api/catalog` | – | `{products, categories}` for the promotion editor |
+| `GET /api/settings` / `PUT /api/settings` | – / `OrgSettings` | `{storeName, emailSignature, smsSignature, defaultChannel, maxDiscountPercent, aiModel}`. PUT is owner/admin only |
+| `GET /api/opt-outs?channel=&q=&page=&pageSize=` | – | `{items: [{id, channel, contact (masked), customerName, source, createdAt}], total}` |
+| `GET /api/ai/models` | – | `{models: [{id, label, provider, costHint, inputPerM, outputPerM, available, note}], selected, effective, priceTableVersion}` |
+| `GET /api/opt-outs/:id/history` | – | `{events: [{event, channel, source, actorId, requestId, createdAt}]}` consent history |
+| `POST /api/opt-outs/:id/reopt-in` | – | Owner/admin. Sends one re-opt-in request. `409 reoptin_pending`, `429 reoptin_cooldown`, `403 sms_reoptin_disabled` |
+| `POST /resubscribe?t=` / `GET`,`POST /reopt-in?t=` | – | Public, signed, rate-limited, no PII |
+| `GET /api/conversations` | – | Reply threads, most recent first |
+| `GET /api/conversations/unread-count` | – | `{count}` of conversations with unread messages |
+| `GET /api/conversations/:id` | – | `{conversation, messages}` |
+| `POST /api/conversations/:id/read` | – | Marks the thread read |
+| `POST /api/conversations/:id/messages` | `{body, subject?}` | Replies on the thread's channel (adds the signature). `422` if opted out, `502` on provider failure |
+| `POST /webhooks/twilio/sms/:orgId` | Twilio form | Public. STOP/START/HELP handling and inbound storage. Returns TwiML |
+| `GET` / `POST /unsubscribe?t=` | – | Public. Confirm page / one-click opt-out |
+| `POST /webhooks/email/inbound?key=` | Parse payload | Public with a secret. Stores the reply in the matching thread |
 | `GET /api/invitations/preview?token=` | – | Public. `{invitation: {orgName, email, role, status, expiresAt}}` |
 | `POST /api/invitations/accept` | `{token}` | Signed in, no `X-Org-Id` needed. `{orgId, role, alreadyMember}`. `403 email_mismatch`, `410 invitation_expired/revoked/used` |
 
@@ -142,21 +172,38 @@ Status codes:
 
 Validation limits: `message` can be up to 480 characters for SMS and 5000 for email. `idempotencyKey` must be 8–200 characters.
 
-A `Card` looks like this:
+A `Card` looks like this (abridged):
 
 ```json
 {
-  "id": "opp_0001", "status": "pending", "rationale": "No purchase in 68 days",
-  "campaign": {"id": "winback", "type": "win_back", "name": "Win-back"},
-  "offer": {"id": "WINBACK10", "name": "Win-back 10%", "discountPercent": 10, "combinable": true},
+  "id": "opp_0001", "status": "pending", "rationale": "Visits slipping: 58 days since last visit", "segment": "at_risk",
+  "campaign": {"id": "retain", "type": "nurture", "name": "At-risk check-in"},
+  "offer": {"id": "CHECKIN10", "name": "Check-in 10%", "discountPercent": 10, "combinable": true},
   "customer": {
-    "id": "cust_0001", "displayName": "Sarah M.", "firstName": "Sarah", "age": 34, "gender": "Female",
-    "location": "Downtown", "storesShopped": ["Downtown", "Westside"], "lifetimeSpendCents": 86000,
-    "daysSinceLastPurchase": 68, "itemsPurchased": 3,
-    "contact": {"sms": true, "email": true, "preferredChannel": "sms"}
+    "id": "cust_0001", "displayName": "Sarah M.", "firstName": "Sarah", "age": 34, "ageVerified": true,
+    "location": "Main St", "storesShopped": ["Main St", "Eastside"], "lifetimeSpendCents": 57999,
+    "daysSinceLastPurchase": 58, "itemsPurchased": 3,
+    "profile": {"favoriteCategories": ["cbd"], "favoriteBrands": ["Charlotte's Web", "Cornbread Hemp"],
+                "visitsPerMonth": 1, "avgBasketCents": 9800, "preferredDay": 0, "preferredTime": "evening"},
+    "contact": {"sms": true, "email": true, "preferredChannel": "sms", "blockedReason": null}
   },
-  "lastPurchase": {"name": "Leather Tote Bag", "category": "bags", "priceCents": 16000, "imageUrl": null,
-                   "daysAgo": 68, "alsoPurchased": ["Wallet", "Scarf"]}
+  "recentItems": [{"name": "Charlotte's Web CBD Oil 1500mg", "brand": "Charlotte's Web", "category": "cbd", "daysAgo": 58}],
+  "lastPurchase": {"name": "Charlotte's Web CBD Oil 1500mg", "brand": "Charlotte's Web", "category": "cbd", "...": "..."}
+}
+```
+
+And its suggestion:
+
+```json
+{
+  "title": "Bring them in for Mellow Monday (15% off)",
+  "message": "Hi Sarah, it's Cloud 9 Smoke Shop. Haven't seen you in a bit! Monday only: Mellow Monday. 15% off all CBD oils and gummies. 21+ w/ ID. -Cloud 9
+Reply STOP to opt out.",
+  "deal": {"id": "deal_0002", "title": "Mellow Monday", "day": 0, "discountLabel": "15% off"},
+  "reasons": ["At risk: 58 days since last visit vs. usual ~30 ...", "Favorite category: CBD",
+              "Runs Monday, the day they usually shop (evening)", "Uses deal: Mellow Monday (15% off)"],
+  "sendAt": {"dayOfWeek": 0, "time": "morning", "label": "Monday morning"},
+  "segment": "at_risk", "channel": "sms", "subject": null, "source": "rules"
 }
 ```
 
@@ -166,7 +213,7 @@ Quick smoke test:
 curl localhost:3000/api/outreach/queue?limit=1
 curl -XPOST localhost:3000/api/outreach/opp_0001/suggestion -H 'content-type: application/json' -d '{"channel":"sms"}'
 curl -XPOST localhost:3000/api/outreach/opp_0001/send -H 'content-type: application/json' \
-  -d '{"channel":"sms","message":"Hi Sarah!","idempotencyKey":"demo-key-1"}'
+  -d '{"channel":"sms","message":"Hi Sarah! Reply STOP to opt out.","idempotencyKey":"demo-key-1"}'
 ```
 
 ## Testing
@@ -181,6 +228,8 @@ curl -XPOST localhost:3000/api/outreach/opp_0001/send -H 'content-type: applicat
 * Metrics and dev reset.
 * The rules provider for every seeded campaign, and the OpenAI → rules fallback.
 * Domain helpers.
+
+`test/deals.test.ts` covers promotions CRUD and validation, settings, signatures, the recommender and compliance. `test/optout.test.ts` covers Twilio signatures and keywords, TwiML, per-channel suppression, unsubscribe tokens, GET/POST pages, List-Unsubscribe headers, idempotency and the opt-out list. `test/replies.test.ts` covers threads, unread counts, replies (signature, opted-out 422, provider failure), deck sends recorded into threads, and inbound email matching, secret and spoofing checks.
 
 Auth (JWKS/HS256 verification, issuer/audience/role checks, org resolution), hardening (CORS, headers, request IDs, rate limits, validation, error shape, log redaction) and opt-out enforcement are covered in `test/auth.test.ts` and `test/hardening.test.ts`.
 

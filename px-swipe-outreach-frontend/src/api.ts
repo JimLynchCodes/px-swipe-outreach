@@ -1,4 +1,7 @@
-import type { Channel, OutreachCard, SendResult, Suggestion } from './types'
+import type { CostReport, PerformanceReport,
+  AiModelOption, CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
+  SendResult, Suggestion,
+} from './types'
 
 const BASE = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
 
@@ -65,7 +68,7 @@ function safeJson(text: string): unknown {
 }
 
 export const api = {
-  me: () => request<{ user: { id: string; email: string | null }; memberships: Membership[]; authMode: string }>('/api/me'),
+  me: () => request<{ user: { id: string; email: string | null }; memberships: Membership[]; authMode: string; dataStore?: 'memory' | 'postgres' }>('/api/me'),
   optOut: (id: string, channel: Channel | 'all' = 'all') =>
     request<{ ok: true }>(`/api/outreach/${encodeURIComponent(id)}/opt-out`, { method: 'POST', body: JSON.stringify({ channel }) }),
   queue: (limit = 50) => request<{ items: OutreachCard[]; total: number }>(`/api/outreach/queue?limit=${limit}`),
@@ -96,6 +99,42 @@ export const api = {
       request<{ ok: true; orgId: string; role: Role; alreadyMember: boolean; memberships: Membership[] }>('/api/invitations/accept', {
         method: 'POST', body: JSON.stringify({ token }), noOrg: true,
       }),
+  },
+  deals: {
+    list: () => request<{ deals: Deal[] }>('/api/deals').then(r => r.deals),
+    create: (d: DealInput) => request<{ deal: Deal }>('/api/deals', { method: 'POST', body: JSON.stringify(d) }).then(r => r.deal),
+    update: (id: string, d: DealInput) =>
+      request<{ deal: Deal }>(`/api/deals/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(d) }).then(r => r.deal),
+    remove: (id: string) => request<{ ok: true }>(`/api/deals/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  },
+  catalog: () => request<{ products: CatalogProduct[]; categories: string[] }>('/api/catalog'),
+  settings: {
+    get: () => request<{ settings: OrgSettings }>('/api/settings').then(r => r.settings),
+    save: (s: OrgSettings) => request<{ settings: OrgSettings }>('/api/settings', { method: 'PUT', body: JSON.stringify(s) }).then(r => r.settings),
+  },
+  optOuts: (q: { channel?: Channel; q?: string; page: number; pageSize: number }) => {
+    const p = new URLSearchParams({ page: String(q.page), pageSize: String(q.pageSize) })
+    if (q.channel) p.set('channel', q.channel)
+    if (q.q) p.set('q', q.q)
+    return request<{ items: OptOutEntry[]; total: number; page: number; pageSize: number }>(`/api/opt-outs?${p}`)
+  },
+  optOutHistory: (id: string) => request<{ events: ConsentEvent[] }>(`/api/opt-outs/${encodeURIComponent(id)}/history`).then(r => r.events),
+  requestReoptIn: (id: string) =>
+    request<{ ok: true; channel: Channel; status: string; requestedAt: string; expiresAt: string }>(`/api/opt-outs/${encodeURIComponent(id)}/reopt-in`, { method: 'POST' }),
+  replies: {
+    list: () => request<{ conversations: ConversationSummary[] }>('/api/conversations').then(r => r.conversations),
+    unread: () => request<{ count: number }>('/api/conversations/unread-count').then(r => r.count),
+    thread: (id: string) => request<{ conversation: ConversationSummary; messages: ConversationMessage[] }>(`/api/conversations/${encodeURIComponent(id)}`),
+    markRead: (id: string) => request<{ ok: true }>(`/api/conversations/${encodeURIComponent(id)}/read`, { method: 'POST' }),
+    send: (id: string, body: string, subject?: string | null) =>
+      request<{ message: ConversationMessage }>(`/api/conversations/${encodeURIComponent(id)}/messages`, {
+        method: 'POST', body: JSON.stringify({ body, ...(subject ? { subject } : {}) }),
+      }).then(r => r.message),
+  },
+  aiModels: () => request<{ models: AiModelOption[]; selected: string; effective: string; priceTableVersion: string }>('/api/ai/models'),
+  metrics: {
+    costs: () => request<CostReport>('/api/metrics/costs'),
+    performance: (days?: number) => request<PerformanceReport>(`/api/metrics/performance${days ? `?days=${days}` : ''}`),
   },
   resetDemo: () => request<{ ok: true }>('/api/dev/reset', { method: 'POST' }),
 }

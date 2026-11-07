@@ -1,12 +1,15 @@
 import type pg from "pg";
 import { createPool, type PoolOptions } from "../db/pool.js";
-import { ACTIONABLE_STATUSES } from "../domain.js";
+import { ACTIONABLE_STATUSES, maskRecipient } from "../domain.js";
+import { newReplyToken } from "../replies/tokens.js";
 import type {
-  Actor, Channel, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
+  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
   Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
-import { assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
-import { StoreError, TEAM_ERRORS, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
+import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
+import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCostInput, SmsCostRow } from "../metrics/types.js";
+import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
+import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 const INVITE_COLS = `id, org_id, email, role, invited_by, created_at, expires_at, last_sent_at, send_count, accepted_at, revoked_at`;
 function toInvitation(r: any): Invitation {
@@ -34,6 +37,8 @@ const OPP_SELECT = `
     f.code as offer_code, f.name as offer_name, f.discount_percent, f.combinable,
     cu.id as customer_id, cu.first_name, cu.last_name, cu.age, cu.gender, cu.location,
     cu.phone, cu.email, cu.sms_consent, cu.email_consent, cu.lifetime_spend_cents, cu.last_purchase_at,
+    cu.age_verified, cu.favorite_categories, cu.favorite_brands, cu.visits_per_month, cu.avg_basket_cents,
+    cu.preferred_day, cu.preferred_time,
     array(select ch::text from unnest(array['sms','email']::public.outreach_channel[]) ch
       where exists (select 1 from public.suppressions s where s.org_id = o.org_id and s.channel = ch
         and s.value = public.normalize_contact(ch, case when ch = 'sms' then cu.phone else cu.email end))
@@ -54,6 +59,80 @@ function toDelivery(r: any): Delivery {
 }
 
 type Db = pg.PoolClient;
+
+const CONV_SELECT = `
+  select c.id, c.channel, c.customer_id, c.contact_value, c.unread_count, c.last_message_at,
+    nullif(btrim(coalesce(cu.first_name, '') || ' ' || coalesce(cu.last_name, '')), '') as customer_name,
+    lm.body as last_body, lm.direction as last_direction,
+    exists (select 1 from public.suppressions s where s.org_id = c.org_id and s.channel = c.channel and s.value = c.contact_value) as opted_out
+  from public.conversations c
+  left join public.customers cu on cu.org_id = c.org_id and cu.id = c.customer_id
+  left join lateral (select body, direction from public.messages m where m.org_id = c.org_id and m.conversation_id = c.id
+    order by created_at desc, id desc limit 1) lm on true`;
+function toConversation(r: any): ConversationSummary {
+  return {
+    id: r.id, channel: r.channel, customerId: r.customer_id, customerName: r.customer_name, contact: maskRecipient(r.contact_value),
+    lastMessageAt: new Date(r.last_message_at).toISOString(), lastMessagePreview: String(r.last_body ?? "").replace(/\s+/g, " ").slice(0, 140),
+    lastDirection: r.last_direction ?? "outbound", unreadCount: r.unread_count, optedOut: r.opted_out
+  };
+}
+function toMessage(r: any): ConversationMessage {
+  return { id: r.id, conversationId: r.conversation_id, direction: r.direction, kind: r.kind, status: r.status, body: r.body,
+    subject: r.subject, sentBy: r.sent_by, createdAt: new Date(r.created_at).toISOString() };
+}
+
+/** Appends to the (org, channel, contact) thread inside an existing transaction. */
+export async function appendTx(db: Db, orgId: string, channel: Channel, contact: string, m: NewMessage) {
+  const c = await db.query(`
+    with v as (select public.normalize_contact($2::public.outreach_channel, $3) as value)
+    insert into public.conversations (org_id, channel, contact_value, customer_id)
+    select $1, $2, v.value, (select cu.id from public.customers cu where cu.org_id = $1
+        and public.normalize_contact($2::public.outreach_channel, case when $2 = 'sms' then cu.phone else cu.email end) = v.value limit 1)
+    from v where v.value is not null
+    on conflict (org_id, channel, contact_value) do update set channel = excluded.channel
+    returning id`, [orgId, channel, contact]);
+  if (!c.rows[0]) throw new StoreError("not_found", "Invalid contact");
+  const conversationId = c.rows[0].id as string;
+  const replyToken = m.direction === "outbound" && channel === "email" ? newReplyToken() : null;
+  const at = m.createdAt ?? new Date();
+  const r = await db.query(`insert into public.messages (org_id, conversation_id, direction, kind, status, body, subject, sent_by,
+      delivery_id, reply_token, provider_message_id, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id`,
+    [orgId, conversationId, m.direction, m.kind, m.status, m.body, m.subject ?? null, m.sentBy ?? null, m.deliveryId ?? null,
+      replyToken, m.providerMessageId ?? null, at]);
+  await db.query(`update public.conversations set last_message_at = greatest(last_message_at, $3),
+      unread_count = unread_count + $4 where org_id = $1 and id = $2`, [orgId, conversationId, at, m.direction === "inbound" ? 1 : 0]);
+  return { conversationId, messageId: r.rows[0].id as string, replyToken };
+}
+
+async function consentTx(db: Db, orgId: string, channel: Channel, value: string, event: ConsentEvent["event"], source: ConsentEvent["source"], meta: ConsentMeta = {}) {
+  await db.query(`insert into public.consent_events (org_id, channel, value, event, source, actor_id, request_id) values ($1,$2,$3,$4,$5,$6,$7)`,
+    [orgId, channel, value, event, source, meta.actorId ?? null, meta.requestId?.slice(0, 100) ?? null]);
+}
+const REOPT_LATEST = `(select row_to_json(x) from (select r.status, r.created_at, r.expires_at from public.reoptin_requests r
+  where r.org_id = s.org_id and r.channel = s.channel and r.value = s.value and r.status <> 'cancelled' order by r.created_at desc limit 1) x)`;
+function toReopt(j: any): OptOutEntry["reoptIn"] {
+  if (!j) return null;
+  const createdAt = new Date(j.created_at).toISOString(), expiresAt = new Date(j.expires_at).toISOString();
+  const status = j.status === "pending" && Date.parse(expiresAt) <= Date.now() ? "expired" : j.status;
+  return { status, requestedAt: createdAt, expiresAt, nextAllowedAt: new Date(Date.parse(createdAt) + REOPTIN_COOLDOWN_DAYS * 86_400_000).toISOString() };
+}
+const isoDay = (v: Date | string | null) => v === null ? null : typeof v === "string" ? v.slice(0, 10)
+  : `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
+function toDeal(r: any): Deal {
+  return {
+    id: r.id, orgId: r.org_id, schedule: r.schedule ?? "weekly", days: r.days.map(Number), title: r.title, description: r.description,
+    discountType: r.discount_type, discountValue: r.discount_value, categories: r.categories, productIds: r.product_ids,
+    startsOn: isoDay(r.starts_on), endsOn: isoDay(r.ends_on), active: r.active,
+    createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString()
+  };
+}
+const dealParams = (d: DealInput) => [d.days, d.title, d.description, d.discountType, d.discountValue, d.categories,
+  d.productIds, d.startsOn, d.endsOn, d.active, d.schedule];
+function toSettings(r: any): OrgSettings {
+  return { storeName: r.store_name, emailSignature: r.email_signature, smsSignature: r.sms_signature,
+    defaultChannel: r.default_channel, maxDiscountPercent: r.max_discount_percent, aiModel: r.ai_model ?? DEFAULT_SETTINGS.aiModel,
+    brandVoice: { ...DEFAULT_SETTINGS.brandVoice, ...(r.brand_voice ?? {}) } };
+}
 
 export class PostgresStore implements OutreachStore {
   readonly kind = "postgres" as const;
@@ -94,11 +173,11 @@ export class PostgresStore implements OutreachStore {
   private async hydrate(db: Db, rows: any[]): Promise<Opportunity[]> {
     if (!rows.length) return [];
     const items = await db.query<any>(`
-      select p.customer_id, pi.product_id, pi.product_name, pi.unit_price_cents, pr.category, pr.image_url, p.purchased_at
+      select p.customer_id, pi.product_id, pi.product_name, pi.unit_price_cents, pr.category, pr.brand, pr.image_url, p.purchased_at
       from public.purchases p
       join public.purchase_items pi on pi.org_id = p.org_id and pi.purchase_id = p.id
       left join public.products pr on pr.org_id = pi.org_id and pr.id = pi.product_id
-      where p.org_id = $1 and p.customer_id = any($2::uuid[])
+      where p.org_id = $1 and p.customer_id = any($2::uuid[]) and not p.is_demo -- demo metrics purchases stay out of the deck
       order by p.purchased_at desc`, [rows[0].org_id, rows.map(r => r.customer_id)]);
     const stores = await db.query<any>(`
       select p.customer_id, s.name, max(p.purchased_at) as last_at
@@ -107,7 +186,7 @@ export class PostgresStore implements OutreachStore {
       group by p.customer_id, s.name order by last_at desc`, [rows[0].org_id, rows.map(r => r.customer_id)]);
     return rows.map(r => {
       const purchases = items.rows.filter(i => i.customer_id === r.customer_id).map(i => ({
-        productId: i.product_id, name: i.product_name, category: i.category, priceCents: i.unit_price_cents,
+        productId: i.product_id, name: i.product_name, category: i.category, brand: i.brand, priceCents: i.unit_price_cents,
         imageUrl: i.image_url, purchasedAt: new Date(i.purchased_at).toISOString()
       }));
       return {
@@ -121,7 +200,13 @@ export class PostgresStore implements OutreachStore {
           suppressed: r.suppressed as Channel[],
           lifetimeSpendCents: Number(r.lifetime_spend_cents),
           lastPurchaseAt: r.last_purchase_at ? new Date(r.last_purchase_at).toISOString() : null,
-          itemsPurchased: purchases.length, purchases
+          itemsPurchased: purchases.length, purchases,
+          ageVerified: r.age_verified,
+          profile: {
+            favoriteCategories: r.favorite_categories, favoriteBrands: r.favorite_brands,
+            visitsPerMonth: Number(r.visits_per_month), avgBasketCents: r.avg_basket_cents,
+            preferredDay: r.preferred_day, preferredTime: r.preferred_time
+          }
         }
       };
     });
@@ -182,13 +267,14 @@ export class PostgresStore implements OutreachStore {
     await this.asUser(actor.userId, async db => {
       const o = await this.findOpp(db, actor, id, true);
       if (!o) throw new StoreError("not_found", "Opportunity not found");
-      await db.query(`insert into public.outreach_drafts (org_id, opportunity_id, channel, title, message, subject, rationale, source, created_by)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`, [actor.orgId, id, s.channel, s.title, s.message, s.subject, s.reasoning, s.source, actor.userId]);
+      await db.query(`insert into public.outreach_drafts (org_id, opportunity_id, channel, title, message, subject, rationale, source, created_by, deal_id)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [actor.orgId, id, s.channel, s.title, s.message, s.subject, s.reasoning, s.source, actor.userId,
+        s.deal && isUuid(s.deal.id) ? s.deal.id : null]);
       if (o.status === "pending") {
         await db.query(`update public.outreach_opportunities set status = 'drafted', updated_by = $3 where org_id = $1 and id = $2`,
           [actor.orgId, id, actor.userId]);
       }
-      await this.event(db, actor, actor.orgId, id, "draft_generated", { channel: s.channel, source: s.source });
+      await this.event(db, actor, actor.orgId, id, "draft_generated", { channel: s.channel, source: s.source, dealId: s.deal?.id ?? null });
     });
   }
 
@@ -208,8 +294,11 @@ export class PostgresStore implements OutreachStore {
           [actor.orgId, opportunityId, d.channel, d.recipient, d.message, d.subject, d.idempotencyKey, actor.userId]);
         await db.query(`update public.outreach_opportunities set status = 'queued', updated_by = $3 where org_id = $1 and id = $2`,
           [actor.orgId, opportunityId, actor.userId]);
+        const msg = await appendTx(db, actor.orgId, d.channel, d.recipient, {
+          direction: "outbound", kind: "message", status: "queued", body: d.message, subject: d.subject, sentBy: actor.userId, deliveryId: r.rows[0].id
+        });
         await this.event(db, actor, actor.orgId, opportunityId, "send_queued", { deliveryId: r.rows[0].id, channel: d.channel });
-        return { delivery: toDelivery(r.rows[0]), duplicate: false };
+        return { delivery: { ...toDelivery(r.rows[0]), replyToken: msg.replyToken }, duplicate: false };
       });
     } catch (e: any) {
       if (e?.code === "P0001" && e?.message === "recipient_suppressed") {
@@ -234,16 +323,17 @@ export class PostgresStore implements OutreachStore {
     });
   }
 
-  async optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason) {
+  async optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason, meta: ConsentMeta = {}) {
     await this.asUser(actor.userId, async db => {
       const o = await this.findOpp(db, actor, opportunityId, true);
       if (!o) throw new StoreError("not_found", "Opportunity not found");
       for (const ch of channels) {
-        await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id, created_by)
-          select $1, $2::public.outreach_channel, v, $3, 'staff', $4, $5
+        const added = await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id, created_by)
+          select $1, $2::public.outreach_channel, v, $3, 'manual', $4, $5
           from (select public.normalize_contact($2::public.outreach_channel, $6) as v) x where v is not null
-          on conflict (org_id, channel, value) do nothing`,
+          on conflict (org_id, channel, value) do nothing returning value`,
           [actor.orgId, ch, reason, o.customer.id, actor.userId, ch === "sms" ? o.customer.phone : o.customer.email]);
+        if (added.rows[0]) await consentTx(db, actor.orgId, ch, added.rows[0].value, "opt_out", "manual", { actorId: actor.userId, requestId: meta.requestId });
       }
       if ((ACTIONABLE_STATUSES as readonly string[]).includes(o.status)) {
         await db.query(`update public.outreach_opportunities set status = 'suppressed', updated_by = $3 where org_id = $1 and id = $2`,
@@ -259,6 +349,331 @@ export class PostgresStore implements OutreachStore {
       const d = await db.query(`select status::text, channel::text, count(*)::int as count from public.message_deliveries where org_id = $1 group by status, channel`, [actor.orgId]);
       return { opportunities: o.rows, deliveries: d.rows };
     });
+  }
+
+  private async role(db: Db, actor: Actor) {
+    const r = await db.query(`select role from public.memberships where org_id = $1 and user_id = $2`, [actor.orgId, actor.userId]);
+    return r.rows[0]?.role as MemberRole | undefined;
+  }
+
+  async listDeals(actor: Actor) {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select * from public.deals where org_id = $1 order by schedule desc, (select min(d) from unnest(days) d), starts_on nulls first, created_at`, [actor.orgId]);
+      return r.rows.map(toDeal);
+    });
+  }
+  async createDeal(actor: Actor, d: DealInput) {
+    return this.asUser(actor.userId, async db => {
+      assertCanEditDeals(await this.role(db, actor));
+      const r = await db.query(`insert into public.deals (org_id, days, title, description, discount_type, discount_value, categories,
+          product_ids, starts_on, ends_on, active, schedule, created_by)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning *`, [actor.orgId, ...dealParams(d), actor.userId]);
+      await this.event(db, actor, actor.orgId, null, "deal_created", { dealId: r.rows[0].id });
+      return toDeal(r.rows[0]);
+    }).catch(mapTeamError);
+  }
+  async updateDeal(actor: Actor, id: string, d: DealInput) {
+    if (!isUuid(id)) throw new StoreError("not_found", "Deal not found");
+    return this.asUser(actor.userId, async db => {
+      assertCanEditDeals(await this.role(db, actor));
+      const r = await db.query(`update public.deals set days = $3, title = $4, description = $5, discount_type = $6, discount_value = $7,
+          categories = $8, product_ids = $9, starts_on = $10, ends_on = $11, active = $12, schedule = $13
+        where org_id = $1 and id = $2 returning *`, [actor.orgId, id, ...dealParams(d)]);
+      if (!r.rows[0]) throw new StoreError("not_found", "Deal not found");
+      await this.event(db, actor, actor.orgId, null, "deal_updated", { dealId: id });
+      return toDeal(r.rows[0]);
+    }).catch(mapTeamError);
+  }
+  async deleteDeal(actor: Actor, id: string) {
+    if (!isUuid(id)) throw new StoreError("not_found", "Deal not found");
+    await this.asUser(actor.userId, async db => {
+      assertCanEditDeals(await this.role(db, actor));
+      const r = await db.query(`delete from public.deals where org_id = $1 and id = $2`, [actor.orgId, id]);
+      if (!r.rowCount) throw new StoreError("not_found", "Deal not found");
+      await this.event(db, actor, actor.orgId, null, "deal_deleted", { dealId: id });
+    }).catch(mapTeamError);
+  }
+  async listCatalog(actor: Actor): Promise<CatalogProduct[]> {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select id, name, brand, category, price_cents from public.products where org_id = $1 and in_stock order by category, name`, [actor.orgId]);
+      return r.rows.map(x => ({ id: x.id, name: x.name, brand: x.brand, category: x.category, priceCents: x.price_cents }));
+    });
+  }
+  async getSettings(actor: Actor): Promise<OrgSettings> {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select * from public.org_settings where org_id = $1`, [actor.orgId]);
+      return r.rows[0] ? toSettings(r.rows[0]) : { ...DEFAULT_SETTINGS };
+    });
+  }
+  async updateSettings(actor: Actor, s: OrgSettings): Promise<OrgSettings> {
+    return this.asUser(actor.userId, async db => {
+      assertCanEditDeals(await this.role(db, actor));
+      const r = await db.query(`insert into public.org_settings (org_id, store_name, email_signature, sms_signature, default_channel, max_discount_percent, updated_by, ai_model, brand_voice)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        on conflict (org_id) do update set store_name = excluded.store_name, email_signature = excluded.email_signature,
+          sms_signature = excluded.sms_signature, default_channel = excluded.default_channel,
+          max_discount_percent = excluded.max_discount_percent, updated_by = excluded.updated_by, ai_model = excluded.ai_model, brand_voice = excluded.brand_voice
+        returning *`, [actor.orgId, s.storeName, s.emailSignature, s.smsSignature, s.defaultChannel, s.maxDiscountPercent, actor.userId, s.aiModel, JSON.stringify(s.brandVoice)]);
+      await this.event(db, actor, actor.orgId, null, "settings_updated", {});
+      return toSettings(r.rows[0]);
+    }).catch(mapTeamError);
+  }
+
+  async listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }) {
+    return this.asUser(actor.userId, async db => {
+      const where = `s.org_id = $1 and ($2::public.outreach_channel is null or s.channel = $2)
+        and ($3::text is null or s.value ilike '%' || $3 || '%' or (cu.first_name || ' ' || cu.last_name) ilike '%' || $3 || '%')`;
+      const from = `from public.suppressions s left join lateral (select c.id, c.first_name, c.last_name from public.customers c
+          where c.org_id = s.org_id and (c.id = s.customer_id or (s.customer_id is null and
+            public.normalize_contact(s.channel, case when s.channel = 'sms' then c.phone else c.email end) = s.value)) limit 1) cu on true`;
+      const search = q.search ? q.search.replace(/[\\%_]/g, m => `\\${m}`) : null;
+      const params = [actor.orgId, q.channel ?? null, search];
+      const total = await db.query(`select count(*)::int as n ${from} where ${where}`, params);
+      const r = await db.query(`select s.id, s.channel, s.value, s.reason, s.source, s.created_at, cu.id as customer_id, ${REOPT_LATEST} as reopt,
+          nullif(btrim(coalesce(cu.first_name, '') || ' ' || coalesce(cu.last_name, '')), '') as customer_name
+        ${from} where ${where} order by s.created_at desc, s.id limit $4 offset $5`, [...params, q.limit, q.offset]);
+      const items: OptOutEntry[] = r.rows.map(x => ({ id: x.id, channel: x.channel, contact: maskRecipient(x.value), customerId: x.customer_id,
+        customerName: x.customer_name, source: x.source, reason: x.reason, createdAt: new Date(x.created_at).toISOString(), reoptIn: toReopt(x.reopt) }));
+      return { items, total: total.rows[0].n };
+    });
+  }
+
+  async listConsentEvents(actor: Actor, optOutId: string): Promise<ConsentEvent[]> {
+    if (!isUuid(optOutId)) throw new StoreError("not_found", "Opt-out not found");
+    return this.asUser(actor.userId, async db => {
+      const s = await db.query(`select channel, value from public.suppressions where org_id = $1 and id = $2`, [actor.orgId, optOutId]);
+      if (!s.rows[0]) throw new StoreError("not_found", "Opt-out not found");
+      const r = await db.query(`select id, channel, event, source, actor_id, request_id, created_at from public.consent_events
+        where org_id = $1 and channel = $2 and value = $3 order by created_at desc, id limit 200`, [actor.orgId, s.rows[0].channel, s.rows[0].value]);
+      return r.rows.map(x => ({ id: x.id, channel: x.channel, event: x.event, source: x.source, actorId: x.actor_id, requestId: x.request_id,
+        createdAt: new Date(x.created_at).toISOString() }));
+    });
+  }
+  async createReoptInRequest(actor: Actor, optOutId: string, meta: ConsentMeta = {}, opts: { allowSms?: boolean } = {}) {
+    if (!isUuid(optOutId)) throw new StoreError("not_found", "Opt-out not found");
+    return this.asUser(actor.userId, async db => {
+      assertCanManageConsent(await this.role(db, actor));
+      const s = await db.query(`select s.*, ${REOPT_LATEST} as reopt from public.suppressions s where s.org_id = $1 and s.id = $2`, [actor.orgId, optOutId]); // the one-pending unique index guards races
+      const row = s.rows[0];
+      if (!row) throw new StoreError("not_found", "Opt-out not found");
+      if (row.channel === "sms" && !opts.allowSms) throw new StoreError("forbidden", "Texting a number that replied STOP is restricted. SMS re-opt-in requests are off (ALLOW_SMS_REOPTIN_REQUEST).", "sms_reoptin_disabled");
+      if (row.reason !== "opt_out") throw new StoreError("conflict", "Bounced or complained addresses can't be asked to re-subscribe", "not_reoptinable");
+      const latest = toReopt(row.reopt);
+      // A lapsed pending request no longer blocks; close it so the one-pending index allows a new one.
+      if (latest?.status === "expired") await db.query(`update public.reoptin_requests set status = 'cancelled'
+        where org_id = $1 and channel = $2 and value = $3 and status = 'pending'`, [actor.orgId, row.channel, row.value]);
+      assertReoptAllowed(latest);
+      const r = await db.query(`insert into public.reoptin_requests (org_id, channel, value, customer_id, requested_by, expires_at)
+        values ($1,$2,$3,$4,$5, now() + make_interval(days => $6)) returning *`, [actor.orgId, row.channel, row.value, row.customer_id, actor.userId, REOPTIN_COOLDOWN_DAYS]);
+      await consentTx(db, actor.orgId, row.channel, row.value, "reoptin_requested", "store_request", { actorId: actor.userId, requestId: meta.requestId });
+      await this.event(db, actor, actor.orgId, null, "reoptin_requested", { channel: row.channel });
+      const c = row.customer_id ? await db.query(`select first_name from public.customers where org_id = $1 and id = $2`, [actor.orgId, row.customer_id]) : null;
+      const q = r.rows[0];
+      return {
+        request: { id: q.id, orgId: q.org_id, channel: q.channel, contact: q.value, status: "pending" as const,
+          createdAt: new Date(q.created_at).toISOString(), expiresAt: new Date(q.expires_at).toISOString() },
+        recipient: row.value as string, customerFirstName: (c?.rows[0]?.first_name as string | undefined) ?? null
+      };
+    }).catch(e => { if (e?.code === "23505") throw new StoreError("conflict", "A re-opt-in request is already pending for this contact", "reoptin_pending"); throw e; });
+  }
+  async cancelReoptInRequest(actor: Actor, requestId: string) {
+    if (!isUuid(requestId)) return;
+    await this.asUser(actor.userId, db => db.query(`update public.reoptin_requests set status = 'cancelled' where org_id = $1 and id = $2 and status = 'pending'`,
+      [actor.orgId, requestId]));
+  }
+
+  async recordAiUsage(actor: Actor, u: AiUsageInput) {
+    await this.asUser(actor.userId, db => db.query(`insert into public.ai_usage (org_id, opportunity_id, actor_id, model, provider, input_tokens, output_tokens,
+        cost_usd, price_version, deal_id, deal_title) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [actor.orgId, u.opportunityId && isUuid(u.opportunityId) ? u.opportunityId : null, actor.userId, u.model, u.provider, u.inputTokens, u.outputTokens,
+        u.costUsd, u.priceVersion, u.dealId && isUuid(u.dealId) ? u.dealId : null, u.dealTitle]));
+  }
+  async markAiUsageSent(actor: Actor, opportunityId: string, channel: Channel) {
+    if (!isUuid(opportunityId)) return null;
+    // Members can't read ai_usage (costs are management-only), so the update returns what the send ledger needs.
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select * from public.mark_ai_usage_sent($1, $2, $3)`, [actor.orgId, opportunityId, channel]);
+      const x = r.rows[0];
+      return x ? { model: x.model as string, dealId: x.deal_id as string | null, dealTitle: x.deal_title as string | null } : null;
+    });
+  }
+  async listAiUsage(actor: Actor, sinceIso: string): Promise<AiUsageRow[]> {
+    return this.asUser(actor.userId, async db => {
+      assertCanManageConsent(await this.role(db, actor), "view costs");
+      const r = await db.query(`select * from public.ai_usage where org_id = $1 and created_at >= $2 order by created_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ id: x.id, opportunityId: x.opportunity_id, model: x.model, provider: x.provider, inputTokens: x.input_tokens,
+        outputTokens: x.output_tokens, costUsd: Number(x.cost_usd), priceVersion: x.price_version, dealId: x.deal_id, dealTitle: x.deal_title,
+        ledToSend: x.led_to_send, sentChannel: x.sent_channel, isDemo: x.is_demo, createdAt: new Date(x.created_at).toISOString() }));
+    });
+  }
+  async recordSend(actor: Actor, s: SendInput) {
+    await this.asUser(actor.userId, db => db.query(`insert into public.outreach_sends (org_id, delivery_id, user_id, user_label, customer_id, channel,
+        deal_id, deal_title, deal_categories, deal_product_ids, model) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [actor.orgId, s.deliveryId && isUuid(s.deliveryId) ? s.deliveryId : null, actor.userId, s.userLabel.slice(0, 100), s.customerId, s.channel,
+        s.dealId && isUuid(s.dealId) ? s.dealId : null, s.dealTitle, s.dealCategories, s.dealProductIds.filter(isUuid), s.model]));
+  }
+  async recordSmsCost(orgId: string, c: SmsCostInput) {
+    await this.pool.query(`insert into public.sms_costs (org_id, provider, message_sid, segments, price_usd, estimated, status)
+      values ($1,$2,$3,$4,$5,$6,$7) on conflict (message_sid) do nothing`,
+      [orgId, c.provider, c.messageSid, Math.max(1, Math.min(20, c.segments)), Math.abs(c.priceUsd), c.estimated, c.status ?? null]);
+  }
+  async updateSmsCost(messageSid: string, patch: { priceUsd?: number; segments?: number; status?: string }) {
+    const r = await this.pool.query(`update public.sms_costs set
+        price_usd = coalesce($2, price_usd), estimated = case when $2::numeric is null then estimated else false end,
+        segments = coalesce($3, segments), status = coalesce($4, status), updated_at = now()
+      where message_sid = $1`, [messageSid, patch.priceUsd === undefined ? null : Math.abs(patch.priceUsd), patch.segments ?? null, patch.status ?? null]);
+    return (r.rowCount ?? 0) > 0;
+  }
+  async listEstimatedSmsCosts(o: { olderThanIso: string; newerThanIso: string; limit: number }) {
+    const r = await this.pool.query(`select message_sid from public.sms_costs where estimated and provider = 'twilio' and message_sid is not null
+      and not is_demo and created_at <= $1 and created_at >= $2 order by created_at limit $3`, [o.olderThanIso, o.newerThanIso, o.limit]);
+    return r.rows.map(x => ({ messageSid: x.message_sid as string }));
+  }
+  async listSmsCosts(actor: Actor, sinceIso: string): Promise<SmsCostRow[]> {
+    return this.asUser(actor.userId, async db => {
+      assertCanManageConsent(await this.role(db, actor), "view costs");
+      const r = await db.query(`select * from public.sms_costs where org_id = $1 and created_at >= $2 order by created_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ id: x.id, provider: x.provider, messageSid: x.message_sid, segments: x.segments, priceUsd: Number(x.price_usd),
+        estimated: x.estimated, status: x.status, isDemo: x.is_demo, createdAt: new Date(x.created_at).toISOString() }));
+    });
+  }
+  async listSends(actor: Actor, sinceIso: string): Promise<SendRow[]> {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select * from public.outreach_sends where org_id = $1 and created_at >= $2 order by created_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ id: x.id, deliveryId: x.delivery_id, userId: x.user_id, userLabel: x.user_label, customerId: x.customer_id, channel: x.channel,
+        dealId: x.deal_id, dealTitle: x.deal_title, dealCategories: x.deal_categories, dealProductIds: x.deal_product_ids, model: x.model,
+        isDemo: x.is_demo, createdAt: new Date(x.created_at).toISOString() }));
+    });
+  }
+  async listPurchaseRows(actor: Actor, sinceIso: string): Promise<PurchaseRow[]> {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select p.id, p.customer_id, p.purchased_at, p.is_demo, i.product_id, pr.category,
+          coalesce(i.unit_price_cents * i.quantity, p.total_cents) as cents
+        from public.purchases p left join public.purchase_items i on i.org_id = p.org_id and i.purchase_id = p.id
+        left join public.products pr on pr.org_id = p.org_id and pr.id = i.product_id
+        where p.org_id = $1 and p.purchased_at >= $2 order by p.purchased_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ customerId: x.customer_id, purchaseId: x.id, purchasedAt: new Date(x.purchased_at).toISOString(),
+        priceCents: Number(x.cents), category: x.category, productId: x.product_id, isDemo: x.is_demo }));
+    });
+  }
+
+  async listConversations(actor: Actor, limit: number) {
+    return this.asUser(actor.userId, async db =>
+      (await db.query(`${CONV_SELECT} where c.org_id = $1 order by c.last_message_at desc limit $2`, [actor.orgId, limit])).rows.map(toConversation));
+  }
+  async unreadCount(actor: Actor) {
+    return this.asUser(actor.userId, async db =>
+      (await db.query(`select count(*)::int as n from public.conversations where org_id = $1 and unread_count > 0`, [actor.orgId])).rows[0].n as number);
+  }
+  async getThread(actor: Actor, id: string) {
+    if (!isUuid(id)) return null;
+    return this.asUser(actor.userId, async db => {
+      const c = await db.query(`${CONV_SELECT} where c.org_id = $1 and c.id = $2`, [actor.orgId, id]);
+      if (!c.rows[0]) return null;
+      const m = await db.query(`select * from public.messages where org_id = $1 and conversation_id = $2 order by created_at, id`, [actor.orgId, id]);
+      return { conversation: toConversation(c.rows[0]), messages: m.rows.map(toMessage) };
+    });
+  }
+  async markRead(actor: Actor, id: string) {
+    if (!isUuid(id)) throw new StoreError("not_found", "Conversation not found");
+    await this.asUser(actor.userId, async db => {
+      const r = await db.query(`update public.conversations set unread_count = 0, last_read_at = now() where org_id = $1 and id = $2`, [actor.orgId, id]);
+      if (!r.rowCount) throw new StoreError("not_found", "Conversation not found");
+    });
+  }
+  async createReply(actor: Actor, conversationId: string, msg: { body: string; subject: string | null }) {
+    if (!isUuid(conversationId)) throw new StoreError("not_found", "Conversation not found");
+    return this.asUser(actor.userId, async db => {
+      const c = await db.query(`select c.channel, c.contact_value, exists (select 1 from public.suppressions s where s.org_id = c.org_id
+          and s.channel = c.channel and s.value = c.contact_value) as opted_out
+        from public.conversations c where c.org_id = $1 and c.id = $2 for update`, [actor.orgId, conversationId]);
+      const row = c.rows[0];
+      if (!row) throw new StoreError("not_found", "Conversation not found");
+      if (row.opted_out) throw new StoreError("suppressed", `This customer opted out of ${row.channel === "sms" ? "text messages" : "email"}`);
+      const r = await appendTx(db, actor.orgId, row.channel, row.contact_value,
+        { direction: "outbound", kind: "message", status: "sending", body: msg.body, subject: msg.subject, sentBy: actor.userId });
+      await this.event(db, actor, actor.orgId, null, "reply_sent", { conversationId });
+      const m = await db.query(`select * from public.messages where id = $1`, [r.messageId]);
+      return { message: toMessage(m.rows[0]), channel: row.channel as Channel, recipient: row.contact_value as string, replyToken: r.replyToken };
+    });
+  }
+
+  // ── System (privileged) ──
+  async appendMessage(orgId: string, channel: Channel, contact: string, m: NewMessage) {
+    return this.tx(async db => {
+      const r = await appendTx(db, orgId, channel, contact, m);
+      await this.event(db, null, orgId, null, m.direction === "inbound" ? "reply_received" : "message_logged", { conversationId: r.conversationId, kind: m.kind });
+      return r;
+    });
+  }
+  async findReplyToken(token: string) {
+    if (!/^[A-Za-z0-9_-]{20,64}$/.test(token)) return null;
+    const r = await this.pool.query(`select c.org_id, c.channel, c.contact_value from public.messages m
+      join public.conversations c on c.org_id = m.org_id and c.id = m.conversation_id where m.reply_token = $1`, [token]);
+    return r.rows[0] ? { orgId: r.rows[0].org_id, channel: r.rows[0].channel as Channel, contact: r.rows[0].contact_value } : null;
+  }
+  async getOutboundMessage(id: string) {
+    if (!isUuid(id)) return null;
+    const r = await this.pool.query(`select c.org_id, c.channel, c.contact_value from public.messages m
+      join public.conversations c on c.org_id = m.org_id and c.id = m.conversation_id where m.id = $1 and m.direction = 'outbound'`, [id]);
+    return r.rows[0] ? { orgId: r.rows[0].org_id, channel: r.rows[0].channel as Channel, contact: r.rows[0].contact_value } : null;
+  }
+  async updateMessageStatus(id: string, status: "sent" | "failed", providerMessageId?: string | null) {
+    if (!isUuid(id)) return;
+    await this.pool.query(`update public.messages set status = $2, provider_message_id = coalesce($3, provider_message_id) where id = $1`,
+      [id, status, providerMessageId ?? null]);
+  }
+  async getReoptInRequest(id: string): Promise<ReoptInRequest | null> {
+    if (!isUuid(id)) return null;
+    const r = await this.pool.query(`select * from public.reoptin_requests where id = $1 and status <> 'cancelled'`, [id]);
+    const q = r.rows[0];
+    if (!q) return null;
+    const expiresAt = new Date(q.expires_at).toISOString();
+    return { id: q.id, orgId: q.org_id, channel: q.channel, contact: q.value, createdAt: new Date(q.created_at).toISOString(), expiresAt,
+      status: q.status === "pending" && Date.parse(expiresAt) <= Date.now() ? "expired" : q.status };
+  }
+  async confirmReoptIn(id: string, meta: ConsentMeta = {}) {
+    const r = await this.getReoptInRequest(id);
+    if (!r || r.status === "expired") return null;
+    if (r.status === "confirmed") return { removed: false };
+    return this.removeOptOut(r.orgId, r.channel, r.contact, "reoptin_link", meta);
+  }
+  async addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource, meta: ConsentMeta = {}) {
+    return this.tx(async db => {
+      const r = await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id)
+        select $1, $2::public.outreach_channel, v.value, 'opt_out', $4,
+          (select cu.id from public.customers cu where cu.org_id = $1
+            and public.normalize_contact($2::public.outreach_channel, case when $2 = 'sms' then cu.phone else cu.email end) = v.value limit 1)
+        from (select public.normalize_contact($2::public.outreach_channel, $3) as value) v where v.value is not null
+        on conflict (org_id, channel, value) do nothing returning id, customer_id, value`, [orgId, channel, contact, source]);
+      const created = (r.rowCount ?? 0) > 0;
+      if (created) {
+        await this.event(db, null, orgId, null, "opted_out", { channel, source, customerId: r.rows[0].customer_id });
+        await consentTx(db, orgId, channel, r.rows[0].value, "opt_out", source, meta);
+      }
+      return { created };
+    });
+  }
+  async removeOptOut(orgId: string, channel: Channel, contact: string, source: OptInSource, meta: ConsentMeta = {}) {
+    return this.tx(async db => {
+      const r = await db.query(`delete from public.suppressions where org_id = $1 and channel = $2 and reason = 'opt_out'
+        and value = public.normalize_contact($2::public.outreach_channel, $3) returning value`, [orgId, channel, contact]);
+      const removed = (r.rowCount ?? 0) > 0;
+      if (removed) {
+        const value = r.rows[0].value as string;
+        await this.event(db, null, orgId, null, "opted_in", { channel, source });
+        await consentTx(db, orgId, channel, value, "opt_in", source, meta);
+        await db.query(`update public.reoptin_requests set status = 'confirmed', confirmed_at = now()
+          where org_id = $1 and channel = $2 and value = $3 and status = 'pending'`, [orgId, channel, value]);
+      }
+      return { removed };
+    });
+  }
+  async orgDisplayName(orgId: string) {
+    if (!isUuid(orgId)) return null;
+    const r = await this.pool.query(`select coalesce(s.store_name, o.business_name, o.name) as name from public.organizations o
+      left join public.org_settings s on s.org_id = o.id where o.id = $1`, [orgId]);
+    return (r.rows[0]?.name as string | undefined) ?? null;
   }
 
   async reset(actor: Actor) {
@@ -280,8 +695,9 @@ export class PostgresStore implements OutreachStore {
   }
   async getDelivery(id: string) {
     if (!isUuid(id)) return null;
-    const r = await this.pool.query(`select * from public.message_deliveries where id = $1`, [id]);
-    return r.rows[0] ? toDelivery(r.rows[0]) : null;
+    const r = await this.pool.query(`select d.*, (select m.reply_token from public.messages m where m.delivery_id = d.id limit 1) as reply_token
+      from public.message_deliveries d where d.id = $1`, [id]);
+    return r.rows[0] ? { ...toDelivery(r.rows[0]), replyToken: r.rows[0].reply_token } : null;
   }
 
   async updateDelivery(id: string, status: DeliveryStatus, patch: { providerMessageId?: string; error?: string } = {}) {
@@ -295,6 +711,7 @@ export class PostgresStore implements OutreachStore {
         await db.query(`update public.outreach_opportunities set status = $3 where org_id = $1 and id = $2`, [org_id, opportunity_id, status]);
         await this.event(db, null, org_id, opportunity_id, `delivery_${status}`, { deliveryId: id });
       }
+      if (status !== "delivered") await db.query(`update public.messages set status = $2 where delivery_id = $1`, [id, status]);
     });
   }
 
@@ -411,6 +828,11 @@ export class PostgresStore implements OutreachStore {
       const r = await db.query(`delete from public.memberships where org_id = $1 and user_id = $2`, [actor.orgId, userId]);
       if (r.rowCount !== 1) throw new StoreError("forbidden", "You don't have permission to do that", "insufficient_role");
     }).catch(mapTeamError);
+  }
+
+  async claimPendingInvitations(user: { id: string; email: string | null }) {
+    if (!isUuid(user.id) || !user.email) return 0;
+    return this.asUser(user.id, async db => Number((await db.query(`select public.claim_pending_invitations() as n`)).rows[0].n), user.email.toLowerCase());
   }
 
   async acceptInvitation(user: { id: string; email: string | null }, tokenHash: string) {
