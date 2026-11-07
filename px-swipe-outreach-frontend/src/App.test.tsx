@@ -101,12 +101,48 @@ describe('App', () => {
     await screen.findByText('Hi! (sms)')
     fireEvent.click(screen.getByRole('button', { name: /edit/i }))
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Custom text' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await screen.findByText('Maya M.')
     const send = calls.find(c => c.url.endsWith('/send'))!
     expect(send.url).toBe('/api/outreach/opp_1/send')
     expect(JSON.parse(String(send.init!.body))).toMatchObject({ channel: 'sms', message: 'Custom text' })
     expect(screen.getByText('2 / 2')).toBeInTheDocument()
+  })
+
+  it('blocks every send path while editing; Save keeps edits, Cancel reverts', async () => {
+    render(<App />)
+    await screen.findByText('Hi! (sms)')
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Draft A' } })
+    const send = screen.getByRole('button', { name: 'Send message' })
+    expect(send).toBeDisabled()
+    expect(document.querySelector('.edit-hint')).toHaveTextContent('Save or cancel your edits to send')
+    expect(screen.getByRole('radio', { name: /email/i })).toBeDisabled()
+    // → key (focus outside the textarea) and a swipe right must not send
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    const swipe = document.querySelector('.swipe') as HTMLElement
+    fireEvent.pointerDown(swipe, { clientX: 0, pointerId: 1 })
+    fireEvent.pointerMove(swipe, { clientX: 300, pointerId: 1 })
+    fireEvent.pointerUp(swipe, { clientX: 300, pointerId: 1 })
+    await new Promise(r => setTimeout(r, 50))
+    expect(calls.some(c => c.url.endsWith('/send'))).toBe(false)
+    expect(screen.getByText('Sarah M.')).toBeInTheDocument()
+
+    // Cancel reverts
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.getByText('Hi! (sms)')).toBeInTheDocument()
+    expect(document.querySelector('.edit-hint')).toBeNull()
+    expect(send).not.toBeDisabled()
+
+    // Save keeps the edit, and that's what → sends
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }))
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Draft B' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(screen.getByText('Draft B')).toBeInTheDocument()
+    fireEvent.keyDown(window, { key: 'ArrowRight' })
+    await screen.findByText('Maya M.')
+    expect(JSON.parse(String(calls.find(c => c.url.endsWith('/send'))!.init!.body)).message).toBe('Draft B')
   })
 
   it('skips with the arrow key and switches to email', async () => {

@@ -1,6 +1,6 @@
 import {
   CalendarDays, ChevronRight, CircleDollarSign, Clock, Mail, MapPin, MessageCircle, MessageSquareText,
-  Pencil, Phone, ShieldAlert, ShieldCheck, ShoppingBag, Sparkles, Store, Tag, Check, Repeat,
+  Pencil, Phone, ShieldAlert, ShieldCheck, ShoppingBag, Sparkles, Store, Tag, Check, Repeat, X,
 } from 'lucide-react'
 import type { Channel, OutreachCard, Suggestion } from '../types'
 import { charCount, daysAgo, money, SMS_MAX } from '../lib/format'
@@ -14,6 +14,8 @@ export interface CardDraft {
   message: string
   subject: string
   editing: boolean
+  /** Snapshot taken when editing starts; Cancel restores it. */
+  saved?: { message: string; subject: string }
 }
 
 interface Props {
@@ -24,13 +26,15 @@ interface Props {
   onChannel: (c: Channel) => void
   onMessage: (m: string) => void
   onSubject: (s: string) => void
-  onToggleEdit: () => void
+  onEdit: () => void
+  onSaveEdit: () => void
+  onCancelEdit: () => void
   onRetry: () => void
 }
 
 const TIME_LABEL = { morning: 'mornings', afternoon: 'afternoons', evening: 'evenings' } as const
 
-export function CustomerCard({ card, position, total, draft, onChannel, onMessage, onSubject, onToggleEdit, onRetry }: Props) {
+export function CustomerCard({ card, position, total, draft, onChannel, onMessage, onSubject, onEdit, onSaveEdit, onCancelEdit, onRetry }: Props) {
   const { customer: c, lastPurchase: lp } = card
   const { contact, profile } = c
   const channelOk = draft.channel === 'sms' ? contact.sms : contact.email
@@ -117,9 +121,14 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
       <section className="message">
         <div className="message-head">
           <h3 className="eyebrow"><MessageSquareText size={14} aria-hidden /> Suggested message</h3>
-          <button className="edit" onClick={onToggleEdit} disabled={!s} aria-pressed={draft.editing}>
-            {draft.editing ? <><Check size={14} aria-hidden /> Done</> : <><Pencil size={14} aria-hidden /> Edit</>}
-          </button>
+          {draft.editing ? (
+            <span className="edit-actions">
+              <button className="edit cancel" onClick={onCancelEdit}><X size={14} aria-hidden /> Cancel</button>
+              <button className="edit save" onClick={onSaveEdit} disabled={!draft.message.trim()}><Check size={14} aria-hidden /> Save</button>
+            </span>
+          ) : (
+            <button className="edit" onClick={onEdit} disabled={!s}><Pencil size={14} aria-hidden /> Edit</button>
+          )}
         </div>
         {draft.channel === 'email' && (draft.editing
           ? <input className="subject-input" aria-label="Email subject" value={draft.subject} onChange={e => onSubject(e.target.value)} />
@@ -127,6 +136,7 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
         {draft.editing
           ? <textarea aria-label="Message" value={draft.message} onChange={e => onMessage(e.target.value)} rows={5} autoFocus />
           : <p className="message-text">{draft.message || (draft.loading ? '…' : '')}</p>}
+        {draft.editing && <p className="edit-hint" role="status">Save or cancel your edits to send</p>}
         <span className={`muted small ${draft.channel === 'sms' && count > SMS_MAX ? 'error' : ''}`}>
           {draft.channel === 'sms' ? `SMS · ${count}/${SMS_MAX} characters · includes signature and “Reply STOP to opt out.”` : `Email · ${count} characters · unsubscribe link added`}
         </span>
@@ -134,9 +144,9 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
 
       <div className="toggle" role="radiogroup" aria-label="Channel">
         <button role="radio" aria-checked={draft.channel === 'sms'} className={draft.channel === 'sms' ? 'on' : ''}
-          disabled={!contact.sms} onClick={() => onChannel('sms')}><MessageCircle size={16} aria-hidden /> Text</button>
+          disabled={!contact.sms || draft.editing} onClick={() => onChannel('sms')}><MessageCircle size={16} aria-hidden /> Text</button>
         <button role="radio" aria-checked={draft.channel === 'email'} className={draft.channel === 'email' ? 'on' : ''}
-          disabled={!contact.email} onClick={() => onChannel('email')}><Mail size={16} aria-hidden /> Email</button>
+          disabled={!contact.email || draft.editing} onClick={() => onChannel('email')}><Mail size={16} aria-hidden /> Email</button>
       </div>
       <p className={`contact-note ${channelOk ? '' : 'warn'}`}>
         {draft.channel === 'sms' ? <Phone size={13} aria-hidden /> : <Mail size={13} aria-hidden />}
