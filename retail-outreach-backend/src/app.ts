@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import Fastify, { type FastifyInstance, type FastifyReply } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -18,7 +18,9 @@ import { loggerOptions } from "./logger.js";
 import type { SuggestionProvider } from "./providers/ai.js";
 import type { MessageProvider } from "./providers/messaging.js";
 import { StoreError, type OutreachStore } from "./store/types.js";
-import { listModels, PRICE_TABLE_VERSION, RULES_MODEL } from "./ai/models.js";
+import { costUsd, listModels, modelInfo, PRICE_TABLE_VERSION, RULES_MODEL } from "./ai/models.js";
+import { costReport } from "./metrics/cost.js";
+import { DEFAULT_ATTRIBUTION_DAYS, performanceReport } from "./metrics/performance.js";
 import { ConsoleInviteMailer, SupabaseInviteMailer, type InviteMailer } from "./team/mailer.js";
 import { INVITE_ACCEPT_PATH, INVITE_PREVIEW_PATH, teamRoutes } from "./team/routes.js";
 import type { Actor } from "./types.js";
@@ -206,7 +208,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       signatures: { sms: settings.smsSignature, email: settings.emailSignature }, model: settings.aiModel
     });
     await store.saveSuggestion(actor, id, suggestion);
-    return { suggestion };
+    // Cost metrics: one row per suggestion call (rules = $0). Never block the suggestion on metrics.
+    const info = modelInfo(suggestion.model);
+    await store.recordAiUsage(actor, {
+      opportunityId: id, model: suggestion.model, provider: info?.provider ?? "rules",
+      inputTokens: suggestion.usage?.inputTokens ?? 0, outputTokens: suggestion.usage?.outputTokens ?? 0,
+      costUsd: suggestion.usage ? costUsd(suggestion.model, suggestion.usage.inputTokens, suggestion.usage.outputTokens) : 0,
+      priceVersion: PRICE_TABLE_VERSION, dealId: suggestion.deal?.id ?? null, dealTitle: suggestion.deal?.title ?? null
+    }).catch(e => request.log.warn({ err: e }, "failed to record AI usage"));
+    const { usage: _u, ...publicSuggestion } = suggestion;
+    return { suggestion: publicSuggestion };
   });
 
   app.post("/api/outreach/:id/skip", async request => {
@@ -259,6 +270,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       message, subject, idempotencyKey: body.idempotencyKey
     });
     if (duplicate) return reply.code(200).send({ deliveryId: delivery.id, status: delivery.status, duplicate: true });
+    await recordSendMetrics(request, actor, id, opp.customer.id, body.channel, delivery.id)
+      .catch(e => request.log.warn({ err: e }, "failed to record send metrics"));
 
     if (deps.enqueueDelivery) {
       await deps.enqueueDelivery(delivery.id);
@@ -284,6 +297,38 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   app.get("/api/metrics", async request => store.metrics(actorOf(request)));
+
+  /** Send ledger row (who sent, which model/deal) for cost + performance metrics. */
+  async function recordSendMetrics(request: FastifyRequest, actor: Actor, oppId: string, customerId: string, ch: "sms" | "email", deliveryId: string) {
+    const used = await store.markAiUsageSent(actor, oppId, ch);
+    const deal = used?.dealId ? (await store.listDeals(actor)).find(d => d.id === used.dealId) : undefined;
+    const email = request.auth?.user.email ?? null;
+    await store.recordSend(actor, {
+      deliveryId, userLabel: email ? email.split("@")[0] : "Team member", customerId, channel: ch,
+      dealId: used?.dealId ?? null, dealTitle: used?.dealTitle ?? null, dealCategories: deal?.categories ?? [], dealProductIds: deal?.productIds ?? [],
+      model: used?.model ?? RULES_MODEL
+    });
+  }
+
+  /** Performance metrics (all members; per-person revenue of others is owner/admin only). */
+  app.get("/api/metrics/performance", async request => {
+    const actor = actorOf(request);
+    const q = z.object({ days: z.coerce.number().int().min(1).max(90).default(DEFAULT_ATTRIBUTION_DAYS) }).parse(request.query);
+    const now = new Date();
+    const since = new Date(Math.min(new Date(now.getFullYear(), 0, 1).getTime(), new Date(now.getFullYear(), now.getMonth() - 6, 1).getTime()) - q.days * 86_400_000).toISOString();
+    const [sends, purchases] = await Promise.all([store.listSends(actor, since), store.listPurchaseRows(actor, since)]);
+    const role = request.auth?.org?.role;
+    return performanceReport(sends, purchases, { now, days: q.days, viewerId: actor.userId, canSeeAll: role === "owner" || role === "admin" });
+  });
+
+  /** Cost metrics (owners/admins): YTD AI spend per month and model. */
+  app.get("/api/metrics/costs", async request => {
+    const actor = actorOf(request);
+    const now = new Date();
+    const since = new Date(now.getFullYear(), 0, 1).toISOString();
+    const [usage, sends] = await Promise.all([store.listAiUsage(actor, since), store.listSends(actor, since)]);
+    return costReport(usage, sends, now);
+  });
 
   // ── Promotions & settings ───────────────────────────────────────────
   await dealRoutes(app, { store, actorOf });

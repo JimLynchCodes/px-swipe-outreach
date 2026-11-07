@@ -120,3 +120,27 @@ export interface AiModelOption {
   id: string; label: string; provider: string; providerLabel: string; inputPerM: number; outputPerM: number
   costHint: string; available: boolean; note: string | null
 }
+
+// ── Metrics ──
+export interface ModelCost {
+  model: string; label: string; aiCalls: number; inputTokens: number; outputTokens: number; costUsd: number
+  smsSent: number; emailSent: number; messagesSent: number
+}
+export interface CostReport {
+  year: number; priceTableVersion: string; demo: boolean
+  ytd: { costUsd: number; messagesSent: number; aiCalls: number; byModel: ModelCost[] }
+  months: Array<{ month: string; models: ModelCost[]; total: Omit<ModelCost, 'model' | 'label'> }>
+}
+export type Period = 'today' | 'week' | 'month' | 'all'
+export interface LeaderRow {
+  userKey: string; name: string; isMe: boolean; sends: number; conversions: number; conversionRate: number
+  revenueCents: number | null; streakDays: number; onFire: boolean
+}
+export interface PerformanceReport {
+  attributionDays: number; demo: boolean; revenueVisible: boolean
+  summary: { thisMonthCents: number; lastMonthCents: number; monthGrowthPct: number | null; ytdCents: number
+    ytdSends: number; ytdConversions: number; conversionRate: number; avgOrderCents: number }
+  trend: Array<{ month: string; revenueCents: number; sends: number; conversions: number }>
+  promotions: Array<{ dealId: string | null; title: string; sends: number; usagePct: number; conversions: number; conversionRate: number; revenueCents: number }>
+  leaderboard: Record<Period, { rows: LeaderRow[]; totals: { sends: number; conversions: number; conversionRate: number; revenueCents: number | null } }>
+}

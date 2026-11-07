@@ -22,4 +22,5 @@ export function usePathname(): string {
 
 export const ROUTES = {
   home: '/', team: '/team', acceptInvite: '/invite/accept', settings: '/settings', optOuts: '/opt-outs', replies: '/replies',
+  costs: '/settings/costs', performance: '/performance',
 } as const

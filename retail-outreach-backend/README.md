@@ -52,6 +52,12 @@ In queue mode, `POST /send` returns `202 {status:"queued"}` and the BullMQ worke
 | `npm run db:seed` | `--demo-user` or `--owner-email <email>` |
 | `npm run worker` | BullMQ delivery worker (queue mode only) |
 
+### Metrics
+| Method | Path | Who | Notes |
+|---|---|---|---|
+| GET | `/api/metrics/costs` | owner/admin | YTD AI spend per month × model (see docs/OUTREACH_FEATURES.md) |
+| GET | `/api/metrics/performance?days=7` | members | attributed revenue, promotions, leaderboard; others' revenue owner/admin only |
+
 ## Environment variables
 
 See [`.env.example`](.env.example) for the full annotated list. Empty values count as unset. With `NODE_ENV=production` the server **refuses to boot** unless `AUTH_MODE=supabase`, `DATA_STORE=postgres`, and `CORS_ORIGIN` lists https origins.

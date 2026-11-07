@@ -88,6 +88,16 @@ export interface OutreachStore {
   createReoptInRequest(actor: Actor, optOutId: string, meta?: ConsentMeta, opts?: { allowSms?: boolean }): Promise<{ request: ReoptInRequest; recipient: string; customerFirstName: string | null }>;
   /** Marks a request failed-to-send (so it doesn't block a retry). */
   cancelReoptInRequest(actor: Actor, requestId: string): Promise<void>;
+  // ── Metrics ──
+  /** Records one suggestion call (any member, as themselves). */
+  recordAiUsage(actor: Actor, u: import("../metrics/types.js").AiUsageInput): Promise<void>;
+  /** Marks the latest suggestion for an opportunity as sent; returns its model/deal (null if none recorded). */
+  markAiUsageSent(actor: Actor, opportunityId: string, channel: Channel): Promise<{ model: string; dealId: string | null; dealTitle: string | null } | null>;
+  /** Owner/admin only. */
+  listAiUsage(actor: Actor, sinceIso: string): Promise<import("../metrics/types.js").AiUsageRow[]>;
+  recordSend(actor: Actor, s: import("../metrics/types.js").SendInput): Promise<void>;
+  listSends(actor: Actor, sinceIso: string): Promise<import("../metrics/types.js").SendRow[]>;
+  listPurchaseRows(actor: Actor, sinceIso: string): Promise<import("../metrics/types.js").PurchaseRow[]>;
   listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }): Promise<{ items: OptOutEntry[]; total: number }>;
 
   // ── Replies (conversations). Members read, mark read and reply. ──

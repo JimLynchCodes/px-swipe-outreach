@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Ban, Layers, LogOut, Menu, MessageCircle, Settings, Sparkles, Users, X } from 'lucide-react'
+import { Ban, Layers, LogOut, Menu, MessageCircle, Receipt, Settings, Sparkles, TrendingUp, Users, X } from 'lucide-react'
 import { navigate, ROUTES, usePathname } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
 import { useUnreadCount } from '../replies/useUnread'
@@ -9,9 +9,11 @@ import { ModelPicker } from '../ai/ModelPicker'
 const LINKS = [
   { to: ROUTES.home, label: 'Outreach deck', icon: Layers },
   { to: ROUTES.replies, label: 'Replies', icon: MessageCircle, badge: true },
+  { to: ROUTES.performance, label: 'Performance metrics', icon: TrendingUp },
   { to: ROUTES.optOuts, label: 'Opt-out list', icon: Ban },
   { to: ROUTES.team, label: 'Team', icon: Users },
   { to: ROUTES.settings, label: 'Settings', icon: Settings },
+  { to: ROUTES.costs, label: 'Cost metrics', icon: Receipt, sub: true, manage: true },
 ] as const
 
 export function Header() {
@@ -44,8 +46,9 @@ export function Header() {
             </button>
             {open && (
               <nav className="menu" role="menu" aria-label="Main menu">
-                {LINKS.map(l => (
-                  <a key={l.to} role="menuitem" href={l.to} className={path === l.to || (l.to !== '/' && path.startsWith(l.to)) ? 'active' : ''}
+                {LINKS.filter(l => !('manage' in l) || auth?.role === 'owner' || auth?.role === 'admin').map(l => (
+                  <a key={l.to} role="menuitem" href={l.to}
+                    className={[path === l.to || (l.to !== '/' && path.startsWith(l.to) && !(l.to === ROUTES.settings && path === ROUTES.costs)) ? 'active' : '', 'sub' in l ? 'sub' : ''].join(' ').trim()}
                     onClick={e => { e.preventDefault(); setOpen(false); navigate(l.to) }}>
                     <l.icon size={17} aria-hidden /> <span>{l.label}</span>
                     {'badge' in l && unread > 0 && <span className="badge inline" aria-label={`${unread} unread`}>{badge}</span>}

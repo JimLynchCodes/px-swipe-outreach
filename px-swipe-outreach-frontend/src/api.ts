@@ -1,4 +1,4 @@
-import type {
+import type { CostReport, PerformanceReport,
   AiModelOption, CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
   SendResult, Suggestion,
 } from './types'
@@ -132,6 +132,10 @@ export const api = {
       }).then(r => r.message),
   },
   aiModels: () => request<{ models: AiModelOption[]; selected: string; effective: string; priceTableVersion: string }>('/api/ai/models'),
+  metrics: {
+    costs: () => request<CostReport>('/api/metrics/costs'),
+    performance: (days?: number) => request<PerformanceReport>(`/api/metrics/performance${days ? `?days=${days}` : ''}`),
+  },
   resetDemo: () => request<{ ok: true }>('/api/dev/reset', { method: 'POST' }),
 }
 

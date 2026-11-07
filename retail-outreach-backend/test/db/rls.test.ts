@@ -425,4 +425,27 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       expect(await store.orgDisplayName(ORG_A)).toBe("Shop A+"); // set by the settings test above
     });
   });
+
+  describe("cost & performance metrics", () => {
+    const A = { userId: ALICE, orgId: ORG_A }, S = { userId: STAFF, orgId: ORG_A }, B = { userId: BOB, orgId: ORG_B };
+    it("demo rows are seeded; ai_usage is owner/admin-only; sends/purchases are org-scoped; members can't forge demo rows", async () => {
+      expect((await store.listSends(A, "2000-01-01")).filter(s => s.isDemo).length).toBeGreaterThan(300);
+      expect((await store.listPurchaseRows(A, "2000-01-01")).some(p => p.isDemo && p.category)).toBe(true);
+      expect((await store.listAiUsage(A, "2000-01-01")).length).toBeGreaterThan(300);
+      await expect(store.listAiUsage(S, "2000-01-01")).rejects.toMatchObject({ code: "forbidden" });
+      expect((await asUser(STAFF, `select count(*)::int n from public.ai_usage`)).rows[0].n).toBe(0);
+      expect((await asUser(BOB, `select count(*)::int n from public.outreach_sends where org_id = $1`, [ORG_A])).rows[0].n).toBe(0);
+      await expect(asUser(STAFF, `insert into public.ai_usage (org_id, actor_id, model, provider, price_version, is_demo) values ($1,$2,'x','rules','v',true)`, [ORG_A, STAFF])).rejects.toThrow();
+      await expect(asUser(BOB, `insert into public.ai_usage (org_id, actor_id, model, provider, price_version) values ($1,$2,'x','rules','v')`, [ORG_A, BOB])).rejects.toThrow();
+
+      const opp = (await store.listQueue(S, 50)).items[0];
+      await store.recordAiUsage(S, { opportunityId: opp.id, model: "gpt-4o-mini", provider: "openai", inputTokens: 700, outputTokens: 150, costUsd: 0.000195, priceVersion: "t", dealId: null, dealTitle: "Vape Monday" });
+      expect(await store.markAiUsageSent(S, opp.id, "sms")).toMatchObject({ model: "gpt-4o-mini", dealTitle: "Vape Monday" });
+      await store.recordSend(S, { deliveryId: null, userLabel: "staff", customerId: opp.customer.id, channel: "sms", dealId: null, dealTitle: "Vape Monday", dealCategories: ["vape"], dealProductIds: [], model: "gpt-4o-mini" });
+      const mine = (await store.listSends(A, "2000-01-01")).filter(s => !s.isDemo);
+      expect(mine.at(-1)).toMatchObject({ userId: STAFF, model: "gpt-4o-mini", dealCategories: ["vape"] });
+      expect((await store.listAiUsage(A, "2000-01-01")).at(-1)).toMatchObject({ ledToSend: true, sentChannel: "sms", costUsd: 0.000195 });
+      expect((await store.listSends(B, "2000-01-01")).some(s => s.userId === STAFF)).toBe(false);
+    });
+  });
 });

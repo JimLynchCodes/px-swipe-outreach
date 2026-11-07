@@ -7,6 +7,7 @@ import type {
   Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
+import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow } from "../metrics/types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
 import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
@@ -175,7 +176,7 @@ export class PostgresStore implements OutreachStore {
       from public.purchases p
       join public.purchase_items pi on pi.org_id = p.org_id and pi.purchase_id = p.id
       left join public.products pr on pr.org_id = pi.org_id and pr.id = pi.product_id
-      where p.org_id = $1 and p.customer_id = any($2::uuid[])
+      where p.org_id = $1 and p.customer_id = any($2::uuid[]) and not p.is_demo -- demo metrics purchases stay out of the deck
       order by p.purchased_at desc`, [rows[0].org_id, rows.map(r => r.customer_id)]);
     const stores = await db.query<any>(`
       select p.customer_id, s.name, max(p.purchased_at) as last_at
@@ -478,6 +479,56 @@ export class PostgresStore implements OutreachStore {
     if (!isUuid(requestId)) return;
     await this.asUser(actor.userId, db => db.query(`update public.reoptin_requests set status = 'cancelled' where org_id = $1 and id = $2 and status = 'pending'`,
       [actor.orgId, requestId]));
+  }
+
+  async recordAiUsage(actor: Actor, u: AiUsageInput) {
+    await this.asUser(actor.userId, db => db.query(`insert into public.ai_usage (org_id, opportunity_id, actor_id, model, provider, input_tokens, output_tokens,
+        cost_usd, price_version, deal_id, deal_title) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [actor.orgId, u.opportunityId && isUuid(u.opportunityId) ? u.opportunityId : null, actor.userId, u.model, u.provider, u.inputTokens, u.outputTokens,
+        u.costUsd, u.priceVersion, u.dealId && isUuid(u.dealId) ? u.dealId : null, u.dealTitle]));
+  }
+  async markAiUsageSent(actor: Actor, opportunityId: string, channel: Channel) {
+    if (!isUuid(opportunityId)) return null;
+    // Members can't read ai_usage (costs are management-only), so the update returns what the send ledger needs.
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select * from public.mark_ai_usage_sent($1, $2, $3)`, [actor.orgId, opportunityId, channel]);
+      const x = r.rows[0];
+      return x ? { model: x.model as string, dealId: x.deal_id as string | null, dealTitle: x.deal_title as string | null } : null;
+    });
+  }
+  async listAiUsage(actor: Actor, sinceIso: string): Promise<AiUsageRow[]> {
+    return this.asUser(actor.userId, async db => {
+      assertCanManageConsent(await this.role(db, actor), "view costs");
+      const r = await db.query(`select * from public.ai_usage where org_id = $1 and created_at >= $2 order by created_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ id: x.id, opportunityId: x.opportunity_id, model: x.model, provider: x.provider, inputTokens: x.input_tokens,
+        outputTokens: x.output_tokens, costUsd: Number(x.cost_usd), priceVersion: x.price_version, dealId: x.deal_id, dealTitle: x.deal_title,
+        ledToSend: x.led_to_send, sentChannel: x.sent_channel, isDemo: x.is_demo, createdAt: new Date(x.created_at).toISOString() }));
+    });
+  }
+  async recordSend(actor: Actor, s: SendInput) {
+    await this.asUser(actor.userId, db => db.query(`insert into public.outreach_sends (org_id, delivery_id, user_id, user_label, customer_id, channel,
+        deal_id, deal_title, deal_categories, deal_product_ids, model) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [actor.orgId, s.deliveryId && isUuid(s.deliveryId) ? s.deliveryId : null, actor.userId, s.userLabel.slice(0, 100), s.customerId, s.channel,
+        s.dealId && isUuid(s.dealId) ? s.dealId : null, s.dealTitle, s.dealCategories, s.dealProductIds.filter(isUuid), s.model]));
+  }
+  async listSends(actor: Actor, sinceIso: string): Promise<SendRow[]> {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select * from public.outreach_sends where org_id = $1 and created_at >= $2 order by created_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ id: x.id, deliveryId: x.delivery_id, userId: x.user_id, userLabel: x.user_label, customerId: x.customer_id, channel: x.channel,
+        dealId: x.deal_id, dealTitle: x.deal_title, dealCategories: x.deal_categories, dealProductIds: x.deal_product_ids, model: x.model,
+        isDemo: x.is_demo, createdAt: new Date(x.created_at).toISOString() }));
+    });
+  }
+  async listPurchaseRows(actor: Actor, sinceIso: string): Promise<PurchaseRow[]> {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select p.id, p.customer_id, p.purchased_at, p.is_demo, i.product_id, pr.category,
+          coalesce(i.unit_price_cents * i.quantity, p.total_cents) as cents
+        from public.purchases p left join public.purchase_items i on i.org_id = p.org_id and i.purchase_id = p.id
+        left join public.products pr on pr.org_id = p.org_id and pr.id = i.product_id
+        where p.org_id = $1 and p.purchased_at >= $2 order by p.purchased_at`, [actor.orgId, sinceIso]);
+      return r.rows.map(x => ({ customerId: x.customer_id, purchaseId: x.id, purchasedAt: new Date(x.purchased_at).toISOString(),
+        priceCents: Number(x.cents), category: x.category, productId: x.product_id, isDemo: x.is_demo }));
+    });
   }
 
   async listConversations(actor: Actor, limit: number) {

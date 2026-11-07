@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { newReplyToken } from "../replies/tokens.js";
 import * as seed from "../data/seed.js";
+import { buildDemoMetrics } from "../data/demoMetrics.js";
+import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow } from "../metrics/types.js";
 import { daysSince, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Customer, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
@@ -80,7 +82,7 @@ export class MemoryStore implements OutreachStore {
   private opps: Opportunity[] = buildSeedOpportunities();
   private convs: ConvRow[] = [];
   private msgs: MsgRow[] = [];
-  constructor() { this.seedReplies(seed.DEMO_ORG_ID); }
+  constructor() { this.seedDemoMetricsOnce(seed.DEMO_ORG_ID); this.seedReplies(seed.DEMO_ORG_ID); }
 
   /** Demo threads and per-channel opt-outs (STOP reply, unsubscribe link, manual). */
   private seedReplies(orgId: string, now = Date.now()) {
@@ -110,6 +112,21 @@ export class MemoryStore implements OutreachStore {
   }
   private deliveries = new Map<string, Delivery>();
   private suppressions: Suppression[] = [];
+  private aiUsage: Array<AiUsageRow & { orgId: string }> = [];
+  private sendLedger: Array<SendRow & { orgId: string }> = [];
+  private demoPurchases: Array<PurchaseRow & { orgId: string }> = [];
+  private seededMetrics = new Set<string>();
+  private seedDemoMetricsOnce(orgId: string) {
+    if (this.seededMetrics.has(orgId)) return;
+    this.seededMetrics.add(orgId);
+    this.seedDemoMetrics(orgId);
+  }
+  private seedDemoMetrics(orgId: string) {
+    const m = buildDemoMetrics();
+    this.aiUsage.push(...m.usage.map(u => ({ ...u, orgId })));
+    this.sendLedger.push(...m.sends.map(x => ({ ...x, orgId })));
+    this.demoPurchases.push(...m.purchases.map(x => ({ ...x, orgId })));
+  }
   private consent: Array<ConsentEvent & { orgId: string; value: string }> = [];
   private reoptins: Array<ReoptInRequest & { value: string; customerId: string | null; requestedBy: string }> = [];
   private recordConsent(orgId: string, channel: Channel, value: string, event: ConsentEvent["event"], source: ConsentEvent["source"], meta: ConsentMeta = {}) {
@@ -311,6 +328,39 @@ export class MemoryStore implements OutreachStore {
   readonly systemEvents: Array<{ orgId: string; type: string; details: unknown }> = [];
   private customerFor(orgId: string, channel: Channel, value: string) {
     return this.opps.find(o => o.orgId === orgId && normalizeContact(channel, recipientFor(o.customer, channel)) === value)?.customer ?? null;
+  }
+  async recordAiUsage(actor: Actor, u: AiUsageInput) {
+    this.assertMember(actor);
+    this.aiUsage.push({ ...u, id: randomUUID(), orgId: actor.orgId, ledToSend: false, sentChannel: null, isDemo: false, createdAt: new Date().toISOString() });
+  }
+  async markAiUsageSent(actor: Actor, opportunityId: string, channel: Channel) {
+    this.assertMember(actor);
+    const u = this.aiUsage.filter(x => x.orgId === actor.orgId && x.opportunityId === opportunityId).at(-1);
+    if (!u) return null;
+    u.ledToSend = true; u.sentChannel = channel;
+    return { model: u.model, dealId: u.dealId, dealTitle: u.dealTitle };
+  }
+  async listAiUsage(actor: Actor, sinceIso: string) {
+    this.assertMember(actor);
+    assertCanManageConsent(this.roleIn(actor.userId, actor.orgId), "view costs");
+    return structuredClone(this.aiUsage.filter(u => u.orgId === actor.orgId && u.createdAt >= sinceIso)).map(({ orgId: _o, ...u }) => u);
+  }
+  async recordSend(actor: Actor, s: SendInput) {
+    this.assertMember(actor);
+    this.sendLedger.push({ ...s, id: randomUUID(), orgId: actor.orgId, userId: actor.userId, isDemo: false, createdAt: new Date().toISOString() });
+  }
+  async listSends(actor: Actor, sinceIso: string) {
+    this.assertMember(actor);
+    return structuredClone(this.sendLedger.filter(x => x.orgId === actor.orgId && x.createdAt >= sinceIso)).map(({ orgId: _o, ...x }) => x);
+  }
+  async listPurchaseRows(actor: Actor, sinceIso: string) {
+    this.assertMember(actor);
+    const real: PurchaseRow[] = this.opps.filter(o => o.orgId === actor.orgId).flatMap(o => o.customer.purchases
+      .filter(p => p.purchasedAt >= sinceIso)
+      .map(p => ({ customerId: o.customer.id, purchaseId: `${o.customer.id}:${p.purchasedAt}`, purchasedAt: p.purchasedAt, priceCents: p.priceCents,
+        category: p.category, productId: p.productId, isDemo: false })));
+    const demo = this.demoPurchases.filter(x => x.orgId === actor.orgId && x.purchasedAt >= sinceIso).map(({ orgId: _o, ...x }) => x);
+    return [...real, ...demo];
   }
   async listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }) {
     this.assertMember(actor);

@@ -226,3 +226,37 @@ Storage and matching:
    You can send the secret in an `X-Inbound-Secret` header instead.
 
 The endpoint accepts multipart (SendGrid's default), urlencoded or JSON. Attachments are discarded and quoted text is stripped. The sender must match the thread's address, so a spoofed or forwarded reply is ignored. Without `INBOUND_EMAIL_SECRET` the endpoint returns 503.
+
+## Cost metrics (Settings → Cost metrics, owners/admins)
+
+Every suggestion call writes one `ai_usage` row: org, opportunity, actor, model, provider, input/output tokens (from the
+API response's `usage`), `cost_usd` priced at call time from the versioned table in `retail-outreach-backend/src/ai/models.ts`
+(`PRICE_TABLE_VERSION`; changing prices never rewrites history), the featured deal, and whether it led to a send
+(`led_to_send`, `sent_channel`). "Rules only" calls are recorded with 0 tokens and $0.
+
+Each send also writes an `outreach_sends` ledger row (who sent, channel, deal + its categories/products, and the model
+that wrote the suggestion), so messages sent are counted per model.
+
+`GET /api/metrics/costs` returns the year to date: total spend, messages sent, AI calls, a per-model breakdown, then
+months newest first with per-model rows (messages sent, AI calls, tokens in/out, spend) and a month total. USD shows
+sub-cent precision (`$0.000585`). Staff get 403; RLS only lets owners/admins select `ai_usage`, and members mark a call as
+sent through the narrow `mark_ai_usage_sent()` definer function.
+
+## Performance metrics (☰ → Performance metrics, all members)
+
+**Attribution:** a purchase counts as a conversion for the *most recent* send to the same customer made within **N days**
+before it (default 7; `GET /api/metrics/performance?days=N`, 1–90). If that send featured a promotion with categories or
+products, only purchase lines in those categories/products count (the POS has no promo codes, so category/product is the
+match); a send without a promotion counts any line. Each purchase line is credited to at most one send. Attributed
+revenue is the sum of those lines; AOV = attributed revenue ÷ attributed orders.
+
+The page shows: attributed revenue this month vs last month (growth %), YTD, conversion rate, AOV and a 6-month bar
+chart (inline SVG, no chart dependency); promotions this year with usage % (share of sends that featured it), sends,
+conversions, conversion rate and revenue; and a leaderboard (Today / This week / This month / All time) with rank,
+initials avatar, sends, conversions (progress bar), conversion rate and revenue, 🥇🥈🥉 for the top 3, an **On fire**
+badge (≥30% conversion on ≥5 sends), a **N-day streak** badge (≥3 consecutive days with sends) and an all-members totals row.
+Staff see everyone's sends/conversions but only their own revenue (others show "—").
+
+**Demo data:** `src/data/demoMetrics.ts` generates ~5 months of usage, sends by four fictional staff ("Maya R. (demo)" …)
+and purchases, deterministically. Rows are `is_demo = true` (Postgres seed) and the pages show an "includes demo data"
+pill. Demo purchases never appear in the deck's customer history. RLS: members can't insert `is_demo` rows.

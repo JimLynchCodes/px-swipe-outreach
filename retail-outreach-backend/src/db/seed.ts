@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type pg from "pg";
 import * as seed from "../data/seed.js";
+import { buildDemoMetrics } from "../data/demoMetrics.js";
 import { segmentOf } from "../domain.js";
 import type { Customer } from "../types.js";
 import { createPool } from "./pool.js";
@@ -94,6 +95,33 @@ export async function seedOrg(db: pg.PoolClient, opts: { orgId: string; name: st
         pick.score, pick.rationale, new Date(now - (seed.customers.length - i) * 60_000)]);
   }
   await seedDealsAndSettings(db, orgId, id);
+  await seedDemoMetrics(db, orgId, id);
+}
+
+/** Demo AI usage, sends by fictional staff and attributed purchases (is_demo = true). Only seeded once per org. */
+async function seedDemoMetrics(db: pg.PoolClient, orgId: string, id: (n: string) => string) {
+  if ((await db.query(`select 1 from public.outreach_sends where org_id = $1 and is_demo limit 1`, [orgId])).rowCount) return;
+  const m = buildDemoMetrics();
+  const dealUuid = (d: string | null) => d ? id(`deal:${Number(d.slice(5)) - 1}`) : null;
+  for (const u of m.usage) {
+    await db.query(`insert into public.ai_usage (org_id, model, provider, input_tokens, output_tokens, cost_usd, price_version, deal_id, deal_title,
+        led_to_send, sent_channel, is_demo, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12)`,
+      [orgId, u.model, u.provider, u.inputTokens, u.outputTokens, u.costUsd, u.priceVersion, dealUuid(u.dealId), u.dealTitle, u.ledToSend, u.sentChannel, u.createdAt]);
+  }
+  for (const x of m.sends) {
+    await db.query(`insert into public.outreach_sends (org_id, user_label, customer_id, channel, deal_id, deal_title, deal_categories, deal_product_ids,
+        model, is_demo, created_at) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10)`,
+      [orgId, x.userLabel, id(`customer:${x.customerId}`), x.channel, dealUuid(x.dealId), x.dealTitle, x.dealCategories,
+        x.dealProductIds.map(p => id(`product:${p}`)), x.model, x.createdAt]);
+  }
+  for (const [i, p] of m.purchases.entries()) {
+    const purchaseId = id(`demo-purchase:${i}`);
+    await db.query(`insert into public.purchases (id, org_id, customer_id, purchased_at, total_cents, is_demo) values ($1,$2,$3,$4,$5,true)
+      on conflict (id) do nothing`, [purchaseId, orgId, id(`customer:${p.customerId}`), p.purchasedAt, p.priceCents]);
+    const prod = seed.productById(p.productId!);
+    await db.query(`insert into public.purchase_items (org_id, purchase_id, product_id, product_name, unit_price_cents) values ($1,$2,$3,$4,$5)`,
+      [orgId, purchaseId, id(`product:${p.productId}`), prod.name, p.priceCents]);
+  }
 }
 
 async function seedDealsAndSettings(db: pg.PoolClient, orgId: string, id: (n: string) => string) {

@@ -25,8 +25,8 @@ export function assertCanEditDeals(role: MemberRole | undefined) {
 }
 
 /** Only owners/admins may ask an opted-out customer to re-subscribe. Nobody (staff included) can lift an opt-out directly. */
-export function assertCanManageConsent(role: MemberRole | undefined) {
-  if (!role || !canManageTeam(role)) throw new StoreError("forbidden", "Only owners and admins can send re-opt-in requests", "insufficient_role");
+export function assertCanManageConsent(role: MemberRole | undefined, what = "send re-opt-in requests") {
+  if (!role || !canManageTeam(role)) throw new StoreError("forbidden", `Only owners and admins can ${what}`, "insufficient_role");
 }
 
 /** One request per customer+channel per 30 days, and never while one is pending. */
