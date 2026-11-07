@@ -101,7 +101,7 @@ describe('App', () => {
     await screen.findByText('Hi! (sms)')
     fireEvent.click(screen.getByRole('button', { name: /edit/i }))
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Custom text' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     fireEvent.click(screen.getByRole('button', { name: 'Send message' }))
     await screen.findByText('Maya M.')
     const send = calls.find(c => c.url.endsWith('/send'))!
@@ -110,14 +110,14 @@ describe('App', () => {
     expect(screen.getByText('2 / 2')).toBeInTheDocument()
   })
 
-  it('blocks every send path while editing; Save keeps edits, Cancel reverts', async () => {
+  it('blocks every send path while editing; Done keeps edits, Cancel reverts', async () => {
     render(<App />)
     await screen.findByText('Hi! (sms)')
     fireEvent.click(screen.getByRole('button', { name: /edit/i }))
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Draft A' } })
     const send = screen.getByRole('button', { name: 'Send message' })
     expect(send).toBeDisabled()
-    expect(document.querySelector('.edit-hint')).toHaveTextContent('Save or cancel your edits to send')
+    expect(document.querySelector('.edit-hint')).toHaveTextContent('Click Done or Cancel to send')
     expect(screen.getByRole('radio', { name: /email/i })).toBeDisabled()
     // → key (focus outside the textarea) and a swipe right must not send
     fireEvent.keyDown(window, { key: 'ArrowRight' })
@@ -138,11 +138,26 @@ describe('App', () => {
     // Save keeps the edit, and that's what → sends
     fireEvent.click(screen.getByRole('button', { name: /edit/i }))
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Draft B' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }))
     expect(screen.getByText('Draft B')).toBeInTheDocument()
     fireEvent.keyDown(window, { key: 'ArrowRight' })
     await screen.findByText('Maya M.')
     expect(JSON.parse(String(calls.find(c => c.url.endsWith('/send'))!.init!.body)).message).toBe('Draft B')
+  })
+
+  it('disables the real Send button the moment editing starts, on both channels', async () => {
+    render(<App />)
+    await screen.findByText('Hi! (sms)')
+    const send = screen.getByRole('button', { name: 'Send message' })
+    for (const ch of ['sms', 'email'] as const) {
+      if (ch === 'email') { fireEvent.click(screen.getByRole('radio', { name: /email/i })); await screen.findByText('Hi! (email)') }
+      expect(send).not.toHaveAttribute('disabled')
+      fireEvent.click(screen.getByRole('button', { name: /edit/i }))
+      expect(send).toHaveAttribute('disabled')
+      expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+      expect(send).not.toHaveAttribute('disabled')
+    }
   })
 
   it('re-runs the current suggestion when the AI model changes', async () => {

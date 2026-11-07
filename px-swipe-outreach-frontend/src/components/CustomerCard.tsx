@@ -124,7 +124,7 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
           {draft.editing ? (
             <span className="edit-actions">
               <button className="edit cancel" onClick={onCancelEdit}><X size={14} aria-hidden /> Cancel</button>
-              <button className="edit save" onClick={onSaveEdit} disabled={!draft.message.trim()}><Check size={14} aria-hidden /> Save</button>
+              <button className="edit save" onClick={onSaveEdit} disabled={!draft.message.trim()}><Check size={14} aria-hidden /> Done</button>
             </span>
           ) : (
             <button className="edit" onClick={onEdit} disabled={!s}><Pencil size={14} aria-hidden /> Edit</button>
@@ -136,7 +136,7 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
         {draft.editing
           ? <textarea aria-label="Message" value={draft.message} onChange={e => onMessage(e.target.value)} rows={5} autoFocus />
           : <p className="message-text">{draft.message || (draft.loading ? '…' : '')}</p>}
-        {draft.editing && <p className="edit-hint" role="status">Save or cancel your edits to send</p>}
+        {draft.editing && <p className="edit-hint" role="status">Click Done or Cancel to send</p>}
         <span className={`muted small ${draft.channel === 'sms' && count > SMS_MAX ? 'error' : ''}`}>
           {draft.channel === 'sms' ? `SMS · ${count}/${SMS_MAX} characters · includes signature and “Reply STOP to opt out.”` : `Email · ${count} characters · unsubscribe link added`}
         </span>

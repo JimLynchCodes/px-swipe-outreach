@@ -107,7 +107,7 @@ export default function App() {
     if (!current || !draft || busy) return
     if (draft.editing) { // unsaved edits: never send (covers button, swipe and → key)
       setDragX(0)
-      setToast({ kind: 'err', text: 'Save or cancel your edits to send' })
+      setToast({ kind: 'err', text: 'Click Done or Cancel to send' })
       return
     }
     const reachable = draft.channel === 'sms' ? current.customer.contact.sms : current.customer.contact.email
@@ -252,7 +252,7 @@ export default function App() {
             <span className="circle"><ArrowLeft size={22} /></span><span>{busy === 'skip' ? 'Skipping…' : 'Skip'}</span>
           </button>
           <button className="action send" onClick={() => void send()} disabled={!!busy || !draft?.suggestion || !!blocked || !!draft?.editing} aria-label="Send message"
-            title={draft?.editing ? 'Save or cancel your edits to send' : undefined}>
+            title={draft?.editing ? 'Click Done or Cancel to send' : undefined}>
             <span>{busy === 'send' ? 'Sending…' : 'Send'}</span><span className="circle"><ArrowRight size={22} /></span>
           </button>
         </footer>
