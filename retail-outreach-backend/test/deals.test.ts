@@ -20,6 +20,8 @@ beforeEach(async () => {
   const fake = await fakeSupabase();
   sign = s => fake.sign(s);
   ({ app } = await makeApp({ store, authenticator: fake.authenticator }));
+  // Seasonal seed promotions are dated relative to today; drop them so suggestion assertions don't depend on the date.
+  for (const d of (await as(OWNER, "GET", "/api/deals")).json().deals) if (d.schedule === "range") await as(OWNER, "DELETE", `/api/deals/${d.id}`);
 });
 afterEach(async () => { await app?.close(); });
 
@@ -48,6 +50,19 @@ describe("promotions (deals)", () => {
     expect(off.json().deal.active).toBe(false);
     expect((await as(OWNER, "DELETE", `/api/deals/${d.id}`)).statusCode).toBe(200);
     expect((await as(OWNER, "DELETE", `/api/deals/${d.id}`)).statusCode).toBe(404);
+  });
+
+  it("date-range promotions need both dates and run every day", async () => {
+    const range = { ...deal, schedule: "range", days: [], startsOn: "2026-11-20", endsOn: "2026-12-31" };
+    const r = await as(OWNER, "POST", "/api/deals", range);
+    expect(r.statusCode).toBe(201);
+    expect(r.json().deal).toMatchObject({ schedule: "range", days: [0, 1, 2, 3, 4, 5, 6], startsOn: "2026-11-20", endsOn: "2026-12-31" });
+    const noEnd = await as(OWNER, "POST", "/api/deals", { ...range, endsOn: null });
+    expect(noEnd.statusCode).toBe(400);
+    expect(noEnd.json().details.join(" ")).toContain("endsOn");
+    expect((await as(OWNER, "POST", "/api/deals", { ...range, schedule: "monthly" })).statusCode).toBe(400);
+    // weekly stays the default
+    expect((await as(OWNER, "POST", "/api/deals", deal)).json().deal.schedule).toBe("weekly");
   });
 
   it("staff cannot edit promotions", async () => {

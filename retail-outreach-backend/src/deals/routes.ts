@@ -7,8 +7,10 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const date = z.string().regex(ISO_DATE, "must be YYYY-MM-DD").refine(s => !Number.isNaN(Date.parse(s)), "invalid date").nullable();
 const text = (max: number) => z.string().trim().max(max);
 
+const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 export const dealInput = z.object({
-  days: z.array(z.number().int().min(0).max(6)).min(1).max(7).transform(d => [...new Set(d)].sort()),
+  schedule: z.enum(["weekly", "range"]).default("weekly"),
+  days: z.array(z.number().int().min(0).max(6)).max(7).default([]).transform(d => [...new Set(d)].sort()),
   title: text(80).min(1),
   description: text(300).default(""),
   discountType: z.enum(["percent", "amount", "bogo", "freebie"]),
@@ -23,7 +25,9 @@ export const dealInput = z.object({
   if (d.discountType === "amount" && (d.discountValue === null || d.discountValue > 100_000)) ctx.addIssue({ code: "custom", path: ["discountValue"], message: "amount (cents) must be 1-100000" });
   if ((d.discountType === "bogo" || d.discountType === "freebie") && d.discountValue !== null) ctx.addIssue({ code: "custom", path: ["discountValue"], message: "must be null for this discount type" });
   if (d.startsOn && d.endsOn && d.endsOn < d.startsOn) ctx.addIssue({ code: "custom", path: ["endsOn"], message: "must be on or after startsOn" });
-});
+  if (d.schedule === "weekly" && d.days.length === 0) ctx.addIssue({ code: "custom", path: ["days"], message: "pick at least one day" });
+  if (d.schedule === "range" && (!d.startsOn || !d.endsOn)) ctx.addIssue({ code: "custom", path: [d.startsOn ? "endsOn" : "startsOn"], message: "a date-range promotion needs a start and end date" });
+}).transform(d => (d.schedule === "range" ? { ...d, days: ALL_DAYS } : d));
 
 export const settingsInput = z.object({
   storeName: text(100).nullable().transform(s => s || null),

@@ -98,6 +98,11 @@ export function recommend(c: Customer, deals: Deal[], opts: RecommendOptions = {
     }
     if (brandHits.length) { score += 15; reasons.push(`Favorite brand on deal: ${brandHits.join(", ")}`); }
     if (storewide) { score += 8; reasons.push("Storewide deal"); }
+    if (deal.schedule === "range" && deal.endsOn) {
+      const left = Math.round((Date.parse(`${deal.endsOn}T00:00:00`) - Date.parse(`${isoDate(now)}T00:00:00`)) / DAY_MS);
+      reasons.push(`Seasonal promotion, runs every day through ${deal.endsOn}${left >= 0 && left <= 7 ? ` (ends in ${left} day${left === 1 ? "" : "s"})` : ""}`);
+      if (left >= 0 && left <= 7) score += 5;
+    }
     if (c.profile.preferredDay === day) {
       score += 20;
       reasons.push(`Runs ${WEEKDAYS[day]}, the day they usually shop${c.profile.preferredTime ? ` (${c.profile.preferredTime})` : ""}`);

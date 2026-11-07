@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { CalendarDays, Pencil, Plus, Tag, X } from 'lucide-react'
+import { CalendarDays, CalendarRange, Pencil, Plus, Settings2, Tag, Trash2, X } from 'lucide-react'
+import { navigate } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
 import type { Deal, DealInput } from '../types'
-import { categoryLabel, DAYS, discountLabel, todayIndex } from '../lib/week'
+import { categoryLabel, DAYS, discountLabel, formatRange, rangeStatus, todayIndex } from '../lib/week'
 import { emptyDeal, PromotionForm } from './PromotionForm'
 import { toInput, useDeals } from './useDeals'
 
@@ -16,6 +17,11 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
   const { deals, catalog, error, create, update, remove } = useDeals(onChange)
   const [editing, setEditing] = useState<{ id: string | null; input: DealInput } | null>(null)
   const today = todayIndex()
+
+  async function removeSeasonal(deal: Deal) {
+    if (!window.confirm(`Delete "${deal.title}"? To pause it instead, untick it in Settings → Promotions.`)) return
+    await remove(deal.id)
+  }
 
   async function removeFromDay(deal: Deal, day: number) {
     if (deal.days.length > 1) {
@@ -42,7 +48,7 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
       {deals && (
         <ol className="week">
           {DAYS.map((day, i) => {
-            const items = deals.filter(d => d.active && d.days.includes(i))
+            const items = deals.filter(d => d.schedule !== 'range' && d.active && d.days.includes(i))
             return (
               <li key={day} className={`day ${i === today ? 'today' : ''}`} aria-label={day}>
                 <div className="day-head">
@@ -74,6 +80,57 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
           })}
         </ol>
       )}
+      {deals && <SeasonalDeals deals={deals.filter(d => d.schedule === 'range')} canEdit={canEdit}
+        onAdd={() => setEditing({ id: null, input: emptyDeal([], 'range') })}
+        onEdit={d => setEditing({ id: d.id, input: toInput(d) })} onRemove={d => void removeSeasonal(d)} />}
+      <button className="btn-small manage-promos" onClick={() => navigate('/settings#promotions')}>
+        <Settings2 size={14} aria-hidden /> Manage promotions
+      </button>
     </aside>
+  )
+}
+
+/**
+ * Longer-running promotions (holiday season, Black Friday weekend, 4/20 week, month-long specials) that apply every
+ * day in a date range. Ended ones are hidden here (they stay in Settings → Promotions).
+ */
+function SeasonalDeals({ deals, canEdit, onAdd, onEdit, onRemove }: {
+  deals: Deal[]; canEdit: boolean; onAdd: () => void; onEdit: (d: Deal) => void; onRemove: (d: Deal) => void
+}) {
+  const items = deals
+    .map(d => ({ d, status: rangeStatus(d.startsOn, d.endsOn) }))
+    .filter(x => x.status.state !== 'ended')
+    .sort((a, b) => (a.d.startsOn ?? '').localeCompare(b.d.startsOn ?? ''))
+  return (
+    <section className="seasonal" aria-labelledby="seasonal-h">
+      <div className="day-head">
+        <h3 id="seasonal-h" className="panel-subtitle"><CalendarRange size={16} aria-hidden /> Seasonal &amp; ongoing deals</h3>
+        {canEdit && (
+          <button className="icon-btn sm" aria-label="Add seasonal deal" title="Add" onClick={onAdd}><Plus size={15} /></button>
+        )}
+      </div>
+      {items.length === 0 && <p className="muted small">No seasonal deals. Add one for a holiday or a month-long special.</p>}
+      <ul className="seasonal-list">
+        {items.map(({ d, status }) => (
+          <li key={d.id} className={`deal seasonal-item ${d.active ? '' : 'off'}`} aria-label={d.title}>
+            <Tag size={14} aria-hidden className={d.active ? 'green' : 'muted'} />
+            <div className="deal-body">
+              <span className="deal-title">{d.title}</span>
+              <span className="deal-meta">{formatRange(d.startsOn, d.endsOn)} · {discountLabel(d)}</span>
+              <span className="deal-badges">
+                <span className={`tag ${status.state}`}>{status.label}</span>
+                <span className={`tag ${d.active ? 'enabled' : 'disabled'}`}>{d.active ? 'Enabled' : 'Disabled'}</span>
+              </span>
+            </div>
+            {canEdit && (
+              <span className="deal-actions">
+                <button className="icon-btn sm" aria-label={`Edit ${d.title}`} onClick={() => onEdit(d)}><Pencil size={13} /></button>
+                <button className="icon-btn sm danger" aria-label={`Delete ${d.title}`} onClick={() => onRemove(d)}><Trash2 size={13} /></button>
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }

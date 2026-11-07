@@ -1,9 +1,9 @@
 import { useState, type FormEvent } from 'react'
-import type { CatalogProduct, DealInput, DiscountType } from '../types'
+import type { CatalogProduct, DealInput, DealSchedule, DiscountType } from '../types'
 import { categoryLabel, DAYS_SHORT } from '../lib/week'
 
-export const emptyDeal = (days: number[] = []): DealInput => ({
-  days, title: '', description: '', discountType: 'percent', discountValue: 10, categories: [], productIds: [],
+export const emptyDeal = (days: number[] = [], schedule: DealSchedule = 'weekly'): DealInput => ({
+  schedule, days: schedule === 'range' ? [0, 1, 2, 3, 4, 5, 6] : days, title: '', description: '', discountType: 'percent', discountValue: 10, categories: [], productIds: [],
   startsOn: null, endsOn: null, active: true,
 })
 
@@ -27,13 +27,16 @@ export function PromotionForm({ initial, catalog, onSave, onCancel }: Props) {
 
   async function submit(e: FormEvent) {
     e.preventDefault()
-    if (!d.days.length) { setError('Pick at least one day'); return }
+    if (d.schedule === 'weekly' && !d.days.length) { setError('Pick at least one day'); return }
+    if (d.schedule === 'range' && (!d.startsOn || !d.endsOn)) { setError('A date-range promotion needs a start and end date'); return }
+    if (d.startsOn && d.endsOn && d.endsOn < d.startsOn) { setError('End date must be on or after the start date'); return }
     const n = Number(value)
     if (needsValue && !(n > 0)) { setError('Enter a discount'); return }
     setSaving(true); setError(null)
     try {
       await onSave({
         ...d, title: d.title.trim(), description: d.description.trim(),
+        days: d.schedule === 'range' ? [0, 1, 2, 3, 4, 5, 6] : d.days,
         discountValue: !needsValue ? null : d.discountType === 'amount' ? Math.round(n * 100) : Math.round(n),
       })
     } catch (err) {
@@ -61,7 +64,13 @@ export function PromotionForm({ initial, catalog, onSave, onCancel }: Props) {
           </label>
         )}
       </div>
-      <fieldset><legend>Days</legend>
+      <label>Schedule
+        <select value={d.schedule} onChange={e => set('schedule', e.target.value as DealSchedule)}>
+          <option value="weekly">Weekly: on certain days</option>
+          <option value="range">Date range: every day (seasonal / ongoing)</option>
+        </select>
+      </label>
+      {d.schedule === 'weekly' && <fieldset><legend>Days</legend>
         <div className="chips">
           {DAYS_SHORT.map((label, i) => (
             <label key={label} className={`chip ${d.days.includes(i) ? 'on' : ''}`}>
@@ -69,7 +78,7 @@ export function PromotionForm({ initial, catalog, onSave, onCancel }: Props) {
             </label>
           ))}
         </div>
-      </fieldset>
+      </fieldset>}
       <fieldset><legend>Categories</legend>
         <div className="chips">
           {catalog.categories.map(c => (
@@ -86,8 +95,8 @@ export function PromotionForm({ initial, catalog, onSave, onCancel }: Props) {
         </select>
       </label>
       <div className="row-fields">
-        <label>Starts<input type="date" value={d.startsOn ?? ''} onChange={e => set('startsOn', e.target.value || null)} /></label>
-        <label>Ends<input type="date" value={d.endsOn ?? ''} onChange={e => set('endsOn', e.target.value || null)} /></label>
+        <label>Starts<input type="date" required={d.schedule === 'range'} value={d.startsOn ?? ''} onChange={e => set('startsOn', e.target.value || null)} /></label>
+        <label>Ends<input type="date" required={d.schedule === 'range'} value={d.endsOn ?? ''} onChange={e => set('endsOn', e.target.value || null)} /></label>
       </div>
       <label className="check"><input type="checkbox" checked={d.active} onChange={e => set('active', e.target.checked)} /> Enabled</label>
       {error && <p className="error" role="alert">{error}</p>}

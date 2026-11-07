@@ -99,9 +99,9 @@ export async function seedOrg(db: pg.PoolClient, opts: { orgId: string; name: st
 async function seedDealsAndSettings(db: pg.PoolClient, orgId: string, id: (n: string) => string) {
   for (const [i, d] of seed.deals.entries()) {
     await db.query(`insert into public.deals (id, org_id, days, title, description, discount_type, discount_value, categories, product_ids,
-        starts_on, ends_on, active) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict (id) do nothing`,
+        starts_on, ends_on, active, schedule) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) on conflict (id) do nothing`,
       [id(`deal:${i}`), orgId, d.days, d.title, d.description, d.discountType, d.discountValue, d.categories,
-        d.productIds.map(p => id(`product:${p}`)), d.startsOn, d.endsOn, d.active]);
+        d.productIds.map(p => id(`product:${p}`)), d.startsOn, d.endsOn, d.active, d.schedule]);
   }
   const contactOf = (cid: string, ch: "sms" | "email") => {
     const c = seed.customers.find(x => x.id === cid)!;

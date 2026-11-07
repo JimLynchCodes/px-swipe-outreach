@@ -135,7 +135,7 @@ In demo mode all `/api/*` routes run as the demo tenant. Errors look like `{ "er
 | `PATCH /api/team/members/:userId` | `{role}` | Changes a role. `409 last_owner` |
 | `DELETE /api/team/members/:userId` | – | Removes a member (or yourself = leave) |
 | `GET /api/deals` / `POST /api/deals` | – / `DealInput` | Promotions (see [docs/OUTREACH_FEATURES.md](../docs/OUTREACH_FEATURES.md)). Writes are owner/admin only |
-| `PUT /api/deals/:id` / `DELETE /api/deals/:id` | `DealInput` / – | `DealInput = {days[], title, description, discountType, discountValue, categories[], productIds[], startsOn, endsOn, active}` |
+| `PUT /api/deals/:id` / `DELETE /api/deals/:id` | `DealInput` / – | `DealInput = {schedule: "weekly"\|"range", days[], title, description, discountType, discountValue, categories[], productIds[], startsOn, endsOn, active}` |
 | `GET /api/catalog` | – | `{products, categories}` for the promotion editor |
 | `GET /api/settings` / `PUT /api/settings` | – / `OrgSettings` | `{storeName, emailSignature, smsSignature, defaultChannel, maxDiscountPercent}`. PUT is owner/admin only |
 | `GET /api/opt-outs?channel=&q=&page=&pageSize=` | – | `{items: [{id, channel, contact (masked), customerName, source, createdAt}], total}` |

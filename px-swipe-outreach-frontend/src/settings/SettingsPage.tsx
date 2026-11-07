@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import { api } from '../api'
 import { useAuth } from '../auth/AuthProvider'
@@ -6,7 +6,7 @@ import { PageShell } from '../components/PageShell'
 import { emptyDeal, PromotionForm } from '../deals/PromotionForm'
 import { toInput, useDeals } from '../deals/useDeals'
 import { charCount } from '../lib/format'
-import { categoryLabel, DAYS_SHORT, discountLabel } from '../lib/week'
+import { categoryLabel, DAYS_SHORT, discountLabel, formatRange, rangeStatus } from '../lib/week'
 import type { DealInput, OrgSettings } from '../types'
 
 export const SMS_SIGNATURE_MAX = 60
@@ -74,10 +74,18 @@ function Promotions({ canEdit }: { canEdit: boolean }) {
   const { deals, catalog, error, create, update, remove } = useDeals()
   const [editing, setEditing] = useState<{ id: string | null; input: DealInput } | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  const sectionRef = useRef<HTMLElement>(null)
+  // /settings#promotions (e.g. "Manage promotions" in the deals panel) jumps here once the list has loaded.
+  useEffect(() => {
+    if (deals && window.location.hash === '#promotions') {
+      sectionRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+      sectionRef.current?.focus({ preventScroll: true })
+    }
+  }, [deals])
   const act = (fn: () => Promise<void>) => fn().catch(e => setErr(e instanceof Error ? e.message : String(e)))
 
   return (
-    <section className="panel" aria-labelledby="promos-h">
+    <section className="panel" id="promotions" aria-labelledby="promos-h" ref={sectionRef} tabIndex={-1}>
       <div className="panel-head">
         <h3 id="promos-h" className="eyebrow">Promotions</h3>
         {canEdit && !editing && <button className="btn-small" onClick={() => setEditing({ id: null, input: emptyDeal([]) })}><Plus size={14} /> Add promotion</button>}
@@ -98,9 +106,11 @@ function Promotions({ canEdit }: { canEdit: boolean }) {
                 <div>
                   <div className="row-title">{d.title} <span className="tag">{discountLabel(d)}</span></div>
                   <div className="muted small">
-                    {d.days.length === 7 ? 'Every day' : d.days.map(i => DAYS_SHORT[i]).join(', ')}
+                    {d.schedule === 'range'
+                      ? `Seasonal · every day ${formatRange(d.startsOn, d.endsOn)} · ${rangeStatus(d.startsOn, d.endsOn).label}`
+                      : d.days.length === 7 ? 'Every day' : d.days.map(i => DAYS_SHORT[i]).join(', ')}
                     {d.categories.length > 0 && ` · ${d.categories.map(categoryLabel).join(', ')}`}
-                    {(d.startsOn || d.endsOn) && ` · ${d.startsOn ?? '…'} → ${d.endsOn ?? '…'}`}
+                    {d.schedule !== 'range' && (d.startsOn || d.endsOn) && ` · ${d.startsOn ?? '…'} → ${d.endsOn ?? '…'}`}
                   </div>
                 </div>
               </label>

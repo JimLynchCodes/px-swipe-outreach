@@ -66,7 +66,10 @@ export interface SendResult {
 }
 
 export type DiscountType = 'percent' | 'amount' | 'bogo' | 'freebie'
+/** weekly = runs on `days`; range = seasonal/ongoing, every day from startsOn to endsOn. */
+export type DealSchedule = 'weekly' | 'range'
 export interface DealInput {
+  schedule: DealSchedule
   days: number[]
   title: string
   description: string

@@ -278,7 +278,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
   });
   describe("promotions & settings", () => {
     const A = { userId: ALICE, orgId: ORG_A };
-    const input = { days: [4, 5], title: "Weekend glass", description: "", discountType: "percent" as const, discountValue: 10,
+    const input = { schedule: "weekly" as const, days: [4, 5], title: "Weekend glass", description: "", discountType: "percent" as const, discountValue: 10,
       categories: ["glass"], productIds: [] as string[], startsOn: "2026-11-01", endsOn: null, active: true };
 
     it("seeds promotions and settings; product ids map to the org's catalog", async () => {
@@ -288,6 +288,15 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       const catalog = await store.listCatalog(A);
       expect(thursday.productIds.map(id => catalog.find(p => p.id === id)?.brand).sort()).toEqual(["Elf Bar", "Geek Bar"]);
       expect(await store.getSettings(A)).toMatchObject({ storeName: "Cloud 9 Smoke Shop", smsSignature: "-Cloud 9" });
+    });
+
+    it("date-range promotions round-trip and the DB enforces their dates", async () => {
+      const r = await store.createDeal(A, { ...input, schedule: "range", days: [0, 1, 2, 3, 4, 5, 6], startsOn: "2026-11-20", endsOn: "2026-12-31" });
+      expect(r).toMatchObject({ schedule: "range", days: [0, 1, 2, 3, 4, 5, 6], startsOn: "2026-11-20", endsOn: "2026-12-31" });
+      await expect(admin.query(`update public.deals set ends_on = null where id = $1`, [r.id])).rejects.toThrow(/deals_range_dates_check/);
+      await expect(admin.query(`update public.deals set schedule = 'monthly' where id = $1`, [r.id])).rejects.toThrow(/deals_schedule_check/);
+      expect((await store.listDeals(A)).some(d => d.id === r.id && d.schedule === "range")).toBe(true);
+      await store.deleteDeal(A, r.id);
     });
 
     it("owner CRUD round-trips; other orgs and staff are blocked by RLS", async () => {

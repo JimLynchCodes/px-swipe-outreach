@@ -59,7 +59,13 @@ export type DiscountType = "percent" | "amount" | "bogo" | "freebie";
  * A promotion (deal/special). Promotions are reusable entries; `days` places them in the weekly slots
  * and `active` is the on/off switch. Only active promotions running on a given day reach the suggestion engine.
  */
+export type DealSchedule = "weekly" | "range";
 export type DealInput = {
+  /**
+   * "weekly": runs on `days` (optionally bounded by startsOn/endsOn).
+   * "range": a seasonal/ongoing promotion that runs every day from startsOn to endsOn (both required; days = all 7).
+   */
+  schedule: DealSchedule;
   /** Weekdays it runs on, 0 = Monday … 6 = Sunday (at least one). */
   days: number[];
   title: string;

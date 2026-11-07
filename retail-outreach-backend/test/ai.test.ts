@@ -3,11 +3,12 @@ import { FallbackSuggestionProvider, RulesSuggestionProvider, createSuggestionPr
 import { buildSeedDeals, buildSeedOpportunities } from "../src/store/memory.js";
 import { discountLabel, humanizeDays, isAgeEligible, isValidPhone, segmentOf, SMS_OPT_OUT, withSmsOptOut } from "../src/domain.js";
 import { bestDealDay, dealRunsOn, recommend } from "../src/recommend.js";
-import { products } from "../src/data/seed.js";
+import { products, seasonalDeals } from "../src/data/seed.js";
 import type { Deal } from "../src/types.js";
 
 const opps = buildSeedOpportunities();
-const deals = buildSeedDeals();
+// Weekly deals only: seasonal seed promotions are dated relative to today, which would make these assertions date-dependent.
+const deals = buildSeedDeals().filter(d => d.schedule === "weekly");
 const catalog = products.map(p => ({ id: p.id, name: p.name, brand: p.brand, category: p.category, priceCents: p.priceCents }));
 const byName = (n: string) => opps.find(o => o.customer.firstName === n)!;
 const input = (name: string, channel: "sms" | "email" = "sms", extra: Partial<SuggestionInput> = {}): SuggestionInput => {
@@ -131,5 +132,41 @@ describe("domain helpers", () => {
     expect(discountLabel({ discountType: "bogo", discountValue: null })).toBe("Buy one, get one");
     expect(withSmsOptOut("Hi")).toBe(`Hi\n${SMS_OPT_OUT}`);
     expect(withSmsOptOut(`Hi\n${SMS_OPT_OUT}`)).toBe(`Hi\n${SMS_OPT_OUT}`);
+  });
+});
+
+describe("seasonal (date-range) promotions", () => {
+  const NOW = new Date(2026, 10, 25, 10).getTime(); // Wed Nov 25 2026
+  const seasonal = (over: Partial<Deal> = {}): Deal => ({
+    id: "deal_s", orgId: "o", schedule: "range", days: [0, 1, 2, 3, 4, 5, 6], title: "Holiday Season Glass", description: "20% off glass",
+    discountType: "percent", discountValue: 20, categories: ["glass"], productIds: [], startsOn: "2026-11-20", endsOn: "2026-12-31",
+    active: true, createdAt: "", updatedAt: "", ...over
+  });
+  const glassFan = () => opps.find(o => o.customer.profile.favoriteCategories.includes("glass"))!.customer;
+
+  it("runs every day inside its window and never outside it", () => {
+    for (let d = 0; d < 7; d++) expect(dealRunsOn(seasonal(), d, NOW)).toBe(true);
+    expect(dealRunsOn(seasonal({ startsOn: "2026-12-10" }), 0, NOW)).toBe(false);
+    expect(dealRunsOn(seasonal({ endsOn: "2026-11-24" }), 3, NOW)).toBe(false);
+    expect(dealRunsOn(seasonal({ active: false }), 3, NOW)).toBe(false);
+  });
+
+  it("is considered alongside weekly deals and explains itself", () => {
+    const rec = recommend(glassFan(), [seasonal()], { catalog, now: NOW });
+    expect(rec.deal?.title).toBe("Holiday Season Glass");
+    expect(rec.reasons.join(" ")).toMatch(/Seasonal promotion, runs every day through 2026-12-31/);
+    const ending = recommend(glassFan(), [seasonal({ endsOn: "2026-11-28" })], { catalog, now: NOW });
+    expect(ending.reasons.join(" ")).toMatch(/ends in 3 days/);
+    expect(recommend(glassFan(), [seasonal({ active: false })], { catalog, now: NOW }).deal).toBeNull();
+    expect(recommend(glassFan(), [seasonal({ discountValue: 40 })], { catalog, now: NOW, maxDiscountPercent: 25 }).deal).toBeNull();
+  });
+
+  it("seeds holiday season, Black Friday weekend, 4/20 week and a month-long special", () => {
+    const s = seasonalDeals(new Date(2026, 10, 7));
+    expect(s.every(d => d.schedule === "range" && d.days.length === 7 && d.startsOn && d.endsOn)).toBe(true);
+    expect(s.find(d => d.title === "Holiday Season Glass")).toMatchObject({ startsOn: "2026-11-20", endsOn: "2026-12-31", active: true });
+    expect(s.find(d => d.title === "Black Friday Weekend")).toMatchObject({ startsOn: "2026-11-27", endsOn: "2026-11-29" });
+    expect(s.find(d => d.title === "4/20 Week")).toMatchObject({ startsOn: "2027-04-16", endsOn: "2027-04-22" });
+    expect(s.find(d => d.title === "November Vape Special")).toMatchObject({ startsOn: "2026-11-01", endsOn: "2026-11-30" });
   });
 });

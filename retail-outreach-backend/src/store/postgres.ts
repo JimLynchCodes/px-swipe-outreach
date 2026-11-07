@@ -106,14 +106,14 @@ const isoDay = (v: Date | string | null) => v === null ? null : typeof v === "st
   : `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
 function toDeal(r: any): Deal {
   return {
-    id: r.id, orgId: r.org_id, days: r.days.map(Number), title: r.title, description: r.description,
+    id: r.id, orgId: r.org_id, schedule: r.schedule ?? "weekly", days: r.days.map(Number), title: r.title, description: r.description,
     discountType: r.discount_type, discountValue: r.discount_value, categories: r.categories, productIds: r.product_ids,
     startsOn: isoDay(r.starts_on), endsOn: isoDay(r.ends_on), active: r.active,
     createdAt: new Date(r.created_at).toISOString(), updatedAt: new Date(r.updated_at).toISOString()
   };
 }
 const dealParams = (d: DealInput) => [d.days, d.title, d.description, d.discountType, d.discountValue, d.categories,
-  d.productIds, d.startsOn, d.endsOn, d.active];
+  d.productIds, d.startsOn, d.endsOn, d.active, d.schedule];
 function toSettings(r: any): OrgSettings {
   return { storeName: r.store_name, emailSignature: r.email_signature, smsSignature: r.sms_signature,
     defaultChannel: r.default_channel, maxDiscountPercent: r.max_discount_percent };
@@ -342,7 +342,7 @@ export class PostgresStore implements OutreachStore {
 
   async listDeals(actor: Actor) {
     return this.asUser(actor.userId, async db => {
-      const r = await db.query(`select * from public.deals where org_id = $1 order by (select min(d) from unnest(days) d), created_at`, [actor.orgId]);
+      const r = await db.query(`select * from public.deals where org_id = $1 order by schedule desc, (select min(d) from unnest(days) d), starts_on nulls first, created_at`, [actor.orgId]);
       return r.rows.map(toDeal);
     });
   }
@@ -350,8 +350,8 @@ export class PostgresStore implements OutreachStore {
     return this.asUser(actor.userId, async db => {
       assertCanEditDeals(await this.role(db, actor));
       const r = await db.query(`insert into public.deals (org_id, days, title, description, discount_type, discount_value, categories,
-          product_ids, starts_on, ends_on, active, created_by)
-        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning *`, [actor.orgId, ...dealParams(d), actor.userId]);
+          product_ids, starts_on, ends_on, active, schedule, created_by)
+        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning *`, [actor.orgId, ...dealParams(d), actor.userId]);
       await this.event(db, actor, actor.orgId, null, "deal_created", { dealId: r.rows[0].id });
       return toDeal(r.rows[0]);
     }).catch(mapTeamError);
@@ -361,7 +361,7 @@ export class PostgresStore implements OutreachStore {
     return this.asUser(actor.userId, async db => {
       assertCanEditDeals(await this.role(db, actor));
       const r = await db.query(`update public.deals set days = $3, title = $4, description = $5, discount_type = $6, discount_value = $7,
-          categories = $8, product_ids = $9, starts_on = $10, ends_on = $11, active = $12
+          categories = $8, product_ids = $9, starts_on = $10, ends_on = $11, active = $12, schedule = $13
         where org_id = $1 and id = $2 returning *`, [actor.orgId, id, ...dealParams(d)]);
       if (!r.rows[0]) throw new StoreError("not_found", "Deal not found");
       await this.event(db, actor, actor.orgId, null, "deal_updated", { dealId: id });

@@ -26,7 +26,7 @@ const go = (path: string) => { window.history.replaceState(null, '', path); rend
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); localStorage.clear(); window.history.replaceState(null, '', '/') })
 
 const SETTINGS = { storeName: 'Cloud 9', emailSignature: 'Cloud 9\n123 Main', smsSignature: '-Cloud 9', defaultChannel: null, maxDiscountPercent: 25 }
-const DEAL = { id: 'd1', orgId: 'org-1', days: [4], title: 'Cigar Friday', description: '', discountType: 'percent', discountValue: 20,
+const DEAL = { id: 'd1', orgId: 'org-1', schedule: 'weekly', days: [4], title: 'Cigar Friday', description: '', discountType: 'percent', discountValue: 20,
   categories: ['cigars'], productIds: [], startsOn: null, endsOn: null, active: true, createdAt: '', updatedAt: '' }
 
 describe('hamburger menu', () => {
@@ -84,7 +84,7 @@ describe('Settings page', () => {
     fireEvent.click(within(form).getByLabelText('CBD'))
     fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(calls.find(c => c.method === 'POST')?.body).toMatchObject({
-      title: 'CBD Monday', days: [0], discountType: 'percent', discountValue: 15, categories: ['cbd'], active: true }))
+      schedule: 'weekly', title: 'CBD Monday', days: [0], discountType: 'percent', discountValue: 15, categories: ['cbd'], active: true }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Delete Cigar Friday' }))
     await waitFor(() => expect(calls.some(c => c.method === 'DELETE' && c.url.endsWith('/api/deals/d1'))).toBe(true))
@@ -185,5 +185,78 @@ describe('brand', () => {
     const { container } = render(<PineappleLogo title="Pineapple" />)
     expect(screen.getByRole('img', { name: 'Pineapple' })).toBeInTheDocument()
     expect(container.querySelectorAll('path').length).toBeGreaterThanOrEqual(4)
+  })
+})
+
+const iso = (offset: number) => { const d = new Date(); d.setDate(d.getDate() + offset); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+const SEASONAL = [
+  { ...DEAL, id: 's1', schedule: 'range', days: [0, 1, 2, 3, 4, 5, 6], title: 'Holiday Season Glass', categories: ['glass'], startsOn: iso(-2), endsOn: iso(10) },
+  { ...DEAL, id: 's2', schedule: 'range', days: [0, 1, 2, 3, 4, 5, 6], title: '4/20 Week', discountType: 'bogo', discountValue: null, startsOn: iso(5), endsOn: iso(11), active: false },
+  { ...DEAL, id: 's3', schedule: 'range', days: [0, 1, 2, 3, 4, 5, 6], title: 'Old Summer Sale', startsOn: iso(-60), endsOn: iso(-30) },
+]
+const deckRoutes = (deals: unknown[]) => ({
+  'GET /api/outreach/queue': () => json({ items: [], total: 0 }),
+  'GET /api/settings': () => json({ settings: SETTINGS }),
+  'GET /api/deals': () => json({ deals }),
+  'GET /api/catalog': () => json({ products: [], categories: ['glass', 'papers'] }),
+})
+
+describe('Seasonal & ongoing deals', () => {
+  it('lists date-range promotions with range, status, discount and enabled state; not in weekly slots', async () => {
+    backend(deckRoutes([DEAL, ...SEASONAL]))
+    go('/')
+    const section = await screen.findByRole('region', { name: /Seasonal & ongoing deals/ })
+    const holiday = within(section).getByRole('listitem', { name: 'Holiday Season Glass' })
+    expect(holiday).toHaveTextContent('10 days left')
+    expect(holiday).toHaveTextContent('20% off')
+    expect(holiday).toHaveTextContent('Enabled')
+    const w420 = within(section).getByRole('listitem', { name: '4/20 Week' })
+    expect(w420).toHaveTextContent('Starts in 5 days')
+    expect(w420).toHaveTextContent('Buy one, get one')
+    expect(w420).toHaveTextContent('Disabled')
+    expect(within(section).queryByText('Old Summer Sale')).toBeNull()
+    expect(screen.getByRole('listitem', { name: 'Friday' })).toHaveTextContent('Cigar Friday')
+    expect(screen.getByRole('listitem', { name: 'Monday' })).not.toHaveTextContent('Holiday Season Glass')
+  })
+
+  it('owners add a seasonal deal with a date range', async () => {
+    const calls = backend({ ...deckRoutes([]), 'POST /api/deals': c => json({ deal: { ...DEAL, ...(c.body as object), id: 'n' } }, 201) })
+    go('/')
+    fireEvent.click(await screen.findByRole('button', { name: 'Add seasonal deal' }))
+    const form = screen.getByRole('form', { name: 'Promotion' })
+    expect(within(form).getByLabelText('Schedule')).toHaveValue('range')
+    expect(within(form).queryByText('Days')).toBeNull()
+    fireEvent.change(within(form).getByLabelText('Title'), { target: { value: 'Holiday Season' } })
+    fireEvent.change(within(form).getByLabelText('Discount value'), { target: { value: '20' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
+    await new Promise(r => setTimeout(r, 20))
+    expect(calls.some(c => c.method === 'POST')).toBe(false) // dates are required for a date range
+    fireEvent.change(within(form).getByLabelText('Starts'), { target: { value: '2026-11-20' } })
+    fireEvent.change(within(form).getByLabelText('Ends'), { target: { value: '2026-12-31' } })
+    fireEvent.click(within(form).getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(calls.find(c => c.method === 'POST')?.body).toMatchObject({
+      schedule: 'range', days: [0, 1, 2, 3, 4, 5, 6], title: 'Holiday Season', startsOn: '2026-11-20', endsOn: '2026-12-31', discountValue: 20 }))
+  })
+
+  it('staff see seasonal deals read-only', async () => {
+    backend(deckRoutes(SEASONAL), 'staff')
+    go('/')
+    await screen.findByText('Holiday Season Glass')
+    expect(screen.queryByRole('button', { name: 'Add seasonal deal' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Edit Holiday Season Glass' })).toBeNull()
+  })
+
+  it('"Manage promotions" opens Settings and jumps to the promotions section', async () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    backend(deckRoutes(SEASONAL))
+    go('/')
+    fireEvent.click(await screen.findByRole('button', { name: /Manage promotions/ }))
+    expect(window.location.pathname).toBe('/settings')
+    expect(window.location.hash).toBe('#promotions')
+    await screen.findByLabelText('Enable Holiday Season Glass')
+    await waitFor(() => expect(scroll).toHaveBeenCalled())
+    expect(document.activeElement?.id).toBe('promotions')
+    expect(screen.getAllByText(/Seasonal · every day/).length).toBe(3)
   })
 })

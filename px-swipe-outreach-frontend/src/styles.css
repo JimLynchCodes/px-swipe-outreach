@@ -245,3 +245,14 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .edit-actions { display: inline-flex; gap: 6px; }
 .edit.save { color: var(--green); font-weight: 600; }
 .edit-hint { font-size: 13px; color: #b45309; }
+.seasonal { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.panel-subtitle { font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.seasonal-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.seasonal-item { border: 1px solid var(--line); border-radius: 12px; padding: 8px 10px; align-items: flex-start; }
+.seasonal-item.off .deal-title { color: var(--muted); }
+.deal-badges { display: flex; gap: 4px; margin-top: 3px; flex-wrap: wrap; }
+.tag.running { background: var(--green-soft); color: var(--green); }
+.tag.upcoming { background: #eef4ff; color: #2952cc; }
+.tag.disabled { background: var(--red-soft); color: var(--red-ink); }
+.manage-promos { align-self: flex-start; margin-top: 4px; }
+#promotions { scroll-margin-top: 16px; }

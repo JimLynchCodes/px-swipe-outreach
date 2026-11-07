@@ -18,7 +18,7 @@ const card = (id: string, name: string): OutreachCard => ({
 })
 
 const DEAL = {
-  id: 'deal_1', orgId: 'org', days: [0], title: 'CBD Monday', description: '', discountType: 'percent', discountValue: 15,
+  id: 'deal_1', orgId: 'org', schedule: 'weekly', days: [0], title: 'CBD Monday', description: '', discountType: 'percent', discountValue: 15,
   categories: ['cbd'], productIds: [], startsOn: null, endsOn: null, active: true, createdAt: '', updatedAt: '',
 }
 

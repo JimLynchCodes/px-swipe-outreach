@@ -28,3 +28,28 @@ export function relativeTime(iso: string, now = Date.now()): string {
   if (s < 7 * 86400) return DAYS_SHORT[todayIndex(new Date(iso))]
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
+
+const dayNumber = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86_400_000
+const localIso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+/** Status of a date-range promotion relative to today: "Starts in 3 days", "12 days left", "Last day", "Ended". */
+export function rangeStatus(startsOn: string | null, endsOn: string | null, now = new Date()): { label: string; state: 'upcoming' | 'running' | 'ended' } {
+  const today = dayNumber(localIso(now))
+  if (startsOn && dayNumber(startsOn) > today) {
+    const n = dayNumber(startsOn) - today
+    return { label: n === 1 ? 'Starts tomorrow' : `Starts in ${n} days`, state: 'upcoming' }
+  }
+  if (endsOn && dayNumber(endsOn) < today) return { label: 'Ended', state: 'ended' }
+  if (!endsOn) return { label: 'Ongoing', state: 'running' }
+  const left = dayNumber(endsOn) - today
+  return { label: left === 0 ? 'Last day' : `${left} day${left === 1 ? '' : 's'} left`, state: 'running' }
+}
+
+/** "Nov 20 – Dec 31" (adds the year when it isn't this year). */
+export function formatRange(startsOn: string | null, endsOn: string | null, now = new Date()): string {
+  const fmt = (iso: string) => {
+    const [y, m, d] = iso.split('-').map(Number)
+    return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(y !== now.getFullYear() ? { year: 'numeric' } : {}) })
+  }
+  return `${startsOn ? fmt(startsOn) : '…'} – ${endsOn ? fmt(endsOn) : '…'}`
+}

@@ -141,18 +141,56 @@ export const offers = [
 ];
 
 /** Example promotions (days: 0 = Monday). Disabled ones are kept for reuse but ignored by the engine. Age-restricted items: offers are only ever sent to verified 21+ customers. */
-export const deals: DealInput[] = [
-  { days: [MON, TUE, WED, THU, FRI, SAT, SUN], title: "Holiday Glass Sale", description: "25% off all glass through New Year's.", discountType: "percent", discountValue: 25, categories: ["glass"], productIds: [], startsOn: null, endsOn: null, active: false },
-  { days: [MON], title: "Mellow Monday", description: "15% off all CBD oils and gummies.", discountType: "percent", discountValue: 15, categories: ["cbd"], productIds: [], startsOn: null, endsOn: null, active: true },
-  { days: [TUE], title: "Two-for Tuesday", description: "Buy one pack of papers or cones, get one free.", discountType: "bogo", discountValue: null, categories: ["papers"], productIds: [], startsOn: null, endsOn: null, active: true },
-  { days: [WED], title: "Glass Hump Day", description: "$15 off any glass piece over $60.", discountType: "amount", discountValue: 1500, categories: ["glass"], productIds: [], startsOn: null, endsOn: null, active: true },
-  { days: [WED], title: "Cleaner bundle", description: "Free Formula 420 cleaner with any glass purchase.", discountType: "freebie", discountValue: null, categories: ["glass"], productIds: ["prod_cleaner"], startsOn: null, endsOn: null, active: true },
-  { days: [THU], title: "Throwback Thursday", description: "10% off Geek Bar and Elf Bar disposables.", discountType: "percent", discountValue: 10, categories: ["vape"], productIds: ["prod_geekbar", "prod_elfbar"], startsOn: null, endsOn: null, active: true },
-  { days: [FRI], title: "Cigar Friday", description: "20% off premium singles — Padrón, Fuente, Oliva.", discountType: "percent", discountValue: 20, categories: ["cigars"], productIds: [], startsOn: null, endsOn: null, active: true },
-  { days: [SAT], title: "Hookah Night Saturday", description: "15% off hookahs and shisha, free coals over $40.", discountType: "percent", discountValue: 15, categories: ["hookah"], productIds: [], startsOn: null, endsOn: null, active: true },
-  { days: [SAT], title: "Grinder upgrade", description: "$10 off Santa Cruz Shredder grinders.", discountType: "amount", discountValue: 1000, categories: ["accessories"], productIds: ["prod_grinder"], startsOn: null, endsOn: null, active: true },
-  { days: [SAT, SUN], title: "Weekend Restock", description: "10% off accessories and rolling supplies.", discountType: "percent", discountValue: 10, categories: ["accessories", "papers"], productIds: [], startsOn: null, endsOn: null, active: true }
+export const weeklyDeals: DealInput[] = [
+  { schedule: "weekly", days: [MON, TUE, WED, THU, FRI, SAT, SUN], title: "Holiday Glass Sale", description: "25% off all glass through New Year's.", discountType: "percent", discountValue: 25, categories: ["glass"], productIds: [], startsOn: null, endsOn: null, active: false },
+  { schedule: "weekly", days: [MON], title: "Mellow Monday", description: "15% off all CBD oils and gummies.", discountType: "percent", discountValue: 15, categories: ["cbd"], productIds: [], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [TUE], title: "Two-for Tuesday", description: "Buy one pack of papers or cones, get one free.", discountType: "bogo", discountValue: null, categories: ["papers"], productIds: [], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [WED], title: "Glass Hump Day", description: "$15 off any glass piece over $60.", discountType: "amount", discountValue: 1500, categories: ["glass"], productIds: [], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [WED], title: "Cleaner bundle", description: "Free Formula 420 cleaner with any glass purchase.", discountType: "freebie", discountValue: null, categories: ["glass"], productIds: ["prod_cleaner"], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [THU], title: "Throwback Thursday", description: "10% off Geek Bar and Elf Bar disposables.", discountType: "percent", discountValue: 10, categories: ["vape"], productIds: ["prod_geekbar", "prod_elfbar"], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [FRI], title: "Cigar Friday", description: "20% off premium singles — Padrón, Fuente, Oliva.", discountType: "percent", discountValue: 20, categories: ["cigars"], productIds: [], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [SAT], title: "Hookah Night Saturday", description: "15% off hookahs and shisha, free coals over $40.", discountType: "percent", discountValue: 15, categories: ["hookah"], productIds: [], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [SAT], title: "Grinder upgrade", description: "$10 off Santa Cruz Shredder grinders.", discountType: "amount", discountValue: 1000, categories: ["accessories"], productIds: ["prod_grinder"], startsOn: null, endsOn: null, active: true },
+  { schedule: "weekly", days: [SAT, SUN], title: "Weekend Restock", description: "10% off accessories and rolling supplies.", discountType: "percent", discountValue: 10, categories: ["accessories", "papers"], productIds: [], startsOn: null, endsOn: null, active: true }
 ];
+
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const ALL = [MON, TUE, WED, THU, FRI, SAT, SUN];
+
+/**
+ * Seasonal & ongoing promotions (schedule "range": every day from startsOn to endsOn), dated relative to `now`
+ * so the demo always has one running, one about to start and one further out.
+ */
+export function seasonalDeals(now = new Date()): DealInput[] {
+  const today = ymd(now);
+  const y = ymd(new Date(now.getFullYear(), 11, 31)) >= today ? now.getFullYear() : now.getFullYear() + 1;
+  // Black Friday = day after the 4th Thursday of November; promo runs Fri–Sun.
+  const nov1 = new Date(y, 10, 1);
+  const thanksgiving = 1 + ((4 - nov1.getDay() + 7) % 7) + 21;
+  const bf = new Date(y, 10, thanksgiving + 1);
+  const bfEnd = new Date(y, 10, thanksgiving + 3);
+  const y420 = ymd(new Date(now.getFullYear(), 3, 22)) >= today ? now.getFullYear() : now.getFullYear() + 1;
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  const monthName = monthStart.toLocaleString("en-US", { month: "long" });
+  const range = (title: string, description: string, startsOn: string, endsOn: string, rest: Partial<DealInput>): DealInput => ({
+    schedule: "range", days: ALL, title, description, discountType: "percent", discountValue: 10, categories: [], productIds: [],
+    startsOn, endsOn, active: true, ...rest
+  });
+  return [
+    range("Holiday Season Glass", "20% off glass and grinders, gift-ready, all season.", `${y}-11-20`, `${y}-12-31`,
+      { discountValue: 20, categories: ["glass", "accessories"] }),
+    range("Black Friday Weekend", "25% off premium cigars and hookahs, Friday to Sunday.", ymd(bf), ymd(bfEnd),
+      { discountValue: 25, categories: ["cigars", "hookah"] }),
+    range("4/20 Week", "Buy one, get one on papers and cones all week.", `${y420}-04-16`, `${y420}-04-22`,
+      { discountType: "bogo", discountValue: null, categories: ["papers"] }),
+    range(`${monthName} Vape Special`, `10% off disposables all ${monthName}.`, ymd(monthStart), ymd(monthEnd),
+      { discountValue: 10, categories: ["vape"], active: false })
+  ];
+}
+
+/** Example promotions (days: 0 = Monday): the weekly slots plus seasonal date ranges. */
+export const deals: DealInput[] = [...weeklyDeals, ...seasonalDeals()];
 
 export function productById(id: string): SeedProduct {
   const prod = products.find(x => x.id === id);

@@ -23,6 +23,7 @@ The demo seed (`src/data/seed.ts`, and `npm run db:seed` for Postgres) has 20 cu
 
 * one customer whose age isn't verified (Ryan)
 * one customer with no phone (Elena)
+* seasonal promotions dated relative to today: Holiday Season Glass (Nov 20 – Dec 31), Black Friday Weekend (Fri–Sun after Thanksgiving), 4/20 Week (Apr 16–22) and a disabled month-long vape special
 * three seed opt-outs
 * a few reply threads, some of them unread
 
@@ -33,6 +34,7 @@ The demo seed (`src/data/seed.ts`, and `npm run db:seed` for Postgres) has 20 cu
 * `title`, `description`
 * `discountType` (`percent` / `amount` in cents / `bogo` / `freebie`) and `discountValue`
 * `categories` and/or `productIds` it targets
+* `schedule`: `weekly` (runs on `days`) or `range` (a **seasonal or ongoing** promotion that runs every day from `startsOn` to `endsOn`; both dates are required and `days` is stored as all seven)
 * `days`: one to seven weekdays (0 = Monday … 6 = Sunday)
 * `startsOn` / `endsOn`: an optional date window
 * `active`: the **Enable** checkbox
@@ -42,6 +44,8 @@ There are two views of that data:
 * **Deals this week** (the side panel next to the deck) lists *enabled* promotions in the Mon–Sun slot for each of their days.
   * **+** on a day creates a promotion for that day.
   * **×** removes the promotion from that day only. On a single-day promotion, it deletes it.
+* **Seasonal & ongoing deals** (under the weekly slots) lists date-range promotions such as the holiday season, Black Friday weekend, 4/20 week or a month-long special. Each shows its title, date range, a "Starts in N days" / "N days left" / "Last day" label, its discount and whether it's enabled. Ended ones are hidden there but stay in Settings. Owners and admins can add, edit and delete them.
+* **Manage promotions** (bottom of the panel) opens `/settings#promotions` and scrolls to that section.
 * **Settings → Promotions** lists every promotion, enabled or not. Use it to add, edit and delete them, or to pause one by unticking its checkbox.
 
 The **suggestion engine** (`src/recommend.ts`) only considers a promotion when all of these hold:
@@ -49,6 +53,8 @@ The **suggestion engine** (`src/recommend.ts`) only considers a promotion when a
 * it is `active`
 * it runs on the next occurrence of one of its `days` within `startsOn`…`endsOn`
 * a percent discount isn't above the store's **max discount**
+
+Weekly and date-range promotions compete on the same score. A running seasonal promotion adds the reason "Seasonal promotion, runs every day through …", plus a small boost in its last week.
 
 Matching promotions are scored on:
 
