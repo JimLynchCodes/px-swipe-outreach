@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, History, Play, RefreshCw } from 'lucide-reac
 import { api, ApiError } from '../api'
 import { useAuth } from '../auth/AuthProvider'
 import { PageShell } from '../components/PageShell'
+import { ManualImport } from './ManualImport'
 import type { SyncFrequency, SyncOverview, SyncRun, SyncSource } from '../types'
 
 const POLL_MS = 2000
@@ -55,6 +56,7 @@ export function DataSyncPage() {
         : !data ? <p className="muted">Loading…</p>
         : <>
           {err && <p className="error" role="alert">{err}</p>}
+          <ManualImport />
           <TimezonePanel tz={data.timezone} onSaved={load} />
           <div className="sync-grid">
             {data.sources.map(s => <SourceCard key={s.id} source={s} tz={data.timezone} onChange={load} />)}

@@ -511,4 +511,28 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       expect((await admin.query(`select last_email_at from public.customers where id = $1`, [custId])).rows[0].last_email_at).not.toBeNull();
     });
   });
+  describe("customer import + registered users", () => {
+    const row = (n: number, phone: string, email: string) => ({ row: n, externalId: `ext-${n}`, firstName: `Imp${n}`, lastName: "Test", phone, email, location: "Burlington",
+      age: null, lastPurchaseAt: null, lifetimeSpendCents: 1000, rewardsPoints: 5, customerSince: "2025-01-01" });
+    it("owner/admin import with dedupe under RLS; staff can't import but can open a card; other orgs see nothing", async () => {
+      const A = { userId: ALICE, orgId: ORG_A }, S = { userId: STAFF, orgId: ORG_A };
+      const rows = [row(1, "+16095550901", "imp1@example.com"), row(2, "+15555550002", "dupe@example.com") /* Jamal's phone */];
+      await expect(store.importCustomers(S, rows, { smsConsent: true, emailConsent: true, ageVerified: true })).rejects.toMatchObject({ code: "forbidden" });
+      expect(await store.importCustomers(A, rows, { smsConsent: true, emailConsent: false, ageVerified: true })).toEqual({ inserted: 1, existing: 1 });
+      expect(await store.importCustomers(A, rows, { smsConsent: true, emailConsent: false, ageVerified: true })).toEqual({ inserted: 0, existing: 2 });
+      const keys = await store.customerKeys(A);
+      expect(keys.externalIds.has("qv:ext-1") && keys.phones.has("6095550901") && keys.emails.has("imp1@example.com")).toBe(true);
+      const list = await store.listCustomers(S, { search: "imp1", limit: 10, offset: 0 });
+      expect(list.items).toEqual([expect.objectContaining({ name: "Imp1 Test", source: "csv" })]);
+      expect((await store.listCustomers(S, { search: "0901", limit: 10, offset: 0 })).total).toBe(1);
+      expect((await store.listCustomers({ userId: BOB, orgId: ORG_A }, { limit: 10, offset: 0 })).total).toBe(0);
+      const cid = list.items[0].id;
+      const oppId = await store.openCustomerCard(S, cid);
+      const o = await store.getOpportunity(S, oppId!);
+      expect(o).toMatchObject({ status: "pending", campaign: { id: "manual" }, customer: { smsConsent: true, emailConsent: false, ageVerified: true } });
+      expect(await store.openCustomerCard(S, cid)).toBe(oppId); // reuses the open card
+      await expect(store.openCustomerCard({ userId: BOB, orgId: ORG_A }, cid)).rejects.toMatchObject({ code: "forbidden" });
+      expect(await store.openCustomerCard(S, "00000000-0000-4000-8000-000000000999")).toBeNull();
+    });
+  });
 });

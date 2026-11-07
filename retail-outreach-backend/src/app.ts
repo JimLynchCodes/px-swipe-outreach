@@ -11,6 +11,7 @@ import type { AppConfig } from "./config.js";
 import { AuthError, createAuthenticator, resolveOrg, type Authenticator, type AuthUser, type OrgContext } from "./auth.js";
 import { ACTIONABLE_STATUSES, canContact, cooldownUntil, maskRecipient, recipientFor, SMS_MAX, toCardDto, withSmsOptOut } from "./domain.js";
 import { dealRoutes } from "./deals/routes.js";
+import { customerRoutes } from "./customers/routes.js";
 import { recommend } from "./recommend.js";
 import { optOutRoutes, REOPTIN_PATH, RESUBSCRIBE_PATH, TWILIO_WEBHOOK_PREFIX, UNSUBSCRIBE_PATH } from "./optout/routes.js";
 import { unsubscribeLink } from "./optout/unsubscribe.js";
@@ -210,13 +211,15 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const { id } = idParams.parse(request.params);
     const opp = await store.getOpportunity(actorOf(request), id);
     if (!opp) return sendError(reply, 404, "not_found", "Opportunity not found");
-    return toCardDto(opp, Date.now(), cooldownsOf(await store.getSettings(actorOf(request))));
+    const { pick } = z.object({ pick: z.enum(["1", "true"]).optional() }).parse(request.query);
+    return toCardDto(opp, Date.now(), cooldownsOf(await store.getSettings(actorOf(request))), { bypassCooldown: !!pick });
   });
 
   /** AI suggestion (title, reasoning, message) for a channel. */
   app.post("/api/outreach/:id/suggestion", async (request, reply) => {
     const { id } = idParams.parse(request.params);
-    const body = z.object({ channel }).strict().parse(request.body ?? {});
+    // ignoreCooldown: an explicit pick from Registered users (the card shows the cooldown warning instead).
+    const body = z.object({ channel, ignoreCooldown: z.boolean().optional() }).strict().parse(request.body ?? {});
     const actor = actorOf(request);
     const opp = await store.getOpportunity(actor, id);
     if (!opp) return sendError(reply, 404, "not_found", "Opportunity not found");
@@ -224,7 +227,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       return sendError(reply, 422, "not_contactable", `Customer cannot be contacted by ${body.channel}`);
     }
     const [deals, catalog, settings] = await Promise.all([store.listDeals(actor), store.listCatalog(actor), store.getSettings(actor)]);
-    const until = cooldownUntil(opp.customer, body.channel, cooldownsOf(settings));
+    const until = body.ignoreCooldown ? null : cooldownUntil(opp.customer, body.channel, cooldownsOf(settings));
     if (until) return sendError(reply, 422, "cooldown", `Customer was contacted by ${body.channel} recently; next allowed ${until}`);
     const businessName = settings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
     const recommendation = recommend(opp.customer, deals, { catalog, maxDiscountPercent: settings.maxDiscountPercent });
@@ -284,7 +287,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       channel,
       message: z.string().trim().min(1).max(5000),
       subject: z.string().trim().max(200).nullish(),
-      idempotencyKey: z.string().min(8).max(200).regex(/^[A-Za-z0-9._:-]+$/, "must be URL-safe")
+      idempotencyKey: z.string().min(8).max(200).regex(/^[A-Za-z0-9._:-]+$/, "must be URL-safe"),
+      ignoreCooldown: z.boolean().optional()
     }).strict().parse(request.body ?? {});
     // Compliance: every marketing SMS carries opt-out instructions, even if staff edited them out.
     const message = body.channel === "sms" ? withSmsOptOut(body.message) : body.message;
@@ -302,7 +306,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     const sendSettings = await store.getSettings(actor);
     // Only for a fresh send: a retry of an already-queued send must still resolve to its idempotent duplicate.
-    const until = (ACTIONABLE_STATUSES as readonly string[]).includes(opp.status) ? cooldownUntil(opp.customer, body.channel, cooldownsOf(sendSettings)) : null;
+    const until = !body.ignoreCooldown && (ACTIONABLE_STATUSES as readonly string[]).includes(opp.status) ? cooldownUntil(opp.customer, body.channel, cooldownsOf(sendSettings)) : null;
     if (until) return sendError(reply, 422, "cooldown", `Customer was contacted by ${body.channel} recently; next allowed ${until}`);
     const businessName = sendSettings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
     const subject = body.channel === "email" ? (body.subject || `A note from ${businessName}`) : null;
@@ -373,6 +377,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // ── Promotions & settings ───────────────────────────────────────────
   await dealRoutes(app, { store, actorOf });
+  await customerRoutes(app, { store, actorOf, sendError });
   /** Model picker options: allowlist, cost hints, and whether each provider is configured on this server. */
   app.get("/api/ai/models", async request => {
     const settings = await store.getSettings(actorOf(request));

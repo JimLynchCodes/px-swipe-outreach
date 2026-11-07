@@ -37,12 +37,17 @@ export default function App() {
   const [settings, setSettings] = useState<OrgSettings | null | undefined>(undefined)
   useEffect(() => { api.settings.get().then(setSettings, () => setSettings(null)) }, [])
 
+  /** Explicit pick from Registered users (`/?customer=<opportunityId>`): shown first, cooldown doesn't block it. Read once. */
+  const pickId = useRef<string | null>(new URLSearchParams(window.location.search).get('customer'))
   const loadQueue = useCallback(async () => {
     setLoad({ state: 'loading' })
     try {
-      const q = await api.queue(50)
-      setCards(q.items)
-      setTotal(q.total)
+      const pid = pickId.current
+      const [q, picked] = await Promise.all([api.queue(50), pid ? api.card(pid, true).catch(() => null) : Promise.resolve(null)])
+      if (pid) { pickId.current = null; window.history.replaceState(null, '', window.location.pathname) }
+      const rest = picked ? q.items.filter(c => c.id !== picked.id) : q.items
+      setCards(picked ? [{ ...picked, picked: true }, ...rest] : rest)
+      setTotal(picked && rest.length === q.items.length ? q.total + 1 : q.total)
       setDone(0)
       setLoad({ state: 'ready' })
     } catch (e) {
@@ -67,7 +72,7 @@ export default function App() {
     const seq = ++suggestionSeq.current // ignore responses from superseded requests
     setDraft(d => d && { ...d, channel, loading: true, error: null })
     try {
-      const s = await api.suggestion(card.id, channel)
+      const s = await api.suggestion(card.id, channel, !!card.picked)
       if (seq !== suggestionSeq.current) return
       setDraft(d => d && { ...d, suggestion: s, message: s.message, subject: s.subject ?? '', loading: false, error: null, editing: false })
     } catch (e) {
@@ -138,6 +143,7 @@ export default function App() {
         channel: draft.channel, message: draft.message.trim(),
         subject: draft.channel === 'email' ? draft.subject.trim() || null : null,
         idempotencyKey: sendKey.current,
+        ...(current.picked ? { ignoreCooldown: true } : {}),
       })
       setToast({ kind: 'ok', text: r.status === 'queued' ? `Queued for ${current.customer.firstName}` : `Sent to ${current.customer.firstName}` })
       advance('right')

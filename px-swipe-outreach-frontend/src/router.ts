@@ -22,7 +22,7 @@ export function usePathname(): string {
 
 export const ROUTES = {
   home: '/', team: '/team', acceptInvite: '/invite/accept', settings: '/settings', optOuts: '/opt-outs', replies: '/replies',
-  costs: '/cost-metrics', performance: '/performance', dataSync: '/data-sync',
+  costs: '/cost-metrics', performance: '/performance', dataSync: '/data-sync', customers: '/customers',
   /** Old Cost metrics URL (when it lived under Settings); redirects to `costs`. */
   legacyCosts: '/settings/costs',
 } as const

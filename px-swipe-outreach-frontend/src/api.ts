@@ -1,4 +1,4 @@
-import type { SyncFrequency, SyncJobId, SyncOverview, SyncRun, SyncSchedule, CostReport, PerformanceReport,
+import type { CustomerSummary, ImportConsent, ImportPreview, SyncFrequency, SyncJobId, SyncOverview, SyncRun, SyncSchedule, CostReport, PerformanceReport,
   AiModelOption, CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
   SendResult, Suggestion,
 } from './types'
@@ -72,12 +72,14 @@ export const api = {
   optOut: (id: string, channel: Channel | 'all' = 'all') =>
     request<{ ok: true }>(`/api/outreach/${encodeURIComponent(id)}/opt-out`, { method: 'POST', body: JSON.stringify({ channel }) }),
   queue: (limit = 50) => request<{ items: OutreachCard[]; total: number; cooldown?: { sms: number; email: number } }>(`/api/outreach/queue?limit=${limit}`),
-  suggestion: (id: string, channel: Channel) =>
+  /** One card; `pick` = explicit pick from Registered users (cooldown doesn't disable channels). */
+  card: (id: string, pick = false) => request<OutreachCard>(`/api/outreach/${encodeURIComponent(id)}${pick ? '?pick=1' : ''}`),
+  suggestion: (id: string, channel: Channel, ignoreCooldown = false) =>
     request<{ suggestion: Suggestion }>(`/api/outreach/${encodeURIComponent(id)}/suggestion`, {
-      method: 'POST', body: JSON.stringify({ channel }),
+      method: 'POST', body: JSON.stringify(ignoreCooldown ? { channel, ignoreCooldown } : { channel }),
     }).then(r => r.suggestion),
   skip: (id: string) => request<{ ok: true }>(`/api/outreach/${encodeURIComponent(id)}/skip`, { method: 'POST' }),
-  send: (id: string, body: { channel: Channel; message: string; subject?: string | null; idempotencyKey: string }) =>
+  send: (id: string, body: { channel: Channel; message: string; subject?: string | null; idempotencyKey: string; ignoreCooldown?: boolean }) =>
     request<SendResult>(`/api/outreach/${encodeURIComponent(id)}/send`, {
       method: 'POST', body: JSON.stringify({ ...body, subject: body.subject ?? undefined }),
     }),
@@ -108,6 +110,14 @@ export const api = {
     remove: (id: string) => request<{ ok: true }>(`/api/deals/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   },
   catalog: () => request<{ products: CatalogProduct[]; categories: string[] }>('/api/catalog'),
+  customers: {
+    list: (search = '', page = 1) =>
+      request<{ items: CustomerSummary[]; total: number; page: number; pageSize: number }>(`/api/customers?${new URLSearchParams({ ...(search ? { search } : {}), page: String(page) })}`),
+    open: (id: string) => request<{ opportunityId: string }>(`/api/customers/${encodeURIComponent(id)}/open`, { method: 'POST' }).then(r => r.opportunityId),
+    preview: (csv: string) => request<ImportPreview>('/api/customers/import/preview', { method: 'POST', body: JSON.stringify({ csv }) }),
+    import: (csv: string, consent: ImportConsent) =>
+      request<{ inserted: number; existing: number; invalid: number; duplicatesInFile: number }>('/api/customers/import', { method: 'POST', body: JSON.stringify({ csv, ...consent }) }),
+  },
   settings: {
     get: () => request<{ settings: OrgSettings }>('/api/settings').then(r => r.settings),
     save: (s: OrgSettings) => request<{ settings: OrgSettings }>('/api/settings', { method: 'PUT', body: JSON.stringify(s) }).then(r => r.settings),

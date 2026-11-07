@@ -9,6 +9,8 @@ import type {
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
 import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCostInput, SmsCostRow } from "../metrics/types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
+import { isExisting, phoneKey, emailKey, type ImportConsent, type ImportCustomer } from "../customers/csvImport.js";
+import { IMPORT_RATIONALE, toSummary } from "../customers/summary.js";
 import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type Cooldowns, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 const INVITE_COLS = `id, org_id, email, role, invited_by, created_at, expires_at, last_sent_at, send_count, accepted_at, revoked_at`;
@@ -441,6 +443,67 @@ export class PostgresStore implements OutreachStore {
       await this.event(db, actor, actor.orgId, null, "settings_updated", {});
       return toSettings(r.rows[0]);
     }).catch(mapTeamError);
+  }
+
+  // ───────────────────────── Customers ─────────────────────────
+  async customerKeys(actor: Actor) {
+    return this.asUser(actor.userId, db => this.customerKeysTx(db, actor.orgId));
+  }
+  async importCustomers(actor: Actor, rows: ImportCustomer[], consent: ImportConsent) {
+    return this.asUser(actor.userId, async db => {
+      assertCanEditDeals(await this.role(db, actor));
+      // Serialize imports per org so two uploads can't both insert the same new customer.
+      await db.query(`select pg_advisory_xact_lock(hashtext('customer_import:' || $1))`, [actor.orgId]);
+      const keys = await this.customerKeysTx(db, actor.orgId);
+      const campaign = (await db.query(`select public.manual_campaign_id($1) as id`, [actor.orgId])).rows[0].id;
+      let inserted = 0, existing = 0;
+      for (const r of rows) {
+        if (isExisting(r, keys)) { existing++; continue; }
+        const c = await db.query(`insert into public.customers (org_id, external_id, first_name, last_name, age, location, phone, email, sms_consent, email_consent,
+            lifetime_spend_cents, last_purchase_at, age_verified, rewards_member, rewards_points, rewards_joined_at, source)
+          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,'csv') returning id`,
+          [actor.orgId, r.externalId ? `qv:${r.externalId}` : null, r.firstName, r.lastName, r.age, r.location, r.phone, r.email,
+            consent.smsConsent && !!r.phone, consent.emailConsent && !!r.email, r.lifetimeSpendCents, r.lastPurchaseAt, consent.ageVerified,
+            r.rewardsPoints !== null, r.rewardsPoints, r.rewardsPoints !== null ? r.customerSince : null]);
+        await db.query(`insert into public.outreach_opportunities (org_id, customer_id, campaign_id, score, rationale) values ($1,$2,$3,50,$4)`,
+          [actor.orgId, c.rows[0].id, campaign, IMPORT_RATIONALE]);
+        if (r.externalId) keys.externalIds.add(`qv:${r.externalId}`);
+        if (phoneKey(r.phone)) keys.phones.add(phoneKey(r.phone)!);
+        if (emailKey(r.email)) keys.emails.add(emailKey(r.email)!);
+        inserted++;
+      }
+      await this.event(db, actor, actor.orgId, null, "customers_imported", { inserted, existing });
+      return { inserted, existing };
+    }).catch(mapTeamError);
+  }
+  private async customerKeysTx(db: Db, orgId: string) {
+    const r = await db.query(`select external_id, right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) as p, lower(email) as e
+      from public.customers where org_id = $1`, [orgId]);
+    const keys = { externalIds: new Set<string>(), phones: new Set<string>(), emails: new Set<string>() };
+    for (const x of r.rows) { if (x.external_id) keys.externalIds.add(x.external_id); if (x.p) keys.phones.add(x.p); if (x.e) keys.emails.add(x.e); }
+    return keys;
+  }
+  async listCustomers(actor: Actor, q: { search?: string; limit: number; offset: number }) {
+    return this.asUser(actor.userId, async db => {
+      const term = q.search?.trim() ?? "";
+      const digits = term.replace(/\D/g, "");
+      const where = `org_id = $1 and ($2 = '' or (first_name || ' ' || last_name) ilike '%' || $2 || '%' or email ilike '%' || $2 || '%'
+        or (length($3) >= 3 and regexp_replace(coalesce(phone, ''), '\\D', '', 'g') like '%' || $3 || '%'))`;
+      const r = await db.query(`select * from public.customers where ${where} order by created_at desc, first_name limit $4 offset $5`,
+        [actor.orgId, term, digits, q.limit, q.offset]);
+      const n = await db.query(`select count(*)::int as n from public.customers where ${where}`, [actor.orgId, term, digits]);
+      return {
+        items: r.rows.map(x => toSummary({ id: x.id, firstName: x.first_name, lastName: x.last_name, phone: x.phone, email: x.email, location: x.location,
+          lifetimeSpendCents: Number(x.lifetime_spend_cents), lastSmsAt: x.last_sms_at ? new Date(x.last_sms_at).toISOString() : null,
+          lastEmailAt: x.last_email_at ? new Date(x.last_email_at).toISOString() : null }, { createdAt: new Date(x.created_at).toISOString(), source: x.source })),
+        total: n.rows[0].n
+      };
+    });
+  }
+  async openCustomerCard(actor: Actor, customerId: string) {
+    if (!isUuid(customerId)) return null;
+    return this.asUser(actor.userId, async db => (await db.query(`select public.open_customer_card($1, $2) as id`, [actor.orgId, customerId])).rows[0].id as string | null)
+      .catch(mapTeamError);
   }
 
   async listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }) {

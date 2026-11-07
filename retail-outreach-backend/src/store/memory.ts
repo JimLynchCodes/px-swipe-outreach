@@ -10,6 +10,8 @@ import type {
 } from "../types.js";
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
+import { isExisting, phoneKey, emailKey, type ImportConsent, type ImportCustomer } from "../customers/csvImport.js";
+import { IMPORT_RATIONALE, MANUAL_CAMPAIGN, PICK_RATIONALE, toSummary } from "../customers/summary.js";
 import { DEFAULT_SETTINGS, StoreError, type Cooldowns, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 type InvitationRow = {
@@ -583,6 +585,79 @@ export class MemoryStore implements OutreachStore {
     if (status === "sent") this.touchLastSent(d.orgId, o?.customer.id ?? null, d.channel, new Date().toISOString());
     for (const m of this.msgs) if (m.deliveryId === id && status !== "delivered") m.status = status === "sending" ? "sending" : status;
   }
+  // ── Customers ──
+  /** Customer id → when/how it was added (seed customers count as added at startup). */
+  private customerMeta = new Map<string, { createdAt: string; source: string | null }>();
+  private orgCustomers(orgId: string): Customer[] {
+    const byId = new Map<string, Customer>();
+    for (const o of this.opps) if (o.orgId === orgId && !byId.has(o.customer.id)) byId.set(o.customer.id, o.customer);
+    return [...byId.values()];
+  }
+  async customerKeys(actor: Actor) {
+    this.assertMember(actor);
+    const keys = { externalIds: new Set<string>(), phones: new Set<string>(), emails: new Set<string>() };
+    for (const c of this.orgCustomers(actor.orgId)) {
+      if (c.externalId) keys.externalIds.add(c.externalId);
+      const p = phoneKey(c.phone), e = emailKey(c.email);
+      if (p) keys.phones.add(p);
+      if (e) keys.emails.add(e);
+    }
+    return keys;
+  }
+  async importCustomers(actor: Actor, rows: ImportCustomer[], consent: ImportConsent) {
+    this.assertMember(actor);
+    assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
+    const keys = await this.customerKeys(actor);
+    let inserted = 0, existing = 0;
+    const now = new Date().toISOString();
+    for (const r of rows) {
+      if (isExisting(r, keys)) { existing++; continue; }
+      const id = `cust_${randomUUID()}`;
+      const customer: Customer = {
+        id, externalId: r.externalId ? `qv:${r.externalId}` : null, firstName: r.firstName, lastName: r.lastName, age: r.age, gender: null,
+        location: r.location, storesShopped: r.location ? [r.location] : [], phone: r.phone, email: r.email,
+        smsConsent: consent.smsConsent && !!r.phone, emailConsent: consent.emailConsent && !!r.email, suppressed: [],
+        lifetimeSpendCents: r.lifetimeSpendCents, lastPurchaseAt: r.lastPurchaseAt, itemsPurchased: 0, purchases: [],
+        ageVerified: consent.ageVerified, lastSmsAt: null, lastEmailAt: null,
+        rewards: r.rewardsPoints !== null ? { member: true, points: r.rewardsPoints, joinedAt: r.customerSince } : null,
+        profile: { favoriteCategories: [], favoriteBrands: [], visitsPerMonth: 0, avgBasketCents: 0, preferredDay: null, preferredTime: null }
+      };
+      this.opps.push(this.newOpp(actor.orgId, customer, IMPORT_RATIONALE));
+      this.customerMeta.set(id, { createdAt: now, source: "csv" });
+      if (r.externalId) keys.externalIds.add(`qv:${r.externalId}`);
+      if (phoneKey(r.phone)) keys.phones.add(phoneKey(r.phone)!);
+      if (emailKey(r.email)) keys.emails.add(emailKey(r.email)!);
+      inserted++;
+    }
+    this.audit(actor, "customers_imported", { inserted, existing });
+    return { inserted, existing };
+  }
+  private newOpp(orgId: string, customer: Customer, rationale: string): Opportunity {
+    return { id: `opp_${randomUUID()}`, orgId, status: "pending", campaign: { ...MANUAL_CAMPAIGN }, score: 50, rationale, offer: null, customer };
+  }
+  async listCustomers(actor: Actor, q: { search?: string; limit: number; offset: number }) {
+    this.assertMember(actor);
+    const term = q.search?.trim().toLowerCase() ?? "";
+    const digits = term.replace(/\D/g, "");
+    const match = (c: Customer) => !term || `${c.firstName} ${c.lastName}`.toLowerCase().includes(term)
+      || (c.email ?? "").toLowerCase().includes(term) || (digits.length >= 3 && (c.phone ?? "").replace(/\D/g, "").includes(digits));
+    const all = this.orgCustomers(actor.orgId).filter(match)
+      .map(c => toSummary(c, this.customerMeta.get(c.id) ?? { createdAt: this.startedAt, source: "seed" }))
+      .sort((x, y) => y.createdAt.localeCompare(x.createdAt) || x.name.localeCompare(y.name));
+    return { items: all.slice(q.offset, q.offset + q.limit), total: all.length };
+  }
+  async openCustomerCard(actor: Actor, customerId: string) {
+    this.assertMember(actor);
+    const mine = this.opps.filter(o => o.orgId === actor.orgId && o.customer.id === customerId);
+    if (!mine.length) return null;
+    const open = mine.find(o => this.isActionable(o));
+    if (open) return open.id;
+    const opp = this.newOpp(actor.orgId, mine[0].customer, PICK_RATIONALE);
+    this.opps.push(opp);
+    return opp.id;
+  }
+  private readonly startedAt = new Date().toISOString();
+
   /** Stamps the customer's last outreach send on this channel (every opportunity for that customer shares it). */
   private touchLastSent(orgId: string, customerId: string | null, channel: Channel, at: string) {
     if (!customerId) return;

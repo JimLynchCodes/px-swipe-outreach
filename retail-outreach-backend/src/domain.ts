@@ -127,8 +127,10 @@ export function withEmailFooter(message: string): string {
 export const ACTIONABLE_STATUSES = ["pending", "drafted"] as const;
 
 /** Shape returned to the browser. No raw phone/email. */
-export function toCardDto(opp: Opportunity, now = Date.now(), cooldown: CooldownDays = NO_COOLDOWN) {
+export function toCardDto(opp: Opportunity, now = Date.now(), cooldown: CooldownDays = NO_COOLDOWN, opts: { bypassCooldown?: boolean } = {}) {
   const c = opp.customer;
+  /** An explicit pick (Registered users) may contact inside the window; the card still reports the window so it can warn. */
+  const reach = opts.bypassCooldown ? NO_COOLDOWN : cooldown;
   const [last, ...earlier] = c.purchases;
   return {
     id: opp.id,
@@ -151,9 +153,9 @@ export function toCardDto(opp: Opportunity, now = Date.now(), cooldown: Cooldown
       ageVerified: isAgeEligible(c),
       profile: c.profile,
       contact: {
-        sms: canReachNow(c, "sms", cooldown, now),
-        email: canReachNow(c, "email", cooldown, now),
-        preferredChannel: preferredChannel(c, cooldown, now),
+        sms: canReachNow(c, "sms", reach, now),
+        email: canReachNow(c, "email", reach, now),
+        preferredChannel: preferredChannel(c, reach, now),
         /** Last outreach send from this app per channel (ISO or null) and when each channel's cooldown ends (null = not cooling down). */
         lastSent: { sms: c.lastSmsAt ?? null, email: c.lastEmailAt ?? null },
         cooldownUntil: { sms: cooldownUntil(c, "sms", cooldown, now), email: cooldownUntil(c, "email", cooldown, now) },

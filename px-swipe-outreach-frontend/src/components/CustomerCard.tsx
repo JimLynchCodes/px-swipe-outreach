@@ -60,11 +60,20 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
         {c.location && <li><MapPin size={16} aria-hidden />{c.location}</li>}
         {c.storesShopped.length > 0 && <li><Store size={16} aria-hidden />Shops at: {c.storesShopped.join(', ')}</li>}
       </ul>
-      {contact.lastSent && (
-        <p className="last-contact muted small" aria-label="Last contacted">
-          Last text {sinceShort(contact.lastSent.sms)} · Last email {sinceShort(contact.lastSent.email)}
-        </p>
-      )}
+      {contact.lastSent && (() => {
+        // Inside the Settings cooldown (only reachable via an explicit pick): show that channel larger and in red.
+        const recent = (ch: Channel) => !!contact.cooldownUntil?.[ch]
+        const part = (ch: Channel, label: string) => (
+          <span className={recent(ch) ? 'last-contact recent' : undefined} data-recent={recent(ch) || undefined}>
+            {label} {sinceShort(contact.lastSent![ch])}{recent(ch) && ` (cooldown until ${shortDate(contact.cooldownUntil![ch]!)})`}
+          </span>
+        )
+        return (
+          <p className="last-contact muted small" aria-label="Last contacted">
+            {part('sms', 'Last text')} · {part('email', 'Last email')}
+          </p>
+        )
+      })()}
 
       <div className="stats">
         <Stat icon={<CircleDollarSign size={18} />} label="Lifetime Spend" value={money(c.lifetimeSpendCents)} />

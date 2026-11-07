@@ -42,6 +42,8 @@ export interface OutreachCard {
     }
   }
   recentItems: Array<{ name: string; brand: string | null; category: string | null; daysAgo: number | null }>
+  /** Client-only: opened explicitly from Registered users (bypasses the cooldown filter). */
+  picked?: boolean
   lastPurchase: {
     name: string
     category: string | null
@@ -91,6 +93,14 @@ export interface DealInput {
 }
 export interface Deal extends DealInput { id: string; orgId: string; createdAt: string; updatedAt: string }
 export interface CatalogProduct { id: string; name: string; brand: string | null; category: string | null; priceCents: number }
+
+export interface CustomerSummary {
+  id: string; name: string; phone: string | null; email: string | null; location: string | null; source: string | null
+  createdAt: string; lastSmsAt: string | null; lastEmailAt: string | null; lifetimeSpendCents: number
+}
+export interface ImportPreviewRow { row: number; name: string; phone: string | null; email: string | null; location: string | null; lifetimeSpendCents: number; lastPurchaseAt: string | null }
+export interface ImportPreview { newCustomers: ImportPreviewRow[]; existing: number; duplicatesInFile: number; invalid: Array<{ row: number; reason: string }>; totalRows: number }
+export interface ImportConsent { smsConsent: boolean; emailConsent: boolean; ageVerified: boolean }
 
 export interface OrgSettings {
   storeName: string | null
