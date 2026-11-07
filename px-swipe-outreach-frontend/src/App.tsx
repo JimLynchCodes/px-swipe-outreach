@@ -4,6 +4,7 @@ import { api, ApiError, newIdempotencyKey } from './api'
 import { Header } from './components/Header'
 import { CustomerCard, type CardDraft } from './components/CustomerCard'
 import { DealsPanel } from './deals/DealsPanel'
+import { AI_MODEL_CHANGED } from './ai/ModelPicker'
 import type { Channel, OrgSettings, OutreachCard } from './types'
 
 const SWIPE_THRESHOLD = 110
@@ -184,6 +185,13 @@ export default function App() {
   const onDealsChanged = useCallback(() => {
     if (current && draftChannel) void fetchSuggestion(current, draftChannel)
   }, [current, draftChannel, fetchSuggestion])
+
+  // Model changed in the header picker → re-run the current card's suggestion with the new model.
+  useEffect(() => {
+    const onModel = () => onDealsChanged()
+    window.addEventListener(AI_MODEL_CHANGED, onModel)
+    return () => window.removeEventListener(AI_MODEL_CHANGED, onModel)
+  }, [onDealsChanged])
 
   const blocked = current?.customer.contact.blockedReason ?? null
   const position = done + 1

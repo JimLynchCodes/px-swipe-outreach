@@ -4,6 +4,7 @@ import { navigate, ROUTES, usePathname } from '../router'
 import { useOptionalAuth } from '../auth/AuthProvider'
 import { useUnreadCount } from '../replies/useUnread'
 import { PineappleLogo } from './PineappleLogo'
+import { ModelPicker } from '../ai/ModelPicker'
 
 const LINKS = [
   { to: ROUTES.home, label: 'Outreach deck', icon: Layers },
@@ -61,7 +62,7 @@ export function Header() {
         </div>
       </div>
       <div className="header-right">
-        <span className="pill"><Sparkles size={14} aria-hidden /> AI Powered</span>
+        {auth?.orgId ? <ModelPicker /> : <span className="pill"><Sparkles size={14} aria-hidden /> AI suggestions</span>}
         {auth && orgs.length > 1 && (
           <select aria-label="Organization" className="org-select" value={auth.orgId ?? ''} onChange={e => auth.setOrgId(e.target.value)}>
             {orgs.map(m => <option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}

@@ -71,6 +71,35 @@ The best one is passed to the rules or OpenAI copywriter. The card shows:
 
 Any change to promotions in the side panel re-runs the suggestion for the current card.
 
+## AI model picker
+
+The **Using model … ▾** pill in the header (it replaced "AI Powered") picks the model that writes suggestions. The choice is stored per org in `org_settings.ai_model`.
+
+* **Who can change it:** owners and admins. Staff see the list read-only.
+* **Validation:** the API checks the choice against the allowlist in `src/ai/models.ts`.
+* **Effect:** changing the model re-runs the current card's suggestion.
+
+| Model | $ / 1M input | $ / 1M output | Notes |
+| --- | --- | --- | --- |
+| **GPT-4o mini** (default) | 0.15 | 0.60 | Cheapest capable chat model on OpenAI's price list (checked Nov 2026) |
+| GPT-5.4 nano | 0.20 | 1.25 | Reasoning model; no custom temperature |
+| GPT-5 mini | 0.25 | 2.00 | Reasoning model |
+| GPT-4.1 mini | 0.40 | 1.60 | |
+| GPT-5.4 mini | 0.75 | 4.50 | Reasoning model |
+| Rules only (no AI) | – | – | Free, deterministic |
+
+Prices live in a versioned table (`PRICE_TABLE_VERSION`). Update it when OpenAI changes prices. GPT-5 nano and GPT-4.1 nano were cheaper, but OpenAI lists them as deprecated or shut down.
+
+**Without `OPENAI_API_KEY`,** OpenAI models show as *Unavailable* with a note, and suggestions use rules. The pill reads "(rules fallback)". Provider errors also fall back to rules.
+
+**Adding a provider** (e.g. Anthropic):
+
+1. Add it to `PROVIDERS` and its models to `MODELS` in `src/ai/models.ts`.
+2. Implement a `SuggestionProvider`.
+3. Register it in `createSuggestionProvider` when its key is set.
+
+Providers without a key are never registered.
+
 ## Settings (per org)
 
 These are stored in `org_settings` (RLS: members read, owners and admins write) or in memory in demo mode.

@@ -116,6 +116,10 @@ export type Suggestion = {
   message: string;
   subject: string | null;
   source: "openai" | "rules";
+  /** Model that wrote the copy ("rules" when no LLM was used, including fallbacks). */
+  model: string;
+  /** Token usage reported by the provider (absent for rules). */
+  usage?: { inputTokens: number; outputTokens: number };
   /** Deal the message uses (null = fallback offer or no discount). */
   deal: { id: string; title: string; day: number; discountLabel: string } | null;
   /** Why this outreach was chosen (short bullet points for staff). */
@@ -203,6 +207,8 @@ export type OrgSettings = {
   smsSignature: string;
   /** Preferred first channel when the customer can receive both; null = customer's preference. */
   defaultChannel: Channel | null;
+  /** Model used for suggestions (allowlisted in src/ai/models.ts); "rules" = no AI. */
+  aiModel: string;
   /** Highest percent discount the engine may offer (deals and fallback offers above it are skipped/capped). */
   maxDiscountPercent: number;
 };

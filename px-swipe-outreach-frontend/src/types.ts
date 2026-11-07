@@ -53,6 +53,7 @@ export interface Suggestion {
   message: string
   subject: string | null
   source: 'openai' | 'rules'
+  model?: string
   deal: { id: string; title: string; day: number; discountLabel: string } | null
   reasons: string[]
   segment: Segment
@@ -90,6 +91,8 @@ export interface OrgSettings {
   smsSignature: string
   defaultChannel: Channel | null
   maxDiscountPercent: number
+  /** Suggestion model id; 'rules' = no AI. */
+  aiModel: string
 }
 
 export type OptOutSource = 'sms_stop' | 'email_unsubscribe' | 'manual' | 'provider'
@@ -111,4 +114,9 @@ export interface ConversationSummary {
 export interface ConversationMessage {
   id: string; conversationId: string; direction: 'inbound' | 'outbound'; kind: 'message' | 'opt_out' | 'opt_in' | 'help' | 'auto'
   status: 'received' | 'queued' | 'sending' | 'sent' | 'failed'; body: string; subject: string | null; sentBy: string | null; createdAt: string
+}
+
+export interface AiModelOption {
+  id: string; label: string; provider: string; providerLabel: string; inputPerM: number; outputPerM: number
+  costHint: string; available: boolean; note: string | null
 }

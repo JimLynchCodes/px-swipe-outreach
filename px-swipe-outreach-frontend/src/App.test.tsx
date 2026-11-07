@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import type { OutreachCard } from './types'
@@ -143,6 +143,14 @@ describe('App', () => {
     fireEvent.keyDown(window, { key: 'ArrowRight' })
     await screen.findByText('Maya M.')
     expect(JSON.parse(String(calls.find(c => c.url.endsWith('/send'))!.init!.body)).message).toBe('Draft B')
+  })
+
+  it('re-runs the current suggestion when the AI model changes', async () => {
+    render(<App />)
+    await screen.findByText('Hi! (sms)')
+    const before = calls.filter(c => c.url.endsWith('/suggestion')).length
+    window.dispatchEvent(new Event('ai-model:changed'))
+    await waitFor(() => expect(calls.filter(c => c.url.endsWith('/suggestion')).length).toBe(before + 1))
   })
 
   it('skips with the arrow key and switches to email', async () => {

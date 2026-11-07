@@ -40,7 +40,8 @@ const schema = z.object({
   DELIVERY_MODE: z.enum(["inline", "queue"]).default("inline"),
   REDIS_URL: z.string().default("redis://localhost:6379"),
   OPENAI_API_KEY: z.string().optional(),
-  OPENAI_MODEL: z.string().default("gpt-4.1-mini"),
+  /** Fallback model when an org has none set (orgs pick theirs in Settings / the header). */
+  OPENAI_MODEL: z.string().default("gpt-4o-mini"),
   SMS_PROVIDER: z.enum(["console"]).default("console"),
   EMAIL_PROVIDER: z.enum(["console"]).default("console"),
   BUSINESS_NAME: z.string().default("our store"),

@@ -112,7 +112,7 @@ describe("settings", () => {
     expect((await as(STAFF, "GET", "/api/settings")).json().settings).toMatchObject({ storeName: "Cloud 9 Smoke Shop", smsSignature: "-Cloud 9", maxDiscountPercent: 25 });
     const r = await as(OWNER, "PUT", "/api/settings", settings);
     expect(r.statusCode).toBe(200);
-    expect(r.json().settings).toEqual({ ...settings, emailSignature: "Cloud Nine\nMain St" });
+    expect(r.json().settings).toEqual({ ...settings, emailSignature: "Cloud Nine\nMain St", aiModel: "gpt-4o-mini" });
     expect((await as(STAFF, "PUT", "/api/settings", settings)).statusCode).toBe(403);
     expect((await as(OUTSIDER, "GET", "/api/settings", undefined, OTHER_ORG)).json().settings).toMatchObject({ storeName: null, smsSignature: "" });
   });

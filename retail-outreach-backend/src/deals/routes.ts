@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { MODEL_IDS } from "../ai/models.js";
 import type { OutreachStore } from "../store/types.js";
 import type { Actor } from "../types.js";
 
@@ -34,7 +35,9 @@ export const settingsInput = z.object({
   emailSignature: z.string().max(1000).transform(s => s.replace(/\r\n/g, "\n").trimEnd()),
   smsSignature: text(60).refine(s => !/[\r\n]/.test(s), "must be a single line"),
   defaultChannel: z.enum(["sms", "email"]).nullable(),
-  maxDiscountPercent: z.number().int().min(0).max(100)
+  maxDiscountPercent: z.number().int().min(0).max(100),
+  /** Optional so older clients keep the current model. Allowlisted. */
+  aiModel: z.enum(MODEL_IDS).optional()
 }).strict();
 
 type Deps = { store: OutreachStore; actorOf: (req: any) => Actor };
@@ -74,5 +77,10 @@ export async function dealRoutes(app: FastifyInstance, { store, actorOf }: Deps)
   });
 
   app.get("/api/settings", async request => ({ settings: await store.getSettings(actorOf(request)) }));
-  app.put("/api/settings", async request => ({ settings: await store.updateSettings(actorOf(request), settingsInput.parse(request.body ?? {})) }));
+  app.put("/api/settings", async request => {
+    const actor = actorOf(request);
+    const input = settingsInput.parse(request.body ?? {});
+    const aiModel = input.aiModel ?? (await store.getSettings(actor)).aiModel;
+    return { settings: await store.updateSettings(actor, { ...input, aiModel }) };
+  });
 }

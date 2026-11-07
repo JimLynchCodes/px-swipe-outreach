@@ -18,6 +18,7 @@ import { loggerOptions } from "./logger.js";
 import type { SuggestionProvider } from "./providers/ai.js";
 import type { MessageProvider } from "./providers/messaging.js";
 import { StoreError, type OutreachStore } from "./store/types.js";
+import { listModels, PRICE_TABLE_VERSION, RULES_MODEL } from "./ai/models.js";
 import { ConsoleInviteMailer, SupabaseInviteMailer, type InviteMailer } from "./team/mailer.js";
 import { INVITE_ACCEPT_PATH, INVITE_PREVIEW_PATH, teamRoutes } from "./team/routes.js";
 import type { Actor } from "./types.js";
@@ -202,7 +203,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const offer = opp.offer && { ...opp.offer, discountPercent: Math.min(opp.offer.discountPercent, settings.maxDiscountPercent) };
     const suggestion = await suggestions.suggest({
       opportunity: { ...opp, offer: offer && offer.discountPercent > 0 ? offer : null }, channel: body.channel, businessName, recommendation,
-      signatures: { sms: settings.smsSignature, email: settings.emailSignature }
+      signatures: { sms: settings.smsSignature, email: settings.emailSignature }, model: settings.aiModel
     });
     await store.saveSuggestion(actor, id, suggestion);
     return { suggestion };
@@ -286,6 +287,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // ── Promotions & settings ───────────────────────────────────────────
   await dealRoutes(app, { store, actorOf });
+  /** Model picker options: allowlist, cost hints, and whether each provider is configured on this server. */
+  app.get("/api/ai/models", async request => {
+    const settings = await store.getSettings(actorOf(request));
+    const models = listModels(config);
+    const selected = models.find(m => m.id === settings.aiModel);
+    return { models, selected: settings.aiModel, effective: selected?.available ? settings.aiModel : RULES_MODEL, priceTableVersion: PRICE_TABLE_VERSION };
+  });
+
   await optOutRoutes(app, { config, store, actorOf, messenger, sendError });
   // Inbound email webhooks may be multipart (SendGrid Inbound Parse). Attachments are discarded.
   await app.register(multipart, {

@@ -259,3 +259,12 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .row-toggle { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 0; color: inherit; text-align: left; }
 .history-row td { background: var(--tile); }
 .consent-history { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.model-picker { position: relative; }
+.model-pill { border: 0; cursor: pointer; }
+.model-menu { left: auto; right: 0; min-width: 300px; gap: 2px; }
+.model-item { display: flex; gap: 8px; align-items: flex-start; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: 10px; color: var(--ink); }
+.model-item:hover:not(:disabled) { background: var(--tile); }
+.model-item .tag { margin-left: 6px; }
+.model-check { width: 14px; flex: none; color: var(--green); padding-top: 2px; }
+.model-text { display: flex; flex-direction: column; }
+.model-note { padding: 4px 10px; }

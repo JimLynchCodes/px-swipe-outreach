@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import Root from './Root'
+import type { AiModelOption } from './types'
 import { relativeTime } from './lib/week'
 
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }))
@@ -324,5 +325,57 @@ describe('Opt-out list: re-opt-in and consent history', () => {
     expect(rows[0]).toHaveTextContent('by a team member')
     expect(rows[1]).toHaveTextContent('Opted out · Email · Unsubscribe link')
     expect(rows[1]).toHaveTextContent('ref req-1')
+  })
+})
+
+describe('AI model picker', () => {
+  const MODELS: AiModelOption[] = [
+    { id: 'gpt-4o-mini', label: 'GPT-4o mini', provider: 'openai', providerLabel: 'OpenAI', inputPerM: 0.15, outputPerM: 0.6, costHint: '~$0.020 per 100 suggestions', available: true, note: null },
+    { id: 'gpt-5-mini', label: 'GPT-5 mini', provider: 'openai', providerLabel: 'OpenAI', inputPerM: 0.25, outputPerM: 2, costHint: '~$0.05 per 100 suggestions', available: true, note: null },
+    { id: 'rules', label: 'Rules only (no AI)', provider: 'rules', providerLabel: 'Built-in rules', inputPerM: 0, outputPerM: 0, costHint: 'Free', available: true, note: null },
+  ]
+  const routes = (selected: { v: string }, models = MODELS) => ({
+    'GET /api/ai/models': () => json({ models, selected: selected.v, effective: models.find(m => m.id === selected.v)?.available ? selected.v : 'rules', priceTableVersion: '2026-11-07' }),
+    'GET /api/settings': () => json({ settings: { ...SETTINGS, aiModel: selected.v } }),
+    'PUT /api/settings': (c: Call) => { selected.v = (c.body as { aiModel: string }).aiModel; return json({ settings: c.body }) },
+    'GET /api/deals': () => json({ deals: [] }), 'GET /api/catalog': () => json({ products: [], categories: [] }),
+    'GET /api/outreach/queue': () => json({ items: [], total: 0 }),
+  })
+
+  it('shows the current model, and owners switch it (saved to settings, event fired)', async () => {
+    const sel = { v: 'gpt-4o-mini' }
+    const calls = backend(routes(sel))
+    const changed = vi.fn()
+    window.addEventListener('ai-model:changed', changed)
+    go('/')
+    const pill = await screen.findByRole('button', { name: /Using model GPT-4o mini/ })
+    fireEvent.click(pill)
+    const menu = screen.getByRole('menu', { name: 'AI model' })
+    expect(within(menu).getByRole('menuitemradio', { name: /GPT-4o mini/ })).toHaveAttribute('aria-checked', 'true')
+    expect(within(menu).getByText('Free')).toBeInTheDocument()
+    fireEvent.click(within(menu).getByRole('menuitemradio', { name: /GPT-5 mini/ }))
+    await screen.findByRole('button', { name: /Using model GPT-5 mini/ })
+    expect(calls.find(c => c.method === 'PUT')?.body).toMatchObject({ aiModel: 'gpt-5-mini', storeName: 'Cloud 9' })
+    expect(changed).toHaveBeenCalled()
+    window.removeEventListener('ai-model:changed', changed)
+  })
+
+  it('without an API key, OpenAI models are unavailable and rules are used', async () => {
+    const sel = { v: 'gpt-4o-mini' }
+    const models = MODELS.map(m => m.provider === 'openai' ? { ...m, available: false, note: 'Set OPENAI_API_KEY on the server to enable OpenAI models.' } : m)
+    backend(routes(sel, models))
+    go('/')
+    fireEvent.click(await screen.findByRole('button', { name: /rules fallback/ }))
+    expect(screen.getByRole('menuitemradio', { name: /GPT-5 mini/ })).toBeDisabled()
+    expect(screen.getAllByText('Unavailable').length).toBe(2)
+    expect(screen.getByText(/Set OPENAI_API_KEY/)).toBeInTheDocument()
+  })
+
+  it('staff see the list read-only', async () => {
+    backend(routes({ v: 'gpt-4o-mini' }), 'staff')
+    go('/')
+    fireEvent.click(await screen.findByRole('button', { name: /Using model/ }))
+    expect(screen.getByText('Only owners and admins can change the model.')).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: /GPT-5 mini/ })).toBeDisabled()
   })
 })

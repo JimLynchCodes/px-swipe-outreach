@@ -70,7 +70,7 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `RATE_LIMIT_PER_MINUTE` / `SEND_RATE_LIMIT_PER_MINUTE` | `300` / `30` | Per user (or IP when unauthenticated) |
 | `ENABLE_DEMO_RESET` | on outside production | `POST /api/dev/reset` (owner/admin only) |
 | `DELIVERY_MODE` / `REDIS_URL` | `inline` / – | `queue` needs Postgres and Redis |
-| `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4.1-mini` | Rules-based suggestions when unset |
+| `OPENAI_API_KEY` / `OPENAI_MODEL` | – / `gpt-4o-mini` | Without a key, OpenAI models are unavailable and rules are used. Each org picks its model in Settings or the header; `OPENAI_MODEL` is only the fallback |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
 | `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
 | `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |
@@ -138,8 +138,9 @@ In demo mode all `/api/*` routes run as the demo tenant. Errors look like `{ "er
 | `GET /api/deals` / `POST /api/deals` | – / `DealInput` | Promotions (see [docs/OUTREACH_FEATURES.md](../docs/OUTREACH_FEATURES.md)). Writes are owner/admin only |
 | `PUT /api/deals/:id` / `DELETE /api/deals/:id` | `DealInput` / – | `DealInput = {schedule: "weekly"\|"range", days[], title, description, discountType, discountValue, categories[], productIds[], startsOn, endsOn, active}` |
 | `GET /api/catalog` | – | `{products, categories}` for the promotion editor |
-| `GET /api/settings` / `PUT /api/settings` | – / `OrgSettings` | `{storeName, emailSignature, smsSignature, defaultChannel, maxDiscountPercent}`. PUT is owner/admin only |
+| `GET /api/settings` / `PUT /api/settings` | – / `OrgSettings` | `{storeName, emailSignature, smsSignature, defaultChannel, maxDiscountPercent, aiModel}`. PUT is owner/admin only |
 | `GET /api/opt-outs?channel=&q=&page=&pageSize=` | – | `{items: [{id, channel, contact (masked), customerName, source, createdAt}], total}` |
+| `GET /api/ai/models` | – | `{models: [{id, label, provider, costHint, inputPerM, outputPerM, available, note}], selected, effective, priceTableVersion}` |
 | `GET /api/opt-outs/:id/history` | – | `{events: [{event, channel, source, actorId, requestId, createdAt}]}` consent history |
 | `POST /api/opt-outs/:id/reopt-in` | – | Owner/admin. Sends one re-opt-in request. `409 reoptin_pending`, `429 reoptin_cooldown`, `403 sms_reoptin_disabled` |
 | `POST /resubscribe?t=` / `GET`,`POST /reopt-in?t=` | – | Public, signed, rate-limited, no PII |

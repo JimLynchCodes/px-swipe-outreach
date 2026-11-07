@@ -1,3 +1,4 @@
+import { DEFAULT_AI_MODEL } from "../ai/models.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
   Suggestion, SuppressionReason, TeamMember
@@ -148,4 +149,4 @@ export interface OutreachStore {
   close(): Promise<void>;
 }
 
-export const DEFAULT_SETTINGS: OrgSettings = { storeName: null, emailSignature: "", smsSignature: "", defaultChannel: null, maxDiscountPercent: 25 };
+export const DEFAULT_SETTINGS: OrgSettings = { storeName: null, emailSignature: "", smsSignature: "", defaultChannel: null, maxDiscountPercent: 25, aiModel: DEFAULT_AI_MODEL };

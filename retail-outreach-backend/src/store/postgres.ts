@@ -129,7 +129,7 @@ const dealParams = (d: DealInput) => [d.days, d.title, d.description, d.discount
   d.productIds, d.startsOn, d.endsOn, d.active, d.schedule];
 function toSettings(r: any): OrgSettings {
   return { storeName: r.store_name, emailSignature: r.email_signature, smsSignature: r.sms_signature,
-    defaultChannel: r.default_channel, maxDiscountPercent: r.max_discount_percent };
+    defaultChannel: r.default_channel, maxDiscountPercent: r.max_discount_percent, aiModel: r.ai_model ?? DEFAULT_SETTINGS.aiModel };
 }
 
 export class PostgresStore implements OutreachStore {
@@ -406,12 +406,12 @@ export class PostgresStore implements OutreachStore {
   async updateSettings(actor: Actor, s: OrgSettings): Promise<OrgSettings> {
     return this.asUser(actor.userId, async db => {
       assertCanEditDeals(await this.role(db, actor));
-      const r = await db.query(`insert into public.org_settings (org_id, store_name, email_signature, sms_signature, default_channel, max_discount_percent, updated_by)
-        values ($1,$2,$3,$4,$5,$6,$7)
+      const r = await db.query(`insert into public.org_settings (org_id, store_name, email_signature, sms_signature, default_channel, max_discount_percent, updated_by, ai_model)
+        values ($1,$2,$3,$4,$5,$6,$7,$8)
         on conflict (org_id) do update set store_name = excluded.store_name, email_signature = excluded.email_signature,
           sms_signature = excluded.sms_signature, default_channel = excluded.default_channel,
-          max_discount_percent = excluded.max_discount_percent, updated_by = excluded.updated_by
-        returning *`, [actor.orgId, s.storeName, s.emailSignature, s.smsSignature, s.defaultChannel, s.maxDiscountPercent, actor.userId]);
+          max_discount_percent = excluded.max_discount_percent, updated_by = excluded.updated_by, ai_model = excluded.ai_model
+        returning *`, [actor.orgId, s.storeName, s.emailSignature, s.smsSignature, s.defaultChannel, s.maxDiscountPercent, actor.userId, s.aiModel]);
       await this.event(db, actor, actor.orgId, null, "settings_updated", {});
       return toSettings(r.rows[0]);
     }).catch(mapTeamError);

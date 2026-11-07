@@ -11,7 +11,8 @@ export const DEMO_SETTINGS = {
   emailSignature: "Cloud 9 Smoke Shop\n123 Main St · Open daily 10am–10pm\n21+ with valid ID",
   smsSignature: "-Cloud 9",
   defaultChannel: null,
-  maxDiscountPercent: 25
+  maxDiscountPercent: 25,
+  aiModel: "gpt-4o-mini"
 } as const;
 export const DEMO_ORG = { id: DEMO_ORG_ID, name: "Cloud 9 Smoke Shop", slug: "demo-retailer", businessName: "Cloud 9 Smoke Shop" };
 export const DEMO_USER_ID = "00000000-0000-4000-8000-000000000001";

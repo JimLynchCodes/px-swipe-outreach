@@ -2,11 +2,14 @@ import { z } from "zod";
 import { daysSince, discountLabel, withEmailFooter, withSmsOptOut, WEEKDAYS } from "../domain.js";
 import { categoryLabel } from "../recommend.js";
 import type { Channel, Opportunity, Recommendation, Suggestion } from "../types.js";
+import { DEFAULT_AI_MODEL, modelInfo, PROVIDERS, RULES_MODEL } from "../ai/models.js";
 
 export type SuggestionInput = {
   opportunity: Opportunity; channel: Channel; businessName: string; recommendation: Recommendation;
   /** Org signatures appended to the generated message for the matching channel. */
   signatures?: { sms: string; email: string };
+  /** Org's chosen model (src/ai/models.ts). Providers that don't serve it ignore it. */
+  model?: string;
 };
 
 /** Anything that can turn an opportunity into a suggested outreach message. */
@@ -21,13 +24,14 @@ const list = (xs: string[]) => xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -
 /** Adds the deal/targeting metadata and the compliance lines every message must carry. */
 export function finalizeSuggestion(
   copy: { title: string; reasoning: string; message: string; subject: string | null },
-  input: SuggestionInput, source: Suggestion["source"]
+  input: SuggestionInput, source: Suggestion["source"],
+  meta: { model?: string; usage?: Suggestion["usage"] } = {}
 ): Suggestion {
   const { recommendation: rec, channel } = input;
   const sig = (channel === "sms" ? input.signatures?.sms : input.signatures?.email)?.trim();
   const signed = sig && !copy.message.includes(sig) ? `${copy.message.trim()}${channel === "sms" ? " " : "\n\n"}${sig}` : copy.message;
   return {
-    ...copy, channel, source,
+    ...copy, channel, source, model: meta.model ?? RULES_MODEL, ...(meta.usage ? { usage: meta.usage } : {}),
     message: channel === "sms" ? withSmsOptOut(signed) : withEmailFooter(signed),
     subject: channel === "email" ? copy.subject || `A note from ${input.businessName}` : null,
     deal: rec.deal ? { id: rec.deal.id, title: rec.deal.title, day: rec.dealDay ?? rec.deal.days[0], discountLabel: discountLabel(rec.deal) } : null,
@@ -94,16 +98,17 @@ const outputSchema = z.object({
 /** OpenAI structured-output provider. Writes copy for the deal the engine already chose; minimal customer facts only. */
 export class OpenAISuggestionProvider implements SuggestionProvider {
   readonly name = "openai" as const;
-  constructor(private apiKey: string, private model: string) {}
+  constructor(private apiKey: string, private defaultModel: string = DEFAULT_AI_MODEL) {}
 
   async suggest(input: SuggestionInput): Promise<Suggestion> {
+    const model = input.model && modelInfo(input.model)?.provider === "openai" ? input.model : this.defaultModel;
     const { opportunity, channel, businessName, recommendation: rec } = input;
     const { default: OpenAI } = await import("openai");
     const client = new OpenAI({ apiKey: this.apiKey });
     const c = opportunity.customer;
     const response = await client.chat.completions.create({
-      model: this.model,
-      temperature: 0.7,
+      model,
+      ...(modelInfo(model)?.reasoning ? {} : { temperature: 0.7 }),
       response_format: {
         type: "json_schema",
         json_schema: {
@@ -147,7 +152,8 @@ ${channel === "sms" ? 'SMS under 130 characters; do not add a signature or opt-o
     });
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error("AI returned an empty response");
-    return finalizeSuggestion(outputSchema.parse(JSON.parse(content)), input, this.name);
+    const usage = response.usage ? { inputTokens: response.usage.prompt_tokens ?? 0, outputTokens: response.usage.completion_tokens ?? 0 } : undefined;
+    return finalizeSuggestion(outputSchema.parse(JSON.parse(content)), input, this.name, { model, usage });
   }
 }
 
@@ -162,8 +168,28 @@ export class FallbackSuggestionProvider implements SuggestionProvider {
   }
 }
 
-export function createSuggestionProvider(opts: { apiKey?: string; model: string; onError?: (e: unknown) => void }): SuggestionProvider {
-  const rules = new RulesSuggestionProvider();
-  if (!opts.apiKey) return rules;
-  return new FallbackSuggestionProvider(new OpenAISuggestionProvider(opts.apiKey, opts.model), rules, opts.onError);
+/**
+ * Routes each suggestion to the provider of the org's chosen model (input.model). "rules", unknown models and models
+ * whose provider has no API key use rules; provider errors fall back to rules. Register new providers in `providers`.
+ */
+export class ModelRouter implements SuggestionProvider {
+  readonly name = "rules" as const;
+  constructor(private providers: Partial<Record<string, SuggestionProvider>>, private rules: SuggestionProvider = new RulesSuggestionProvider(),
+    private defaultModel = DEFAULT_AI_MODEL, private onError: (e: unknown) => void = () => {}) {}
+  get primaryName(): Suggestion["source"] { return Object.keys(this.providers).length ? "openai" : "rules"; }
+  async suggest(input: SuggestionInput): Promise<Suggestion> {
+    const model = input.model ?? this.defaultModel;
+    const info = modelInfo(model);
+    const provider = info && info.provider !== "rules" ? this.providers[info.provider] : undefined;
+    if (!provider) return this.rules.suggest(input);
+    try { return await provider.suggest({ ...input, model }); }
+    catch (e) { this.onError(e); return this.rules.suggest(input); }
+  }
+}
+
+export function createSuggestionProvider(opts: { apiKey?: string; model?: string; onError?: (e: unknown) => void }): SuggestionProvider {
+  const providers: Partial<Record<string, SuggestionProvider>> = {};
+  if (PROVIDERS.openai.configured({ OPENAI_API_KEY: opts.apiKey })) providers.openai = new OpenAISuggestionProvider(opts.apiKey!, opts.model);
+  // e.g. if (opts.anthropicKey) providers.anthropic = new AnthropicSuggestionProvider(opts.anthropicKey);
+  return new ModelRouter(providers, new RulesSuggestionProvider(), opts.model ?? DEFAULT_AI_MODEL, opts.onError);
 }

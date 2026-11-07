@@ -1,5 +1,5 @@
 import type {
-  CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
+  AiModelOption, CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
   SendResult, Suggestion,
 } from './types'
 
@@ -131,6 +131,7 @@ export const api = {
         method: 'POST', body: JSON.stringify({ body, ...(subject ? { subject } : {}) }),
       }).then(r => r.message),
   },
+  aiModels: () => request<{ models: AiModelOption[]; selected: string; effective: string; priceTableVersion: string }>('/api/ai/models'),
   resetDemo: () => request<{ ok: true }>('/api/dev/reset', { method: 'POST' }),
 }
 

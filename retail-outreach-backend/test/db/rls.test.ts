@@ -314,7 +314,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     });
 
     it("settings upsert is owner/admin only and readable by members", async () => {
-      const next = { storeName: "Shop A+", emailSignature: "A\nB", smsSignature: "-A", defaultChannel: "email" as const, maxDiscountPercent: 15 };
+      const next = { storeName: "Shop A+", emailSignature: "A\nB", smsSignature: "-A", defaultChannel: "email" as const, maxDiscountPercent: 15, aiModel: "gpt-5-mini" };
       expect(await store.updateSettings(A, next)).toEqual(next);
       expect((await asUser(STAFF, `select store_name from public.org_settings where org_id = $1`, [ORG_A])).rows[0].store_name).toBe("Shop A+");
       expect((await asUser(STAFF, `update public.org_settings set store_name = 'X' where org_id = $1`, [ORG_A])).rowCount).toBe(0);
@@ -325,7 +325,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     it("suggestion drafts record the deal used", async () => {
       const id = opp(ORG_A, "cust_0002");
       const deal = (await store.listDeals(A)).find(d => d.title === "Cigar Friday")!;
-      await store.saveSuggestion(A, id, { title: "t", reasoning: "r", channel: "sms", message: "m", subject: null, source: "rules",
+      await store.saveSuggestion(A, id, { title: "t", reasoning: "r", channel: "sms", message: "m", subject: null, source: "rules", model: "rules",
         deal: { id: deal.id, title: deal.title, day: 4, discountLabel: "20% off" }, reasons: [], segment: "loyal", sendAt: null });
       const r = await admin.query(`select deal_id from public.outreach_drafts where opportunity_id = $1 order by created_at desc limit 1`, [id]);
       expect(r.rows[0].deal_id).toBe(deal.id);
