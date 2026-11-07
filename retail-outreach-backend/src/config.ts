@@ -42,8 +42,24 @@ const schema = z.object({
   OPENAI_API_KEY: z.string().optional(),
   /** Fallback model when an org has none set (orgs pick theirs in Settings / the header). */
   OPENAI_MODEL: z.string().default("gpt-4o-mini"),
-  SMS_PROVIDER: z.enum(["console"]).default("console"),
-  EMAIL_PROVIDER: z.enum(["console"]).default("console"),
+  /** log = print only (dev); smtp = real email via Nodemailer. "console" is accepted as an alias for log. */
+  EMAIL_PROVIDER: z.preprocess(v => (v === "console" ? "log" : v), z.enum(["log", "smtp"]).default("log")),
+  /** log = print only; simulator = dev phone page at /dev/phone; twilio = real SMS (optional, paid). */
+  SMS_PROVIDER: z.preprocess(v => (v === "console" ? "log" : v), z.enum(["log", "simulator", "twilio"]).default("log")),
+  SMTP_HOST: z.string().optional(),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  /** TLS from the first byte (port 465). Defaults to true only for port 465; 587/1025 use STARTTLS/plain. */
+  SMTP_SECURE: z.enum(["true", "false"]).optional(),
+  SMTP_USER: z.string().optional(),
+  /** BACKEND SECRET. SMTP password (e.g. a Gmail app password). */
+  SMTP_PASS: z.string().optional(),
+  /** From header, e.g. "Cloud 9 Smoke Shop <deals@example.com>". With Gmail it must be your Gmail address (or a verified alias). */
+  SMTP_FROM: z.string().optional(),
+  TWILIO_ACCOUNT_SID: z.string().regex(/^AC[0-9a-f]{32}$/i, "must look like AC…").optional(),
+  /** Twilio sender: an E.164 number (+15551234567) or a Messaging Service SID (MG…). */
+  TWILIO_FROM: z.string().regex(/^(\+[1-9]\d{6,14}|MG[0-9a-f]{32})$/i, "must be an E.164 number or MG… service SID").optional(),
+  /** Where the worker posts simulator texts (the API that serves /dev/phone). Defaults to PUBLIC_API_URL. */
+  SMS_SIMULATOR_URL: z.string().url().optional(),
   BUSINESS_NAME: z.string().default("our store"),
   SHUTDOWN_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
 
@@ -80,7 +96,20 @@ const schema = z.object({
     if (!c.SUPABASE_URL) issue("SUPABASE_URL", "required when INVITE_MAILER=supabase");
     if (!c.SUPABASE_SERVICE_ROLE_KEY) issue("SUPABASE_SERVICE_ROLE_KEY", "required when INVITE_MAILER=supabase");
   }
+  if (c.EMAIL_PROVIDER === "smtp") {
+    if (!c.SMTP_HOST) issue("SMTP_HOST", "required when EMAIL_PROVIDER=smtp");
+    if (!c.SMTP_FROM) issue("SMTP_FROM", "required when EMAIL_PROVIDER=smtp");
+    if (c.SMTP_USER && !c.SMTP_PASS) issue("SMTP_PASS", "required when SMTP_USER is set");
+  }
+  if (c.SMS_PROVIDER === "twilio") {
+    if (!c.TWILIO_ACCOUNT_SID) issue("TWILIO_ACCOUNT_SID", "required when SMS_PROVIDER=twilio");
+    if (!c.TWILIO_AUTH_TOKEN) issue("TWILIO_AUTH_TOKEN", "required when SMS_PROVIDER=twilio");
+    if (!c.TWILIO_FROM) issue("TWILIO_FROM", "required when SMS_PROVIDER=twilio");
+  }
   if (c.NODE_ENV === "production") {
+    if (c.EMAIL_PROVIDER === "log") issue("EMAIL_PROVIDER", "must be 'smtp' in production ('log' sends nothing)");
+    if (c.SMS_PROVIDER !== "twilio") issue("SMS_PROVIDER", `must be 'twilio' in production ('${c.SMS_PROVIDER}' sends nothing)`);
+    if (c.EMAIL_PROVIDER === "smtp" && c.SMTP_HOST && /^(localhost|127\.|mailpit$)/i.test(c.SMTP_HOST)) issue("SMTP_HOST", "points at a local test server (Mailpit) in production");
     if (!c.UNSUBSCRIBE_SIGNING_SECRET) issue("UNSUBSCRIBE_SIGNING_SECRET", "required in production (signs email unsubscribe links)");
     if (!/^https:\/\//.test(c.PUBLIC_API_URL)) issue("PUBLIC_API_URL", "must be an https:// URL in production");
     if (c.INVITE_MAILER !== "supabase") issue("INVITE_MAILER", "must be 'supabase' in production (console logs invite links)");
@@ -97,6 +126,9 @@ const schema = z.object({
   SUPABASE_URL: c.SUPABASE_URL?.replace(/\/+$/, ""),
   APP_URL: c.APP_URL.replace(/\/+$/, ""),
   PUBLIC_API_URL: c.PUBLIC_API_URL.replace(/\/+$/, ""),
+  SMTP_SECURE: c.SMTP_SECURE ? c.SMTP_SECURE === "true" : c.SMTP_PORT === 465,
+  // Local dev with real email: give outbound mail a Reply-To token so the dev "simulate reply" form can thread replies.
+  INBOUND_EMAIL_DOMAIN: c.INBOUND_EMAIL_DOMAIN ?? (c.NODE_ENV !== "production" && c.EMAIL_PROVIDER === "smtp" ? "reply.localhost" : undefined),
   // Dev/test only (production requires a real secret, enforced above).
   UNSUBSCRIBE_SIGNING_SECRET: c.UNSUBSCRIBE_SIGNING_SECRET ?? "dev-only-insecure-unsubscribe-signing-secret",
   DATABASE_CA_CERT: c.DATABASE_CA_CERT && !c.DATABASE_CA_CERT.includes("BEGIN CERTIFICATE")

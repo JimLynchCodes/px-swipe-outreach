@@ -76,7 +76,7 @@ export async function replyRoutes(app: FastifyInstance, { config, store, messeng
       const unsub = channel === "email" ? unsubscribeLink(config.PUBLIC_API_URL, config.UNSUBSCRIBE_SIGNING_SECRET, created.message.id) : null;
       const replyTo = replyToAddress(config, created.replyToken);
       const res = await messenger.send({
-        channel, recipient: created.recipient, subject,
+        channel, recipient: created.recipient, subject, orgId: actor.orgId,
         message: unsub ? `${text}\n\nUnsubscribe: ${unsub.url}` : text,
         ...(channel === "email" ? { headers: { ...unsub!.headers, ...(replyTo ? { "Reply-To": replyTo } : {}) } } : {})
       });
@@ -100,12 +100,18 @@ export async function replyRoutes(app: FastifyInstance, { config, store, messeng
     if (!secret) return sendError(reply, 503, "not_configured", "Inbound email is not configured");
     if (!safeEqual(given, secret)) return sendError(reply, 403, "invalid_secret", "Invalid secret");
     const f = (request.body && typeof request.body === "object" ? request.body : {}) as Record<string, unknown>;
+    return ingestInboundEmail(store, f, m => request.log.warn(m));
+  });
+}
+
+/** Shared by the inbound email webhook and the dev "simulate reply" tool: threads a reply by its reply+<token>@ address. */
+export async function ingestInboundEmail(store: OutreachStore, f: Record<string, unknown>, warn: (m: string) => void = () => {}) {
     const token = extractReplyToken(f.to, f.cc, f.envelope, f.To);
     const target = token ? await store.findReplyToken(token) : null;
     if (!target) return { ok: true, matched: false };
     const sender = parseAddress(f.from ?? f.From);
     if (!sender || sender !== target.contact) {
-      request.log.warn("inbound email sender does not match the thread; ignored");
+      warn("inbound email sender does not match the thread; ignored");
       return { ok: true, matched: false };
     }
     const text = typeof f.text === "string" && f.text.trim() ? f.text : typeof f.html === "string" ? f.html.replace(/<[^>]+>/g, " ") : "";
@@ -115,5 +121,4 @@ export async function replyRoutes(app: FastifyInstance, { config, store, messeng
       subject: typeof f.subject === "string" ? f.subject.slice(0, 300) : null
     });
     return { ok: true, matched: true };
-  });
 }

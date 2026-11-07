@@ -92,3 +92,7 @@ These pieces are still stubbed:
 * **Live replies.** Replace 15 s polling with Supabase Realtime or SSE.
 * **LLM.** Set `OPENAI_API_KEY` to enable the OpenAI provider. Prompt tuning, brand voice and evals still need work.
 * **Analytics.** Track send → redeem → revenue attribution.
+
+## Testing real delivery locally
+
+`npm run dev:mail` starts Mailpit (emails at http://localhost:8025) and the app with the dev SMS phone at http://localhost:3000/dev/phone. Step by step: [docs/LOCAL_DELIVERY_TESTING.md](docs/LOCAL_DELIVERY_TESTING.md).

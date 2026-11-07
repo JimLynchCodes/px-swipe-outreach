@@ -8,7 +8,9 @@
     "build": "npm --prefix retail-outreach-backend run build && npm --prefix px-swipe-outreach-frontend run build",
     "test": "npm --prefix retail-outreach-backend test && npm --prefix px-swipe-outreach-frontend test",
     "typecheck": "npm --prefix retail-outreach-backend run typecheck && npm --prefix px-swipe-outreach-frontend run typecheck",
-    "lint": "npm --prefix retail-outreach-backend run lint && npm --prefix px-swipe-outreach-frontend run lint"
+    "lint": "npm --prefix retail-outreach-backend run lint && npm --prefix px-swipe-outreach-frontend run lint",
+    "mail:up": "docker compose up -d mailpit",
+    "dev:mail": "docker compose up -d mailpit && concurrently -k -n api,web -c cyan,magenta \"npm --prefix retail-outreach-backend run dev:delivery\" \"npm --prefix px-swipe-outreach-frontend run dev\""
   },
   "devDependencies": {
     "concurrently": "^9.1.0"

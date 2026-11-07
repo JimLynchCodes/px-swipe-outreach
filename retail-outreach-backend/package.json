@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
+    "dev:delivery": "EMAIL_PROVIDER=smtp SMTP_HOST=127.0.0.1 SMTP_PORT=1025 SMTP_FROM='Cloud 9 Smoke Shop <deals@cloud9.test>' SMS_PROVIDER=simulator tsx watch src/server.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "start:worker": "node dist/worker.js",
@@ -29,6 +30,7 @@
     "fastify": "^5.2.1",
     "ioredis": "^5.4.2",
     "jose": "^5.10.0",
+    "nodemailer": "^10.3.1",
     "openai": "^4.77.0",
     "pg": "^8.13.1",
     "zod": "^3.24.1"
@@ -36,9 +38,12 @@
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@types/node": "^22.10.5",
+    "@types/nodemailer": "^8.0.2",
     "@types/pg": "^8.11.10",
+    "@types/smtp-server": "^3.5.13",
     "eslint": "^9.39.5",
     "globals": "^17.13.0",
+    "smtp-server": "^3.21.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.72.1",

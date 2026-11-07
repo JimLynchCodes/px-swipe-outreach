@@ -1,3 +1,4 @@
+import { DEMO_ORG_ID } from "../src/data/seed.js";
 import { afterEach, describe, expect, it } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { makeApp } from "./helpers.js";
@@ -82,7 +83,7 @@ describe("outreach API", () => {
     expect(r.statusCode).toBe(200);
     expect(r.json().status).toBe("sent");
     // The opt-out line is enforced server-side even when staff edit it away.
-    expect(messenger.sent).toEqual([{ channel: "sms", recipient: "+15555550001", message: "Hi Sarah! Edited.\nReply STOP to opt out.", subject: null }]);
+    expect(messenger.sent).toEqual([{ channel: "sms", recipient: "+15555550001", message: "Hi Sarah! Edited.\nReply STOP to opt out.", subject: null, orgId: DEMO_ORG_ID }]);
 
     const again = await app.inject({ method: "POST", url: "/api/outreach/opp_0001/send", payload });
     expect(again.json()).toMatchObject({ duplicate: true, status: "sent" });

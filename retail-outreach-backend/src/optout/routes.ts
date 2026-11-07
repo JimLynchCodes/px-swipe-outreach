@@ -75,11 +75,11 @@ export async function optOutRoutes(app: FastifyInstance, { config, store, actorO
       if (req.channel === "email") {
         const url = `${config.PUBLIC_API_URL}${REOPTIN_PATH}?t=${encodeURIComponent(purposeToken(config.UNSUBSCRIBE_SIGNING_SECRET, "reoptin", req.id))}`;
         await messenger.send({
-          channel: "email", recipient, subject: `${storeName}: would you like to hear from us again?`,
+          channel: "email", recipient, orgId: actor.orgId, subject: `${storeName}: would you like to hear from us again?`,
           message: `Hi${customerFirstName ? ` ${customerFirstName}` : ""},\n\nYou unsubscribed from ${storeName} emails. If you'd like to get our deals again, confirm here:\n${url}\n\nIf you don't click, you stay unsubscribed and we won't ask again for at least 30 days.`
         });
       } else {
-        await messenger.send({ channel: "sms", recipient, message: reoptInSms(storeName, customerFirstName) });
+        await messenger.send({ channel: "sms", recipient, orgId: actor.orgId, message: reoptInSms(storeName, customerFirstName) });
       }
     } catch (e) {
       request.log.error({ err: e }, "re-opt-in request send failed");

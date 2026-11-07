@@ -27,7 +27,7 @@ export async function processDelivery(store: OutreachStore, messenger: MessagePr
     const unsub = d.channel === "email" ? opts.unsubscribe?.(d.id) : undefined;
     const message = unsub ? `${d.message}\n\nUnsubscribe: ${unsub.url}` : d.message;
     const { providerMessageId } = await messenger.send({
-      channel: d.channel, recipient: d.recipient, message, subject: d.subject,
+      channel: d.channel, recipient: d.recipient, message, subject: d.subject, orgId: d.orgId,
       ...(unsub ? { headers: { ...unsub.headers, ...(opts.replyTo?.(d.replyToken) ? { "Reply-To": opts.replyTo(d.replyToken)! } : {}) } } : {})
     });
     await store.updateDelivery(d.id, "sent", { providerMessageId });
