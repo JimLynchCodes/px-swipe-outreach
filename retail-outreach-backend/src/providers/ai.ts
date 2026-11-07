@@ -3,7 +3,7 @@ import { bestDealDay, categoryLabel, dealRunsOn, sendTiming } from "../recommend
 import { checkCopy, type Violation } from "../ai/compliance.js";
 import { AI_JSON_SCHEMA, aiOutputSchema, systemPrompt, userPayload, type AiOutput, type PromptContext } from "../ai/prompt.js";
 import type { BrandVoice, Channel, Deal, Opportunity, Recommendation, Suggestion } from "../types.js";
-import { DEFAULT_AI_MODEL, modelInfo, PROVIDERS, RULES_MODEL } from "../ai/models.js";
+import { DEFAULT_AI_MODEL, modelInfo, routesFor, RULES_MODEL, type AiKeys } from "../ai/models.js";
 
 export type SuggestionInput = {
   opportunity: Opportunity; channel: Channel; businessName: string; recommendation: Recommendation;
@@ -97,13 +97,16 @@ export class RulesSuggestionProvider implements SuggestionProvider {
 /** Minimal slice of the OpenAI SDK used here (injectable for tests and recorded evals). */
 export type ChatCompletionClient = {
   create(params: Record<string, unknown>, opts?: { signal?: AbortSignal; timeout?: number; maxRetries?: number }): Promise<{
-    choices: Array<{ message?: { content?: string | null } }>; usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+    id?: string;
+    choices: Array<{ message?: { content?: string | null } }>;
+    /** `cost` (USD) is OpenRouter usage accounting (`usage: { include: true }`). */
+    usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number } | null;
   }>;
 };
 
 /** Thrown when the AI attempt fails (API error, bad JSON, or compliance rejection twice). Carries tokens already spent. */
 export class AiAttemptError extends Error {
-  constructor(message: string, readonly model: string, readonly usage: { inputTokens: number; outputTokens: number }, readonly violations: Violation[] = [], options?: { cause?: unknown }) {
+  constructor(message: string, readonly model: string, readonly usage: { inputTokens: number; outputTokens: number; costUsd?: number }, readonly violations: Violation[] = [], options?: { cause?: unknown }) {
     super(message, options);
     this.name = "AiAttemptError";
   }
@@ -120,6 +123,14 @@ export type OpenAIProviderOptions = {
   regenerations?: number;
   temperature?: number;
   maxCompletionTokens?: number;
+  /** OpenAI-compatible endpoint, e.g. https://openrouter.ai/api/v1 (default: OpenAI). */
+  baseURL?: string;
+  /** Extra headers (OpenRouter: HTTP-Referer / X-Title for app attribution). */
+  headers?: Record<string, string>;
+  /** Provider id recorded on suggestions and cost rows. */
+  providerId?: "openai" | "openrouter";
+  /** Looks up exact cost for a generation id when the response lacks usage.cost (OpenRouter /api/v1/generation). */
+  lookupCost?: (generationId: string) => Promise<number | null>;
 };
 
 /** Promotions the model may choose from: enabled, running within the next 7 days, and within the discount cap. */
@@ -137,21 +148,25 @@ const DEFAULT_VOICE: BrandVoice = { preset: "friendly", emoji: false, signOff: "
  * router falls back to rules (and still records the tokens spent).
  */
 export class OpenAISuggestionProvider implements SuggestionProvider {
-  readonly name = "openai" as const;
-  private opts: Required<Omit<OpenAIProviderOptions, "client">> & { client?: ChatCompletionClient };
-  constructor(private apiKey: string, private defaultModel: string = DEFAULT_AI_MODEL, opts: OpenAIProviderOptions = {}) {
-    this.opts = { timeoutMs: 15_000, maxRetries: 2, regenerations: 1, temperature: 0.3, maxCompletionTokens: 500, ...opts };
+  readonly name: "openai" | "openrouter";
+  private opts: Required<Omit<OpenAIProviderOptions, "client" | "baseURL" | "headers" | "lookupCost">> & Pick<OpenAIProviderOptions, "client" | "baseURL" | "headers" | "lookupCost">;
+  private defaultModel: string;
+  constructor(private apiKey: string, defaultModel?: string, opts: OpenAIProviderOptions = {}) {
+    this.opts = { timeoutMs: 15_000, maxRetries: 2, regenerations: 1, temperature: 0.3, maxCompletionTokens: 500, providerId: "openai", ...opts };
+    this.name = this.opts.providerId;
+    const fallback = this.name === "openrouter" ? DEFAULT_AI_MODEL : "gpt-4o-mini";
+    this.defaultModel = defaultModel && modelInfo(defaultModel)?.provider === this.name ? defaultModel : fallback;
   }
 
   private async client(): Promise<ChatCompletionClient> {
     if (this.opts.client) return this.opts.client;
     const { default: OpenAI } = await import("openai");
-    const sdk = new OpenAI({ apiKey: this.apiKey, maxRetries: this.opts.maxRetries, timeout: this.opts.timeoutMs });
+    const sdk = new OpenAI({ apiKey: this.apiKey, maxRetries: this.opts.maxRetries, timeout: this.opts.timeoutMs, baseURL: this.opts.baseURL, defaultHeaders: this.opts.headers });
     return { create: (params, o) => sdk.chat.completions.create(params as never, o) as never };
   }
 
   async suggest(input: SuggestionInput): Promise<Suggestion> {
-    const model = input.model && modelInfo(input.model)?.provider === "openai" ? input.model : this.defaultModel;
+    const model = input.model && modelInfo(input.model)?.provider === this.name ? input.model : this.defaultModel;
     const now = input.now ?? new Date();
     const cap = input.maxDiscountPercent ?? 100;
     const promotions = eligiblePromotions(input.promotions ?? (input.recommendation.deal ? [input.recommendation.deal] : []), cap, now.getTime());
@@ -166,7 +181,8 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
       { role: "user", content: JSON.stringify(userPayload(ctx)) }
     ];
     const client = await this.client();
-    const usage = { inputTokens: 0, outputTokens: 0 };
+    const usage: { inputTokens: number; outputTokens: number; costUsd?: number } = { inputTokens: 0, outputTokens: 0 };
+    let exactCost: number | null = this.name === "openrouter" ? 0 : null; // null = unknown, price from the table
     let violations: Violation[] = [];
     for (let attempt = 0; attempt <= this.opts.regenerations; attempt++) {
       let content: string | null | undefined;
@@ -175,13 +191,21 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
           model, messages,
           ...(modelInfo(model)?.reasoning ? {} : { temperature: this.opts.temperature }),
           max_completion_tokens: this.opts.maxCompletionTokens,
-          response_format: { type: "json_schema", json_schema: AI_JSON_SCHEMA }
+          response_format: { type: "json_schema", json_schema: AI_JSON_SCHEMA },
+          // OpenRouter: only route to endpoints that honor response_format, and return exact cost in `usage`.
+          ...(this.name === "openrouter" ? { usage: { include: true }, provider: { require_parameters: true } } : {})
         }, { timeout: this.opts.timeoutMs, maxRetries: this.opts.maxRetries });
         usage.inputTokens += res.usage?.prompt_tokens ?? 0;
         usage.outputTokens += res.usage?.completion_tokens ?? 0;
+        if (exactCost !== null) {
+          let cost = typeof res.usage?.cost === "number" ? res.usage.cost : null;
+          if (cost === null && res.id && this.opts.lookupCost) cost = await this.opts.lookupCost(res.id).catch(() => null);
+          exactCost = cost === null ? null : exactCost + cost;
+        }
+        if (exactCost !== null) usage.costUsd = exactCost; else delete usage.costUsd;
         content = res.choices[0]?.message?.content;
       } catch (e) {
-        throw new AiAttemptError(`OpenAI request failed: ${(e as Error).message}`, model, usage, [], { cause: e });
+        throw new AiAttemptError(`${this.name} request failed: ${(e as Error).message}`, model, usage, [], { cause: e });
       }
       let out: AiOutput;
       try { out = aiOutputSchema.parse(JSON.parse(content ?? "")); }
@@ -199,7 +223,7 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
     throw new AiAttemptError(`AI copy rejected: ${violations.map(v => v.code).join(", ")}`, model, usage, violations);
   }
 
-  private toSuggestion(out: AiOutput, promo: Deal | null, input: SuggestionInput, model: string, usage: { inputTokens: number; outputTokens: number }, now: Date): Suggestion {
+  private toSuggestion(out: AiOutput, promo: Deal | null, input: SuggestionInput, model: string, usage: NonNullable<Suggestion["usage"]>, now: Date): Suggestion {
     const pref = input.opportunity.customer.profile;
     const dealDay = promo ? bestDealDay(promo, pref.preferredDay, now.getTime()) : null;
     const base = input.recommendation;
@@ -229,31 +253,67 @@ export class FallbackSuggestionProvider implements SuggestionProvider {
 }
 
 /**
- * Routes each suggestion to the provider of the org's chosen model (input.model). "rules", unknown models and models
- * whose provider has no API key use rules; provider errors fall back to rules. Register new providers in `providers`.
+ * Routes each suggestion to a provider for the org's chosen model (input.model) using routesFor(): the primary provider
+ * (AI_PROVIDER, default OpenRouter) first, then the same model on the other configured provider, then rules.
+ * "rules", unknown models and models with no configured route use rules. Tokens spent on failed attempts are carried
+ * on `aiAttempt` so cost metrics still record them.
  */
 export class ModelRouter implements SuggestionProvider {
   readonly name = "rules" as const;
-  constructor(private providers: Partial<Record<string, SuggestionProvider>>, private rules: SuggestionProvider = new RulesSuggestionProvider(),
-    private defaultModel = DEFAULT_AI_MODEL, private onError: (e: unknown) => void = () => {}) {}
-  get primaryName(): Suggestion["source"] { return Object.keys(this.providers).length ? "openai" : "rules"; }
+  constructor(private providers: Partial<Record<"openai" | "openrouter", SuggestionProvider>>, private rules: SuggestionProvider = new RulesSuggestionProvider(),
+    private defaultModel = DEFAULT_AI_MODEL, private onError: (e: unknown) => void = () => {}, private keys?: AiKeys) {}
+  get primaryName(): Suggestion["source"] { return this.routeKeys().AI_PROVIDER ?? (this.providers.openrouter ? "openrouter" : this.providers.openai ? "openai" : "rules"); }
+  private routeKeys(): AiKeys {
+    return this.keys ?? { OPENROUTER_API_KEY: this.providers.openrouter ? "x" : undefined, OPENAI_API_KEY: this.providers.openai ? "x" : undefined };
+  }
   async suggest(input: SuggestionInput): Promise<Suggestion> {
-    const model = input.model ?? this.defaultModel;
-    const info = modelInfo(model);
-    const provider = info && info.provider !== "rules" ? this.providers[info.provider] : undefined;
-    if (!provider) return this.rules.suggest(input);
-    try { return await provider.suggest({ ...input, model }); }
-    catch (e) {
-      this.onError(e);
-      const fallback = await this.rules.suggest(input);
-      return e instanceof AiAttemptError && (e.usage.inputTokens || e.usage.outputTokens) ? { ...fallback, aiAttempt: { model: e.model, usage: e.usage } } : fallback;
+    const routes = routesFor(input.model ?? this.defaultModel, this.routeKeys()).filter(r => this.providers[r.provider]);
+    let wasted: Suggestion["aiAttempt"] | undefined;
+    for (const r of routes) {
+      try { return await this.providers[r.provider]!.suggest({ ...input, model: r.model }); }
+      catch (e) {
+        this.onError(e);
+        if (e instanceof AiAttemptError && (e.usage.inputTokens || e.usage.outputTokens)) {
+          wasted = { model: e.model, usage: { inputTokens: (wasted?.usage.inputTokens ?? 0) + e.usage.inputTokens, outputTokens: (wasted?.usage.outputTokens ?? 0) + e.usage.outputTokens,
+            ...(e.usage.costUsd !== undefined ? { costUsd: (wasted?.usage.costUsd ?? 0) + e.usage.costUsd } : {}) } };
+        }
+        // A compliance rejection is about the copy, not the provider: don't burn another provider on it.
+        if (e instanceof AiAttemptError && e.violations.length) break;
+      }
     }
+    const fallback = await this.rules.suggest(input);
+    return wasted ? { ...fallback, aiAttempt: wasted } : fallback;
   }
 }
 
-export function createSuggestionProvider(opts: { apiKey?: string; model?: string; onError?: (e: unknown) => void; openai?: OpenAIProviderOptions }): SuggestionProvider {
-  const providers: Partial<Record<string, SuggestionProvider>> = {};
-  if (PROVIDERS.openai.configured({ OPENAI_API_KEY: opts.apiKey })) providers.openai = new OpenAISuggestionProvider(opts.apiKey!, opts.model, opts.openai);
-  // e.g. if (opts.anthropicKey) providers.anthropic = new AnthropicSuggestionProvider(opts.anthropicKey);
-  return new ModelRouter(providers, new RulesSuggestionProvider(), opts.model ?? DEFAULT_AI_MODEL, opts.onError);
+export const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+/** Exact cost of an OpenRouter generation (GET /api/v1/generation?id=); null if not available yet. */
+export function openRouterCostLookup(apiKey: string, fetchImpl: typeof fetch = fetch) {
+  return async (id: string): Promise<number | null> => {
+    const res = await fetchImpl(`${OPENROUTER_BASE_URL}/generation?id=${encodeURIComponent(id)}`, { headers: { authorization: `Bearer ${apiKey}` }, signal: AbortSignal.timeout(5000) });
+    if (!res.ok) return null;
+    const cost = ((await res.json()) as { data?: { total_cost?: number } }).data?.total_cost;
+    return typeof cost === "number" ? cost : null;
+  };
+}
+
+export function createSuggestionProvider(opts: {
+  /** OpenAI (direct) key. */
+  apiKey?: string; openrouterKey?: string; aiProvider?: "openrouter" | "openai";
+  model?: string; onError?: (e: unknown) => void;
+  openai?: OpenAIProviderOptions; openrouter?: OpenAIProviderOptions;
+  /** OpenRouter app attribution headers. */
+  appUrl?: string; appName?: string;
+}): SuggestionProvider {
+  const keys: AiKeys = { OPENAI_API_KEY: opts.apiKey, OPENROUTER_API_KEY: opts.openrouterKey, AI_PROVIDER: opts.aiProvider };
+  const providers: Partial<Record<"openai" | "openrouter", SuggestionProvider>> = {};
+  if (opts.openrouterKey) {
+    providers.openrouter = new OpenAISuggestionProvider(opts.openrouterKey, opts.model, {
+      providerId: "openrouter", baseURL: OPENROUTER_BASE_URL, lookupCost: openRouterCostLookup(opts.openrouterKey),
+      headers: { ...(opts.appUrl ? { "HTTP-Referer": opts.appUrl } : {}), "X-Title": opts.appName ?? "PX Swipe Outreach" }, ...opts.openrouter
+    });
+  }
+  if (opts.apiKey) providers.openai = new OpenAISuggestionProvider(opts.apiKey, opts.model, opts.openai);
+  return new ModelRouter(providers, new RulesSuggestionProvider(), opts.model ?? DEFAULT_AI_MODEL, opts.onError, keys);
 }

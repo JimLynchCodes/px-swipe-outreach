@@ -62,7 +62,7 @@ export function ModelPicker() {
               <span className="model-check">{m.id === data.selected && <Check size={14} aria-hidden />}</span>
               <span className="model-text">
                 <span>{m.label}{!m.available && <span className="tag disabled">Unavailable</span>}</span>
-                <span className="muted small">{m.costHint}{m.provider !== 'rules' && ` · $${m.inputPerM}/$${m.outputPerM} per 1M tokens`}</span>
+                <span className="muted small">{m.costHint}{m.provider !== 'rules' && ` · $${m.inputPerM}/$${m.outputPerM} per 1M tokens · ${m.providerLabel}`}</span>
               </span>
             </button>
           ))}

@@ -1,6 +1,7 @@
 import { buildApp, twilioFetcherOf } from "./app.js";
 import { loadConfigOrExit } from "./config.js";
 import { createSuggestionProvider } from "./providers/ai.js";
+import { primaryProvider, refreshOpenRouterCatalog } from "./ai/models.js";
 import { createMessageProvider } from "./providers/messaging.js";
 import { reconcileSmsCosts } from "./metrics/smsCost.js";
 import { createStore } from "./store/index.js";
@@ -15,7 +16,8 @@ const messenger = createMessageProvider(config, { log: line => app.log.info(line
 const app = await buildApp({
   config, store,
   suggestions: createSuggestionProvider({
-    apiKey: config.OPENAI_API_KEY, model: config.OPENAI_MODEL,
+    apiKey: config.OPENAI_API_KEY, openrouterKey: config.OPENROUTER_API_KEY, aiProvider: config.AI_PROVIDER, model: config.OPENAI_MODEL,
+    appUrl: config.APP_URL, appName: config.OPENROUTER_APP_NAME,
     onError: e => app.log.warn({ err: e }, "AI suggestion failed; using rules fallback")
   }),
   messenger,
@@ -50,7 +52,7 @@ try {
   process.exit(1);
 }
 await app.listen({ port: config.PORT, host: config.HOST });
-app.log.info(`Outreach API ready (env=${config.NODE_ENV}, auth=${config.AUTH_MODE}, store=${config.DATA_STORE}, delivery=${config.DELIVERY_MODE}, ai=${config.OPENAI_API_KEY ? "openai" : "rules"}, email=${config.EMAIL_PROVIDER}, sms=${config.SMS_PROVIDER})`);
+app.log.info(`Outreach API ready (env=${config.NODE_ENV}, auth=${config.AUTH_MODE}, store=${config.DATA_STORE}, delivery=${config.DELIVERY_MODE}, ai=${primaryProvider(config) ?? "rules"}, email=${config.EMAIL_PROVIDER}, sms=${config.SMS_PROVIDER})`);
 
 // Twilio price reconcile: replaces estimated SMS costs with Twilio's actual price (covers missed status callbacks).
 const fetchTwilio = twilioFetcherOf(messenger);
@@ -60,4 +62,12 @@ if (fetchTwilio && config.TWILIO_RECONCILE_MINUTES > 0) {
     .catch(e => app.log.warn({ err: e }, "Twilio price reconcile failed"));
   setInterval(run, config.TWILIO_RECONCILE_MINUTES * 60_000).unref();
   void run();
+}
+
+// Refresh OpenRouter prices for the allowlist (and hide models that lost structured-output support) once a day.
+if (config.OPENROUTER_API_KEY) {
+  const refresh = () => refreshOpenRouterCatalog().then(r => { if (r.refreshed) app.log.info(r, "OpenRouter catalog refreshed"); })
+    .catch(e => app.log.warn({ err: e }, "OpenRouter catalog refresh failed; using built-in prices"));
+  setInterval(refresh, 6 * 3_600_000).unref();
+  void refresh();
 }

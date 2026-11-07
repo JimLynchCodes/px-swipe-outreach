@@ -113,7 +113,7 @@ describe("settings", () => {
     expect((await as(STAFF, "GET", "/api/settings")).json().settings).toMatchObject({ storeName: "Cloud 9 Smoke Shop", smsSignature: "-Cloud 9", maxDiscountPercent: 25 });
     const r = await as(OWNER, "PUT", "/api/settings", settings);
     expect(r.statusCode).toBe(200);
-    expect(r.json().settings).toEqual({ ...settings, emailSignature: "Cloud Nine\nMain St", aiModel: "gpt-4o-mini", brandVoice: DEMO_SETTINGS.brandVoice });
+    expect(r.json().settings).toEqual({ ...settings, emailSignature: "Cloud Nine\nMain St", aiModel: "openai/gpt-4o-mini", brandVoice: DEMO_SETTINGS.brandVoice });
     const voice = { preset: "chill", emoji: true, signOff: "Stay chill", about: "Neighborhood shop" };
     expect((await as(OWNER, "PUT", "/api/settings", { ...settings, brandVoice: voice })).json().settings.brandVoice).toEqual(voice);
     for (const bad of [{ ...voice, preset: "edgy" }, { ...voice, about: "x".repeat(501) }, { ...voice, signOff: "a\nb" }]) {

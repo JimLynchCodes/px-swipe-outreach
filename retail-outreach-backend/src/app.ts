@@ -232,7 +232,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       const a = suggestion.aiAttempt;
       await store.recordAiUsage(actor, {
         opportunityId: id, model: a.model, provider: modelInfo(a.model)?.provider ?? "openai", inputTokens: a.usage.inputTokens, outputTokens: a.usage.outputTokens,
-        costUsd: costUsd(a.model, a.usage.inputTokens, a.usage.outputTokens), priceVersion: PRICE_TABLE_VERSION, dealId: null, dealTitle: null
+        costUsd: a.usage.costUsd ?? costUsd(a.model, a.usage.inputTokens, a.usage.outputTokens), priceVersion: a.usage.costUsd !== undefined ? "provider-reported" : PRICE_TABLE_VERSION, dealId: null, dealTitle: null
       }).catch(e => request.log.warn({ err: e }, "failed to record AI usage"));
     }
     // Cost metrics: one row per suggestion call (rules = $0). Never block the suggestion on metrics.
@@ -240,8 +240,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     await store.recordAiUsage(actor, {
       opportunityId: id, model: suggestion.model, provider: info?.provider ?? "rules",
       inputTokens: suggestion.usage?.inputTokens ?? 0, outputTokens: suggestion.usage?.outputTokens ?? 0,
-      costUsd: suggestion.usage ? costUsd(suggestion.model, suggestion.usage.inputTokens, suggestion.usage.outputTokens) : 0,
-      priceVersion: PRICE_TABLE_VERSION, dealId: suggestion.deal?.id ?? null, dealTitle: suggestion.deal?.title ?? null
+      // Exact provider-reported cost (OpenRouter usage accounting) when available; else the versioned price table.
+      costUsd: suggestion.usage ? suggestion.usage.costUsd ?? costUsd(suggestion.model, suggestion.usage.inputTokens, suggestion.usage.outputTokens) : 0,
+      priceVersion: suggestion.usage?.costUsd !== undefined ? "provider-reported" : PRICE_TABLE_VERSION, dealId: suggestion.deal?.id ?? null, dealTitle: suggestion.deal?.title ?? null
     }).catch(e => request.log.warn({ err: e }, "failed to record AI usage"));
     const { usage: _u, aiAttempt: _a, ...publicSuggestion } = suggestion;
     return { suggestion: publicSuggestion };

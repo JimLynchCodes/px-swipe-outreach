@@ -52,7 +52,7 @@ export interface Suggestion {
   channel: Channel
   message: string
   subject: string | null
-  source: 'openai' | 'rules'
+  source: 'openai' | 'openrouter' | 'rules'
   model?: string
   deal: { id: string; title: string; day: number; discountLabel: string } | null
   reasons: string[]

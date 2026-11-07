@@ -12,7 +12,7 @@ export const DEMO_SETTINGS = {
   smsSignature: "-Cloud 9",
   defaultChannel: null,
   maxDiscountPercent: 25,
-  aiModel: "gpt-4o-mini",
+  aiModel: "openai/gpt-4o-mini",
   brandVoice: { preset: "friendly" as const, emoji: false, signOff: "See you soon!",
     about: "Family-owned smoke shop on Main St since 2014. Big glass wall, walk-in cigar humidor, knowledgeable staff, 21+ only." }
 };

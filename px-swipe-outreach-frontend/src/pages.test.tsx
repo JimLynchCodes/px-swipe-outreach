@@ -348,6 +348,7 @@ describe('Opt-out list: re-opt-in and consent history', () => {
 
 describe('AI model picker', () => {
   const MODELS: AiModelOption[] = [
+    { id: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5', provider: 'openrouter', providerLabel: 'OpenRouter', inputPerM: 0.1, outputPerM: 0.5, costHint: '~$0.014 per 100 suggestions', available: true, note: null },
     { id: 'gpt-4o-mini', label: 'GPT-4o mini', provider: 'openai', providerLabel: 'OpenAI', inputPerM: 0.15, outputPerM: 0.6, costHint: '~$0.020 per 100 suggestions', available: true, note: null },
     { id: 'gpt-5-mini', label: 'GPT-5 mini', provider: 'openai', providerLabel: 'OpenAI', inputPerM: 0.25, outputPerM: 2, costHint: '~$0.05 per 100 suggestions', available: true, note: null },
     { id: 'rules', label: 'None', provider: 'rules', providerLabel: 'Built-in rules', inputPerM: 0, outputPerM: 0, costHint: 'Heuristic-based canned suggestions, free', available: true, note: null },
@@ -371,6 +372,7 @@ describe('AI model picker', () => {
     const menu = screen.getByRole('menu', { name: 'AI model' })
     expect(within(menu).getByRole('menuitemradio', { name: /GPT-4o mini/ })).toHaveAttribute('aria-checked', 'true')
     expect(within(menu).getByText('Heuristic-based canned suggestions, free')).toBeInTheDocument()
+    expect(within(menu).getByRole('menuitemradio', { name: /Claude Haiku 5\.5.*OpenRouter/ })).toBeEnabled()
     fireEvent.click(within(menu).getByRole('menuitemradio', { name: /GPT-5 mini/ }))
     await screen.findByRole('button', { name: /Using model GPT-5 mini/ })
     expect(calls.find(c => c.method === 'PUT')?.body).toMatchObject({ aiModel: 'gpt-5-mini', storeName: 'Cloud 9' })

@@ -1,6 +1,24 @@
-# AI suggestions (OpenAI provider)
+# AI suggestions (OpenRouter, with direct OpenAI as an optional fallback)
 
-Set `OPENAI_API_KEY` on the backend and pick a model under **Settings → Model**. With no key, or with the model set to **None**, suggestions come from the rules engine at no cost.
+Set `OPENROUTER_API_KEY` on the backend and pick a model under **Settings → Model**. With no key, or with the model set to **None**, suggestions come from the rules engine at no cost.
+
+## Providers
+
+| Env | Effect |
+| --- | --- |
+| `OPENROUTER_API_KEY` | Enables OpenRouter (`https://openrouter.ai/api/v1`, OpenAI-compatible, sends `HTTP-Referer: APP_URL` and `X-Title: OPENROUTER_APP_NAME`). It's the default provider when set. |
+| `OPENAI_API_KEY` | Enables direct OpenAI. Optional; when both keys are set, it's the fallback. |
+| `AI_PROVIDER=openrouter\|openai` | Forces the primary provider. Startup fails if that provider's key is missing, or if `OPENAI_MODEL` isn't on the allowlist. |
+
+**Models** (`src/ai/models.ts`) use OpenRouter ids. The default is `openai/gpt-4o-mini`; the cheap options are `google/gemini-2.5-flash-lite`, `anthropic/claude-haiku-5.5`, `mistralai/mistral-small-3.2-24b-instruct`, `deepseek/deepseek-chat-v3.1`, `openai/gpt-5-mini` and `openai/gpt-4.1-mini`. All were checked against `GET /api/v1/models` (Nov 2026) and support `structured_outputs`. The direct OpenAI ids (`gpt-4o-mini`, ...) are still listed as "(direct OpenAI)". `openai/*` models and their direct ids are aliases, so an org that saved `gpt-4o-mini` keeps working through OpenRouter, and an `openai/*` choice can fall back to direct OpenAI. **None** (rules) is always available.
+
+**Routing and fallback.** The org's model goes to the primary provider. If that call errors, it goes to the other provider (if keyed and the model has an alias there), then to rules. A compliance rejection is not retried on another provider. It regenerates once, then uses rules.
+
+**Structured outputs only.** Requests send a strict `json_schema` plus `provider: { require_parameters: true }`, so OpenRouter only routes to upstreams that honor it. Output is re-validated with zod.
+
+**Prices.** When an OpenRouter key is set, the server refreshes `/api/v1/models` every 6h (cached 24h). This updates per-token prices for allowlisted models only, and hides any allowlisted model that has lost `structured_outputs`. The static table is the fallback.
+
+**Cost accounting.** OpenRouter requests send `usage: { include: true }`, and `usage.cost` (USD) is recorded in `ai_usage.cost_usd` with `price_version = 'provider-reported'`. If it's missing, the server looks up `GET /api/v1/generation?id=` (`total_cost`). If that fails too, it uses the static price table (`price_version` = the table date). Wasted spend on rejected attempts is recorded too.
 
 ## How a suggestion is generated
 
@@ -52,7 +70,8 @@ The rules-engine copy, which is the fallback, is unchanged. It can run past 160 
 ```bash
 cd retail-outreach-backend
 npm run eval                               # recorded outputs; deterministic, no network (also runs in CI via vitest)
-OPENAI_API_KEY=sk-... npm run eval -- --live                   # live model; prints tokens + cost
+OPENROUTER_API_KEY=sk-or-... npm run eval -- --live            # live, configured provider (AI_PROVIDER rules apply); --model picks one
+OPENAI_API_KEY=sk-... npm run eval -- --live                   # live via direct OpenAI; prints tokens + cost
 OPENAI_API_KEY=sk-... npm run eval -- --live --judge           # + LLM-as-judge: tone/relevance/persuasiveness 1-5
 OPENAI_API_KEY=sk-... npm run eval -- --live --record          # overwrite src/ai/evals/recorded.json
 #   --model gpt-4.1-mini   --judge-model gpt-4o-mini   --limit 5
