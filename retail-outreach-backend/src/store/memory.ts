@@ -638,6 +638,23 @@ export class MemoryStore implements OutreachStore {
     this.audit(actor, userId === actor.userId ? "member_left" : "member_removed", { userId, role: current });
   }
 
+  async claimPendingInvitations(user: { id: string; email: string | null }) {
+    const email = user.email?.trim().toLowerCase();
+    if (!email) return 0;
+    let n = 0;
+    for (const r of this.invitations.filter(x => x.email === email && !x.acceptedAt && !x.revokedAt && x.expiresAt.getTime() > Date.now())) {
+      if (!this.roleIn(user.id, r.orgId)) {
+        const meta = this.orgMeta(r.orgId)!;
+        this.addMembership(user.id, { orgId: r.orgId, orgName: meta.orgName, businessName: meta.businessName, role: r.role }, user.email ?? undefined);
+        this.joined.set(`${r.orgId}:${user.id}`, new Date());
+        n++;
+      }
+      r.acceptedAt = new Date(); r.acceptedBy = user.id;
+      this.audit({ userId: user.id, orgId: r.orgId }, "invitation_accepted", { invitationId: r.id, role: r.role, via: "sign_in" });
+    }
+    return n;
+  }
+
   async acceptInvitation(user: { id: string; email: string | null }, tokenHash: string) {
     const r = this.invitations.find(x => x.tokenHash === tokenHash);
     if (!r) throw teamError("invitation_invalid");

@@ -300,3 +300,6 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .avatar.sm { width: 28px; height: 28px; font-size: 12px; }
 .tag { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
 .tag.fire { background: #fff1e6; color: #c2410c; } .tag.streak { background: #eef2ff; color: #4338ca; }
+.pill.data-source { padding: 2px 8px; font-size: 11px; order: 3; }
+.pill.data-source.demo { background: #fff4d6; color: #8a5a00; }
+.pill.data-source.supabase { background: #e6f4ea; color: #1e7b34; }

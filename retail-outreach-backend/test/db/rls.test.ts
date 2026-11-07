@@ -448,4 +448,22 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       expect((await store.listSends(B, "2000-01-01")).some(s => s.userId === STAFF)).toBe(false);
     });
   });
+
+  describe("approval gate", () => {
+    const CAROL = "ca201000-0000-4000-8000-000000000007", DAVE = "da7e0000-0000-4000-8000-000000000008";
+    it("claim_pending_invitations auto-joins a matching unexpired invite (case-insensitive); strangers get nothing", async () => {
+      await admin.query(`insert into auth.users (id, email) values ($1,'Carol@Shop.test'),($2,'dave@shop.test') on conflict do nothing`, [CAROL, DAVE]);
+      await admin.query(`insert into public.invitations (org_id, email, role, token_hash, invited_by, expires_at) values ($1,'carol@shop.test','staff',repeat('c',64),$2, now() + interval '1 day')`, [ORG_A, ALICE]);
+      await admin.query(`insert into public.invitations (org_id, email, role, token_hash, invited_by, created_at, expires_at) values ($1,'dave@shop.test','staff',repeat('d',64),$2, now() - interval '2 days', now() - interval '1 day')`, [ORG_A, ALICE]);
+      expect(await store.claimPendingInvitations({ id: CAROL, email: "CAROL@shop.test" })).toBe(1);
+      expect(await store.listMemberships(CAROL)).toMatchObject([{ orgId: ORG_A, role: "staff" }]);
+      expect(await store.claimPendingInvitations({ id: CAROL, email: "carol@shop.test" })).toBe(0); // idempotent
+      expect(await store.claimPendingInvitations({ id: DAVE, email: "dave@shop.test" })).toBe(0);    // expired
+      expect(await store.listMemberships(DAVE)).toEqual([]);
+      // With no membership, RLS shows nothing: the database itself denies unapproved users.
+      expect((await asUser(DAVE, `select count(*)::int n from public.customers`)).rows[0].n).toBe(0);
+      expect((await asUser(DAVE, `select count(*)::int n from public.invitations`)).rows[0].n).toBe(0);
+      await expect(asUser(DAVE, `select public.claim_pending_invitations()`)).resolves.toBeTruthy();
+    });
+  });
 });

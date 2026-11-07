@@ -130,6 +130,8 @@ export interface OutreachStore {
   /** Removes a member (or the actor leaving). Throws conflict(last_owner). */
   removeMember(actor: Actor, userId: string): Promise<void>;
   /** Accepts as the signed-in user; their verified email must match. */
+  /** Auto-joins the user to every org with an unexpired pending invite for their email (case-insensitive). Returns orgs joined. */
+  claimPendingInvitations(user: { id: string; email: string | null }): Promise<number>;
   acceptInvitation(user: { id: string; email: string | null }, tokenHash: string): Promise<{ orgId: string; role: MemberRole; alreadyMember: boolean }>;
 
   // System operations (no user context).

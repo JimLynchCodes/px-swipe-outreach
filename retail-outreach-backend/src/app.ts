@@ -108,10 +108,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (PUBLIC_PATHS.has(path) || isAnon(path) || request.method === "OPTIONS") return;
     try {
       const user = await authenticator.authenticate(request.headers.authorization);
+      // Approval gate: only people on a Team list (member, or matching pending invite → auto-joined) get any API.
+      // The invite-accept endpoint stays open so an invite link can still make someone a member.
+      let memberships = await store.listMemberships(user.id);
+      if (path !== INVITE_ACCEPT_PATH) {
+        if (!memberships.length && (await store.claimPendingInvitations(user))) memberships = await store.listMemberships(user.id);
+        if (!memberships.length) {
+          return sendError(reply, 403, "not_approved",
+            `${user.email ?? "This account"} has not been approved for this application. If this is in error, please contact your administrator.`);
+        }
+      }
       let org: OrgContext | null = null;
       if (!NO_ORG_PATHS.has(path)) {
         const requested = request.headers["x-org-id"];
-        org = resolveOrg(await store.listMemberships(user.id), typeof requested === "string" ? requested : undefined);
+        org = resolveOrg(memberships, typeof requested === "string" ? requested : undefined);
       }
       request.auth = { user, org };
     } catch (e) {
@@ -171,7 +181,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // ── Session ─────────────────────────────────────────────────────────
   app.get("/api/me", async request => {
     const user = request.auth!.user;
-    return { user: { id: user.id, email: user.email }, memberships: await store.listMemberships(user.id), authMode: authenticator.mode };
+    return { user: { id: user.id, email: user.email }, memberships: await store.listMemberships(user.id), authMode: authenticator.mode, dataStore: config.DATA_STORE };
   });
 
   // ── Outreach ────────────────────────────────────────────────────────

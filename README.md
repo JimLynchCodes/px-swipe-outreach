@@ -96,3 +96,7 @@ These pieces are still stubbed:
 ## Real email and SMS
 
 `npm run dev` prints messages to the API log (`EMAIL_PROVIDER=log`, `SMS_PROVIDER=log`). Put SMTP and Twilio settings in `retail-outreach-backend/.env.local`, then run `npm run dev:live` to send for real. Step by step: [docs/LOCAL_DELIVERY_TESTING.md](docs/LOCAL_DELIVERY_TESTING.md).
+
+## Demo data vs Supabase
+
+`npm run dev` runs on in-memory demo data with a demo user. `npm run dev:supabase` uses your Supabase project behind its login page (invite-only; users not on a Team list are refused). The header badge shows which one you're on. See [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md#switching-between-demo-data-and-supabase).

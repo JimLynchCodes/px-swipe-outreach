@@ -35,6 +35,7 @@ describe('hamburger menu', () => {
     backend({ 'GET /api/settings': () => json({ settings: SETTINGS }), 'GET /api/deals': () => json({ deals: [] }), 'GET /api/catalog': () => json({ products: [], categories: [] }) })
     go('/settings')
     const btn = await screen.findByRole('button', { name: 'Menu, 3 unread replies' })
+    expect(screen.getByText('Demo data')).toHaveClass('data-source') // /api/me without dataStore → demo
     fireEvent.click(btn)
     const menu = screen.getByRole('menu')
     for (const label of ['Outreach deck', 'Replies', 'Opt-out list', 'Team', 'Settings']) expect(within(menu).getByText(label)).toBeInTheDocument()

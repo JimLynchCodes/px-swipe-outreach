@@ -27,6 +27,14 @@ function Gate() {
   // The invite page handles signed-out and no-org users itself (that's who it's for).
   if (path === ROUTES.acceptInvite) return <AcceptInvitePage />
   if (auth.status === 'signedOut' && auth.client) return <LoginPage client={auth.client} />
+  if (auth.status === 'notApproved') {
+    return (
+      <div className="state full" role="alert">
+        <p>{auth.error}</p>
+        <button className="btn-secondary" onClick={() => void auth.signOut()}>Sign out</button>
+      </div>
+    )
+  }
   if (auth.status !== 'signedIn') return <div className="state full">Loading…</div>
   if (!auth.orgId) {
     return (

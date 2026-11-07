@@ -59,6 +59,11 @@ export function Header() {
           </div>
         )}
         <PineappleLogo size={36} />
+        {auth?.dataSource && (
+          <span className={`pill data-source ${auth.dataSource}`} title={auth.dataSource === 'demo' ? 'In-memory demo data (resets on restart)' : 'Live data from Supabase'}>
+            {auth.dataSource === 'demo' ? 'Demo data' : 'Supabase'}
+          </span>
+        )}
         <div>
           <h1>Outreach</h1>
           <p>Turn past customers into future sales</p>

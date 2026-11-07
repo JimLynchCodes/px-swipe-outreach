@@ -86,7 +86,7 @@ export function AcceptInvitePage() {
     return (
       <div className="invite-wrap">
         <p className="invite-intro">{intro} Sign in or create an account with <strong>{inv.email}</strong> to accept.</p>
-        <LoginPage client={auth.client} email={inv.email} allowCreate initialMode="magic"
+        <LoginPage client={auth.client} email={inv.email} allowCreate allowSignup initialMode="magic"
           redirectTo={`${window.location.origin}${ROUTES.acceptInvite}?token=${encodeURIComponent(token!)}`}
           title={`Join ${inv.orgName}`} subtitle="Sign in to accept your invitation" />
       </div>

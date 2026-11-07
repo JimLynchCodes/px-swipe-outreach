@@ -4,8 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "EMAIL_PROVIDER=log SMS_PROVIDER=log tsx watch src/server.ts",
+    "dev": "DATA_STORE=memory AUTH_MODE=demo EMAIL_PROVIDER=log SMS_PROVIDER=log tsx watch src/server.ts",
     "dev:live": "tsx watch --env-file=.env.local src/server.ts",
+    "dev:supabase": "tsx watch --env-file=.env.supabase.local src/server.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "start": "node dist/server.js",
     "start:worker": "node dist/worker.js",

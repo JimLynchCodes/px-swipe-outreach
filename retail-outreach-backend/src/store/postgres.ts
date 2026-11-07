@@ -804,6 +804,11 @@ export class PostgresStore implements OutreachStore {
     }).catch(mapTeamError);
   }
 
+  async claimPendingInvitations(user: { id: string; email: string | null }) {
+    if (!isUuid(user.id) || !user.email) return 0;
+    return this.asUser(user.id, async db => Number((await db.query(`select public.claim_pending_invitations() as n`)).rows[0].n), user.email.toLowerCase());
+  }
+
   async acceptInvitation(user: { id: string; email: string | null }, tokenHash: string) {
     if (!isUuid(user.id)) throw teamError("invitation_invalid");
     return this.asUser(user.id, async db => {
