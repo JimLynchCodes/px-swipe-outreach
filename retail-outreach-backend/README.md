@@ -81,6 +81,7 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `TWILIO_AUTH_TOKEN` | – | Verifies `X-Twilio-Signature` on `/webhooks/twilio/sms/:orgId`. Without it, the webhook returns 503 in production |
 | `INBOUND_EMAIL_DOMAIN` | – | e.g. `reply.yourstore.com`. Outbound email gets `Reply-To: reply+<token>@` this domain |
 | `INBOUND_EMAIL_SECRET` | – | Shared secret for `/webhooks/email/inbound` (`?key=` or `X-Inbound-Secret`). Returns 503 when unset |
+| `ALLOW_SMS_REOPTIN_REQUEST` | `false` | Allows one "reply START" text to a number that opted out. Off by default for TCPA/CTIA reasons |
 | `LOG_LEVEL` / `SHUTDOWN_TIMEOUT_MS` | `info` / `10000` | |
 
 ## Auth
@@ -139,6 +140,9 @@ In demo mode all `/api/*` routes run as the demo tenant. Errors look like `{ "er
 | `GET /api/catalog` | – | `{products, categories}` for the promotion editor |
 | `GET /api/settings` / `PUT /api/settings` | – / `OrgSettings` | `{storeName, emailSignature, smsSignature, defaultChannel, maxDiscountPercent}`. PUT is owner/admin only |
 | `GET /api/opt-outs?channel=&q=&page=&pageSize=` | – | `{items: [{id, channel, contact (masked), customerName, source, createdAt}], total}` |
+| `GET /api/opt-outs/:id/history` | – | `{events: [{event, channel, source, actorId, requestId, createdAt}]}` consent history |
+| `POST /api/opt-outs/:id/reopt-in` | – | Owner/admin. Sends one re-opt-in request. `409 reoptin_pending`, `429 reoptin_cooldown`, `403 sms_reoptin_disabled` |
+| `POST /resubscribe?t=` / `GET`,`POST /reopt-in?t=` | – | Public, signed, rate-limited, no PII |
 | `GET /api/conversations` | – | Reply threads, most recent first |
 | `GET /api/conversations/unread-count` | – | `{count}` of conversations with unread messages |
 | `GET /api/conversations/:id` | – | `{conversation, messages}` |

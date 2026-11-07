@@ -256,3 +256,6 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .tag.disabled { background: var(--red-soft); color: var(--red-ink); }
 .manage-promos { align-self: flex-start; margin-top: 4px; }
 #promotions { scroll-margin-top: 16px; }
+.row-toggle { display: inline-flex; align-items: center; gap: 4px; border: 0; background: none; padding: 0; color: inherit; text-align: left; }
+.history-row td { background: var(--tile); }
+.consent-history { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }

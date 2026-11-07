@@ -3,10 +3,11 @@ import { newReplyToken } from "../replies/tokens.js";
 import * as seed from "../data/seed.js";
 import { daysSince, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
 import type {
-  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Customer, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
+  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Customer, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
   Opportunity, Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
-import { assertCanEditDeals, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
+import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
+import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
 import { DEFAULT_SETTINGS, StoreError, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 type InvitationRow = {
@@ -88,8 +89,9 @@ export class MemoryStore implements OutreachStore {
       const c = byId(o.customerId);
       const value = c && normalizeContact(o.channel, recipientFor(c, o.channel));
       if (!c || !value || this.suppressions.some(s => s.orgId === orgId && s.channel === o.channel && s.value === value)) continue;
-      this.suppressions.push({ id: randomUUID(), orgId, channel: o.channel, value, reason: "opt_out", source: o.source, customerId: c.id,
-        createdAt: new Date(now - o.minutesAgo * 60_000).toISOString() });
+      const createdAt = new Date(now - o.minutesAgo * 60_000).toISOString();
+      this.suppressions.push({ id: randomUUID(), orgId, channel: o.channel, value, reason: "opt_out", source: o.source, customerId: c.id, createdAt });
+      this.consent.push({ id: randomUUID(), orgId, channel: o.channel, value, event: "opt_out", source: o.source, actorId: null, requestId: null, createdAt });
     }
     if (this.convs.some(c => c.orgId === orgId)) return;
     for (const t of seed.threads) {
@@ -108,6 +110,14 @@ export class MemoryStore implements OutreachStore {
   }
   private deliveries = new Map<string, Delivery>();
   private suppressions: Suppression[] = [];
+  private consent: Array<ConsentEvent & { orgId: string; value: string }> = [];
+  private reoptins: Array<ReoptInRequest & { value: string; customerId: string | null; requestedBy: string }> = [];
+  private recordConsent(orgId: string, channel: Channel, value: string, event: ConsentEvent["event"], source: ConsentEvent["source"], meta: ConsentMeta = {}) {
+    this.consent.push({ id: randomUUID(), orgId, channel, value, event, source, actorId: meta.actorId ?? null, requestId: meta.requestId ?? null, createdAt: new Date().toISOString() });
+  }
+  private reoptStatus(r: ReoptInRequest, now = Date.now()): ReoptInRequest["status"] {
+    return r.status === "pending" && Date.parse(r.expiresAt) <= now ? "expired" : r.status;
+  }
   private memberships = new Map<string, Membership[]>([
     [seed.DEMO_USER_ID, [{ orgId: seed.DEMO_ORG_ID, orgName: seed.DEMO_ORG.name, businessName: seed.DEMO_ORG.businessName, role: "owner" }]]
   ]);
@@ -219,13 +229,14 @@ export class MemoryStore implements OutreachStore {
     return [...this.deliveries.values()].filter(d => d.orgId === actor.orgId && d.opportunityId === opportunityId)
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(d => ({ ...d }));
   }
-  async optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason) {
+  async optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason, meta?: ConsentMeta) {
     const o = this.find(actor, opportunityId);
     if (!o) throw new StoreError("not_found", "Opportunity not found");
     for (const channel of channels) {
       const value = normalizeContact(channel, recipientFor(o.customer, channel));
       if (value && !this.suppressions.some(s => s.orgId === actor.orgId && s.channel === channel && s.value === value)) {
         this.suppressions.push({ id: randomUUID(), orgId: actor.orgId, channel, value, reason, source: "manual", customerId: o.customer.id, createdAt: new Date().toISOString() });
+        this.recordConsent(actor.orgId, channel, value, "opt_out", "manual", { actorId: actor.userId, requestId: meta?.requestId });
       }
     }
     if (this.isActionable(o)) o.status = "suppressed";
@@ -292,6 +303,8 @@ export class MemoryStore implements OutreachStore {
     this.assertMember(actor);
     this.opps = [...this.opps.filter(o => o.orgId !== actor.orgId), ...buildSeedOpportunities(Date.now(), actor.orgId)];
     this.suppressions = this.suppressions.filter(s => s.orgId !== actor.orgId);
+    this.consent = this.consent.filter(e => e.orgId !== actor.orgId);
+    this.reoptins = this.reoptins.filter(r => r.orgId !== actor.orgId);
     if (actor.orgId === seed.DEMO_ORG_ID) this.seedReplies(actor.orgId);
   }
 
@@ -312,24 +325,77 @@ export class MemoryStore implements OutreachStore {
       .sort((a, b) => b.s.createdAt.localeCompare(a.s.createdAt))
       .map(({ s, c }) => ({
         id: s.id, channel: s.channel, contact: maskRecipient(s.value), customerId: c?.id ?? null,
-        customerName: c ? `${c.firstName} ${c.lastName}`.trim() : null, source: s.source, reason: s.reason, createdAt: s.createdAt
+        customerName: c ? `${c.firstName} ${c.lastName}`.trim() : null, source: s.source, reason: s.reason, createdAt: s.createdAt,
+        reoptIn: this.latestReopt(s.orgId, s.channel, s.value)
       }));
     return { items: rows.slice(q.offset, q.offset + q.limit), total: rows.length };
   }
-  async addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource) {
+  private latestReopt(orgId: string, channel: Channel, value: string): OptOutEntry["reoptIn"] {
+    const r = this.reoptins.filter(x => x.orgId === orgId && x.channel === channel && x.value === value).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (!r) return null;
+    return { status: this.reoptStatus(r), requestedAt: r.createdAt, expiresAt: r.expiresAt,
+      nextAllowedAt: new Date(Date.parse(r.createdAt) + REOPTIN_COOLDOWN_DAYS * 86_400_000).toISOString() };
+  }
+  async listConsentEvents(actor: Actor, optOutId: string): Promise<ConsentEvent[]> {
+    this.assertMember(actor);
+    const s = this.suppressions.find(x => x.orgId === actor.orgId && x.id === optOutId);
+    if (!s) throw new StoreError("not_found", "Opt-out not found");
+    return this.consent.filter(e => e.orgId === actor.orgId && e.channel === s.channel && e.value === s.value)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(({ orgId: _o, value: _v, ...e }) => structuredClone(e));
+  }
+  async createReoptInRequest(actor: Actor, optOutId: string, meta: ConsentMeta = {}, opts: { allowSms?: boolean } = {}) {
+    this.assertMember(actor);
+    assertCanManageConsent(this.roleIn(actor.userId, actor.orgId));
+    const s = this.suppressions.find(x => x.orgId === actor.orgId && x.id === optOutId);
+    if (!s) throw new StoreError("not_found", "Opt-out not found");
+    if (s.channel === "sms" && !opts.allowSms) throw new StoreError("forbidden", "Texting a number that replied STOP is restricted. SMS re-opt-in requests are off (ALLOW_SMS_REOPTIN_REQUEST).", "sms_reoptin_disabled");
+    if (s.reason !== "opt_out") throw new StoreError("conflict", "Bounced or complained addresses can't be asked to re-subscribe", "not_reoptinable");
+    assertReoptAllowed(this.latestReopt(s.orgId, s.channel, s.value));
+    const now = Date.now();
+    const req = { id: randomUUID(), orgId: s.orgId, channel: s.channel, contact: s.value, value: s.value, customerId: s.customerId, requestedBy: actor.userId,
+      status: "pending" as const, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + REOPTIN_COOLDOWN_DAYS * 86_400_000).toISOString() };
+    this.reoptins.push(req);
+    this.recordConsent(s.orgId, s.channel, s.value, "reoptin_requested", "store_request", { actorId: actor.userId, requestId: meta.requestId });
+    const c = s.customerId ? this.opps.find(o => o.orgId === s.orgId && o.customer.id === s.customerId)?.customer : this.customerFor(s.orgId, s.channel, s.value);
+    const { value: _v, customerId: _c, requestedBy: _r, ...request } = req;
+    return { request: structuredClone(request), recipient: s.value, customerFirstName: c?.firstName ?? null };
+  }
+  async cancelReoptInRequest(actor: Actor, requestId: string) {
+    this.reoptins = this.reoptins.filter(r => !(r.orgId === actor.orgId && r.id === requestId && r.status === "pending"));
+  }
+  async getReoptInRequest(id: string) {
+    const r = this.reoptins.find(x => x.id === id);
+    if (!r) return null;
+    const { value: _v, customerId: _c, requestedBy: _r, ...req } = r;
+    return { ...structuredClone(req), status: this.reoptStatus(r) };
+  }
+  async confirmReoptIn(id: string, meta: ConsentMeta = {}) {
+    const r = this.reoptins.find(x => x.id === id);
+    if (!r || this.reoptStatus(r) === "expired") return null;
+    if (r.status === "confirmed") return { removed: false };
+    return this.removeOptOut(r.orgId, r.channel, r.value, "reoptin_link", meta);
+  }
+  async addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource, meta: ConsentMeta = {}) {
     const value = normalizeContact(channel, contact);
     if (!value || this.suppressions.some(s => s.orgId === orgId && s.channel === channel && s.value === value)) return { created: false };
+    this.recordConsent(orgId, channel, value, "opt_out", source, meta);
     const customer = this.customerFor(orgId, channel, value);
     this.suppressions.push({ id: randomUUID(), orgId, channel, value, reason: "opt_out", source, customerId: customer?.id ?? null, createdAt: new Date().toISOString() });
     this.systemEvents.push({ orgId, type: "opted_out", details: { channel, source, customerId: customer?.id ?? null } });
     return { created: true };
   }
-  async removeOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource) {
+  async removeOptOut(orgId: string, channel: Channel, contact: string, source: OptInSource, meta: ConsentMeta = {}) {
     const value = normalizeContact(channel, contact);
     const before = this.suppressions.length;
     this.suppressions = this.suppressions.filter(s => !(s.orgId === orgId && s.channel === channel && s.value === value && s.reason === "opt_out"));
     const removed = this.suppressions.length < before;
-    if (removed) this.systemEvents.push({ orgId, type: "opted_in", details: { channel, source } });
+    if (removed && value) {
+      this.systemEvents.push({ orgId, type: "opted_in", details: { channel, source } });
+      this.recordConsent(orgId, channel, value, "opt_in", source, meta);
+      // Any pending re-opt-in request for this contact is now fulfilled (link click or START reply).
+      for (const r of this.reoptins) if (r.orgId === orgId && r.channel === channel && r.value === value && r.status === "pending") r.status = "confirmed";
+    }
     return { removed };
   }
   private appendSync(orgId: string, channel: Channel, contact: string, m: NewMessage) {

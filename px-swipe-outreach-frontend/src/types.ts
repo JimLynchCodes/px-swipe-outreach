@@ -96,6 +96,12 @@ export type OptOutSource = 'sms_stop' | 'email_unsubscribe' | 'manual' | 'provid
 export interface OptOutEntry {
   id: string; channel: Channel; contact: string; customerId: string | null; customerName: string | null
   source: OptOutSource; reason: string; createdAt: string
+  reoptIn: { status: 'pending' | 'expired' | 'confirmed'; requestedAt: string; expiresAt: string; nextAllowedAt: string } | null
+}
+export type ConsentSource = OptOutSource | 'sms_start' | 'email_resubscribe' | 'reoptin_link' | 'store_request'
+export interface ConsentEvent {
+  id: string; channel: Channel; event: 'opt_out' | 'opt_in' | 'reoptin_requested'; source: ConsentSource
+  actorId: string | null; requestId: string | null; createdAt: string
 }
 
 export interface ConversationSummary {

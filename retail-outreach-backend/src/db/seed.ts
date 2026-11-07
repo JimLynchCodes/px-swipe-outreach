@@ -111,9 +111,11 @@ async function seedDealsAndSettings(db: pg.PoolClient, orgId: string, id: (n: st
   for (const o of seed.optOuts) {
     const contact = contactOf(o.customerId, o.channel);
     if (!contact) continue;
-    await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id, created_at)
-      values ($1, $2, public.normalize_contact($2::public.outreach_channel, $3), 'opt_out', $4, $5, $6) on conflict do nothing`,
+    const ins = await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id, created_at)
+      values ($1, $2, public.normalize_contact($2::public.outreach_channel, $3), 'opt_out', $4, $5, $6) on conflict do nothing returning value, created_at`,
       [orgId, o.channel, contact, o.source, id(`customer:${o.customerId}`), new Date(now - o.minutesAgo * 60_000)]);
+    if (ins.rows[0]) await db.query(`insert into public.consent_events (org_id, channel, value, event, source, created_at) values ($1,$2,$3,'opt_out',$4,$5)`,
+      [orgId, o.channel, ins.rows[0].value, o.source, ins.rows[0].created_at]);
   }
   const hasThreads = await db.query(`select 1 from public.conversations where org_id = $1 limit 1`, [orgId]);
   if (!hasThreads.rowCount) {

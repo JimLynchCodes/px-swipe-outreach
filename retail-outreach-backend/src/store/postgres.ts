@@ -3,10 +3,11 @@ import { createPool, type PoolOptions } from "../db/pool.js";
 import { ACTIONABLE_STATUSES, maskRecipient } from "../domain.js";
 import { newReplyToken } from "../replies/tokens.js";
 import type {
-  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
+  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
   Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
-import { assertCanEditDeals, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
+import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
+import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
 import { DEFAULT_SETTINGS, StoreError, TEAM_ERRORS, teamError, type NewDelivery, type NewInvitation, type OutreachStore } from "./types.js";
 
 const INVITE_COLS = `id, org_id, email, role, invited_by, created_at, expires_at, last_sent_at, send_count, accepted_at, revoked_at`;
@@ -102,6 +103,18 @@ export async function appendTx(db: Db, orgId: string, channel: Channel, contact:
   return { conversationId, messageId: r.rows[0].id as string, replyToken };
 }
 
+async function consentTx(db: Db, orgId: string, channel: Channel, value: string, event: ConsentEvent["event"], source: ConsentEvent["source"], meta: ConsentMeta = {}) {
+  await db.query(`insert into public.consent_events (org_id, channel, value, event, source, actor_id, request_id) values ($1,$2,$3,$4,$5,$6,$7)`,
+    [orgId, channel, value, event, source, meta.actorId ?? null, meta.requestId?.slice(0, 100) ?? null]);
+}
+const REOPT_LATEST = `(select row_to_json(x) from (select r.status, r.created_at, r.expires_at from public.reoptin_requests r
+  where r.org_id = s.org_id and r.channel = s.channel and r.value = s.value and r.status <> 'cancelled' order by r.created_at desc limit 1) x)`;
+function toReopt(j: any): OptOutEntry["reoptIn"] {
+  if (!j) return null;
+  const createdAt = new Date(j.created_at).toISOString(), expiresAt = new Date(j.expires_at).toISOString();
+  const status = j.status === "pending" && Date.parse(expiresAt) <= Date.now() ? "expired" : j.status;
+  return { status, requestedAt: createdAt, expiresAt, nextAllowedAt: new Date(Date.parse(createdAt) + REOPTIN_COOLDOWN_DAYS * 86_400_000).toISOString() };
+}
 const isoDay = (v: Date | string | null) => v === null ? null : typeof v === "string" ? v.slice(0, 10)
   : `${v.getFullYear()}-${String(v.getMonth() + 1).padStart(2, "0")}-${String(v.getDate()).padStart(2, "0")}`;
 function toDeal(r: any): Deal {
@@ -308,16 +321,17 @@ export class PostgresStore implements OutreachStore {
     });
   }
 
-  async optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason) {
+  async optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason, meta: ConsentMeta = {}) {
     await this.asUser(actor.userId, async db => {
       const o = await this.findOpp(db, actor, opportunityId, true);
       if (!o) throw new StoreError("not_found", "Opportunity not found");
       for (const ch of channels) {
-        await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id, created_by)
+        const added = await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id, created_by)
           select $1, $2::public.outreach_channel, v, $3, 'manual', $4, $5
           from (select public.normalize_contact($2::public.outreach_channel, $6) as v) x where v is not null
-          on conflict (org_id, channel, value) do nothing`,
+          on conflict (org_id, channel, value) do nothing returning value`,
           [actor.orgId, ch, reason, o.customer.id, actor.userId, ch === "sms" ? o.customer.phone : o.customer.email]);
+        if (added.rows[0]) await consentTx(db, actor.orgId, ch, added.rows[0].value, "opt_out", "manual", { actorId: actor.userId, requestId: meta.requestId });
       }
       if ((ACTIONABLE_STATUSES as readonly string[]).includes(o.status)) {
         await db.query(`update public.outreach_opportunities set status = 'suppressed', updated_by = $3 where org_id = $1 and id = $2`,
@@ -413,13 +427,57 @@ export class PostgresStore implements OutreachStore {
       const search = q.search ? q.search.replace(/[\\%_]/g, m => `\\${m}`) : null;
       const params = [actor.orgId, q.channel ?? null, search];
       const total = await db.query(`select count(*)::int as n ${from} where ${where}`, params);
-      const r = await db.query(`select s.id, s.channel, s.value, s.reason, s.source, s.created_at, cu.id as customer_id,
+      const r = await db.query(`select s.id, s.channel, s.value, s.reason, s.source, s.created_at, cu.id as customer_id, ${REOPT_LATEST} as reopt,
           nullif(btrim(coalesce(cu.first_name, '') || ' ' || coalesce(cu.last_name, '')), '') as customer_name
         ${from} where ${where} order by s.created_at desc, s.id limit $4 offset $5`, [...params, q.limit, q.offset]);
       const items: OptOutEntry[] = r.rows.map(x => ({ id: x.id, channel: x.channel, contact: maskRecipient(x.value), customerId: x.customer_id,
-        customerName: x.customer_name, source: x.source, reason: x.reason, createdAt: new Date(x.created_at).toISOString() }));
+        customerName: x.customer_name, source: x.source, reason: x.reason, createdAt: new Date(x.created_at).toISOString(), reoptIn: toReopt(x.reopt) }));
       return { items, total: total.rows[0].n };
     });
+  }
+
+  async listConsentEvents(actor: Actor, optOutId: string): Promise<ConsentEvent[]> {
+    if (!isUuid(optOutId)) throw new StoreError("not_found", "Opt-out not found");
+    return this.asUser(actor.userId, async db => {
+      const s = await db.query(`select channel, value from public.suppressions where org_id = $1 and id = $2`, [actor.orgId, optOutId]);
+      if (!s.rows[0]) throw new StoreError("not_found", "Opt-out not found");
+      const r = await db.query(`select id, channel, event, source, actor_id, request_id, created_at from public.consent_events
+        where org_id = $1 and channel = $2 and value = $3 order by created_at desc, id limit 200`, [actor.orgId, s.rows[0].channel, s.rows[0].value]);
+      return r.rows.map(x => ({ id: x.id, channel: x.channel, event: x.event, source: x.source, actorId: x.actor_id, requestId: x.request_id,
+        createdAt: new Date(x.created_at).toISOString() }));
+    });
+  }
+  async createReoptInRequest(actor: Actor, optOutId: string, meta: ConsentMeta = {}, opts: { allowSms?: boolean } = {}) {
+    if (!isUuid(optOutId)) throw new StoreError("not_found", "Opt-out not found");
+    return this.asUser(actor.userId, async db => {
+      assertCanManageConsent(await this.role(db, actor));
+      const s = await db.query(`select s.*, ${REOPT_LATEST} as reopt from public.suppressions s where s.org_id = $1 and s.id = $2`, [actor.orgId, optOutId]); // the one-pending unique index guards races
+      const row = s.rows[0];
+      if (!row) throw new StoreError("not_found", "Opt-out not found");
+      if (row.channel === "sms" && !opts.allowSms) throw new StoreError("forbidden", "Texting a number that replied STOP is restricted. SMS re-opt-in requests are off (ALLOW_SMS_REOPTIN_REQUEST).", "sms_reoptin_disabled");
+      if (row.reason !== "opt_out") throw new StoreError("conflict", "Bounced or complained addresses can't be asked to re-subscribe", "not_reoptinable");
+      const latest = toReopt(row.reopt);
+      // A lapsed pending request no longer blocks; close it so the one-pending index allows a new one.
+      if (latest?.status === "expired") await db.query(`update public.reoptin_requests set status = 'cancelled'
+        where org_id = $1 and channel = $2 and value = $3 and status = 'pending'`, [actor.orgId, row.channel, row.value]);
+      assertReoptAllowed(latest);
+      const r = await db.query(`insert into public.reoptin_requests (org_id, channel, value, customer_id, requested_by, expires_at)
+        values ($1,$2,$3,$4,$5, now() + make_interval(days => $6)) returning *`, [actor.orgId, row.channel, row.value, row.customer_id, actor.userId, REOPTIN_COOLDOWN_DAYS]);
+      await consentTx(db, actor.orgId, row.channel, row.value, "reoptin_requested", "store_request", { actorId: actor.userId, requestId: meta.requestId });
+      await this.event(db, actor, actor.orgId, null, "reoptin_requested", { channel: row.channel });
+      const c = row.customer_id ? await db.query(`select first_name from public.customers where org_id = $1 and id = $2`, [actor.orgId, row.customer_id]) : null;
+      const q = r.rows[0];
+      return {
+        request: { id: q.id, orgId: q.org_id, channel: q.channel, contact: q.value, status: "pending" as const,
+          createdAt: new Date(q.created_at).toISOString(), expiresAt: new Date(q.expires_at).toISOString() },
+        recipient: row.value as string, customerFirstName: (c?.rows[0]?.first_name as string | undefined) ?? null
+      };
+    }).catch(e => { if (e?.code === "23505") throw new StoreError("conflict", "A re-opt-in request is already pending for this contact", "reoptin_pending"); throw e; });
+  }
+  async cancelReoptInRequest(actor: Actor, requestId: string) {
+    if (!isUuid(requestId)) return;
+    await this.asUser(actor.userId, db => db.query(`update public.reoptin_requests set status = 'cancelled' where org_id = $1 and id = $2 and status = 'pending'`,
+      [actor.orgId, requestId]));
   }
 
   async listConversations(actor: Actor, limit: number) {
@@ -488,25 +546,49 @@ export class PostgresStore implements OutreachStore {
     await this.pool.query(`update public.messages set status = $2, provider_message_id = coalesce($3, provider_message_id) where id = $1`,
       [id, status, providerMessageId ?? null]);
   }
-  async addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource) {
+  async getReoptInRequest(id: string): Promise<ReoptInRequest | null> {
+    if (!isUuid(id)) return null;
+    const r = await this.pool.query(`select * from public.reoptin_requests where id = $1 and status <> 'cancelled'`, [id]);
+    const q = r.rows[0];
+    if (!q) return null;
+    const expiresAt = new Date(q.expires_at).toISOString();
+    return { id: q.id, orgId: q.org_id, channel: q.channel, contact: q.value, createdAt: new Date(q.created_at).toISOString(), expiresAt,
+      status: q.status === "pending" && Date.parse(expiresAt) <= Date.now() ? "expired" : q.status };
+  }
+  async confirmReoptIn(id: string, meta: ConsentMeta = {}) {
+    const r = await this.getReoptInRequest(id);
+    if (!r || r.status === "expired") return null;
+    if (r.status === "confirmed") return { removed: false };
+    return this.removeOptOut(r.orgId, r.channel, r.contact, "reoptin_link", meta);
+  }
+  async addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource, meta: ConsentMeta = {}) {
     return this.tx(async db => {
       const r = await db.query(`insert into public.suppressions (org_id, channel, value, reason, source, customer_id)
         select $1, $2::public.outreach_channel, v.value, 'opt_out', $4,
           (select cu.id from public.customers cu where cu.org_id = $1
             and public.normalize_contact($2::public.outreach_channel, case when $2 = 'sms' then cu.phone else cu.email end) = v.value limit 1)
         from (select public.normalize_contact($2::public.outreach_channel, $3) as value) v where v.value is not null
-        on conflict (org_id, channel, value) do nothing returning id, customer_id`, [orgId, channel, contact, source]);
+        on conflict (org_id, channel, value) do nothing returning id, customer_id, value`, [orgId, channel, contact, source]);
       const created = (r.rowCount ?? 0) > 0;
-      if (created) await this.event(db, null, orgId, null, "opted_out", { channel, source, customerId: r.rows[0].customer_id });
+      if (created) {
+        await this.event(db, null, orgId, null, "opted_out", { channel, source, customerId: r.rows[0].customer_id });
+        await consentTx(db, orgId, channel, r.rows[0].value, "opt_out", source, meta);
+      }
       return { created };
     });
   }
-  async removeOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource) {
+  async removeOptOut(orgId: string, channel: Channel, contact: string, source: OptInSource, meta: ConsentMeta = {}) {
     return this.tx(async db => {
       const r = await db.query(`delete from public.suppressions where org_id = $1 and channel = $2 and reason = 'opt_out'
-        and value = public.normalize_contact($2::public.outreach_channel, $3)`, [orgId, channel, contact]);
+        and value = public.normalize_contact($2::public.outreach_channel, $3) returning value`, [orgId, channel, contact]);
       const removed = (r.rowCount ?? 0) > 0;
-      if (removed) await this.event(db, null, orgId, null, "opted_in", { channel, source });
+      if (removed) {
+        const value = r.rows[0].value as string;
+        await this.event(db, null, orgId, null, "opted_in", { channel, source });
+        await consentTx(db, orgId, channel, value, "opt_in", source, meta);
+        await db.query(`update public.reoptin_requests set status = 'confirmed', confirmed_at = now()
+          where org_id = $1 and channel = $2 and value = $3 and status = 'pending'`, [orgId, channel, value]);
+      }
       return { removed };
     });
   }

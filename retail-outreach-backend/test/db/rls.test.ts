@@ -158,9 +158,8 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     // Even a direct insert (bypassing the app checks) is refused by the trigger.
     await expect(admin.query(`insert into public.message_deliveries (org_id, opportunity_id, channel, recipient, message, idempotency_key)
       values ($1, $2, 'sms', '+15555550003', 'hi', 'direct-insert-1')`, [ORG_A, id])).rejects.toThrow(/recipient_suppressed/);
-    // Only admins can remove a suppression.
-    const staffDel = await asUser(STAFF, `delete from public.suppressions where org_id = $1`, [ORG_A]);
-    expect(staffDel.rowCount).toBe(0);
+    // Nobody signed in (staff, admin or owner) can remove a suppression; only the customer's own action does.
+    await expect(asUser(STAFF, `delete from public.suppressions where org_id = $1`, [ORG_A])).rejects.toThrow(/permission denied/);
   });
 
   it("demo reset requires owner/admin", async () => {
@@ -357,12 +356,37 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       expect(await store.addOptOut(ORG_A, "sms", "+15555550003", "sms_stop")).toEqual({ created: false });
       expect(await store.isSuppressed(ORG_A, "sms", "+15555550003")).toBe(true);
       expect(await store.isSuppressed(ORG_A, "email", "priya@example.com")).toBe(false);
-      expect(await store.removeOptOut(ORG_A, "sms", "+15555550003", "sms_stop")).toEqual({ removed: true });
-      expect(await store.removeOptOut(ORG_A, "sms", "+15555550003", "sms_stop")).toEqual({ removed: false });
+      expect(await store.removeOptOut(ORG_A, "sms", "+15555550003", "sms_start")).toEqual({ removed: true });
+      expect(await store.removeOptOut(ORG_A, "sms", "+15555550003", "sms_start")).toEqual({ removed: false });
       const ev = await admin.query(`select event_type from public.outreach_events where org_id = $1 and event_type in ('opted_out','opted_in')
-        and details->>'source' = 'sms_stop'`, [ORG_A]);
+        and details->>'source' in ('sms_stop', 'sms_start')`, [ORG_A]);
       expect(ev.rows.map(r => r.event_type).sort()).toEqual(["opted_in", "opted_out"]);
       expect((await asUser(ALICE, `update public.suppressions set source = 'bogus'`)).rowCount).toBe(0);
+    });
+
+    it("consent history, re-opt-in requests and their RLS", async () => {
+      await store.addOptOut(ORG_A, "email", "priya@example.com", "email_unsubscribe", { requestId: "req-1" });
+      const sid = (await admin.query(`select id from public.suppressions where org_id = $1 and channel = 'email' and value = 'priya@example.com'`, [ORG_A])).rows[0].id;
+      const entry = (await store.listOptOuts(A, { channel: "email", limit: 100, offset: 0 })).items.find(i => i.id === sid)!;
+      expect(entry.reoptIn).toBeNull();
+      expect((await store.listConsentEvents(A, entry.id))[0]).toMatchObject({ event: "opt_out", source: "email_unsubscribe", requestId: "req-1" });
+      await expect(store.listConsentEvents({ userId: BOB, orgId: ORG_A }, entry.id)).rejects.toBeTruthy();
+      await expect(store.createReoptInRequest({ userId: STAFF, orgId: ORG_A }, entry.id)).rejects.toMatchObject({ code: "forbidden" });
+      const { request, recipient } = await store.createReoptInRequest(A, entry.id, { actorId: ALICE, requestId: "req-2" });
+      expect(recipient).toBe("priya@example.com");
+      await expect(store.createReoptInRequest(A, entry.id)).rejects.toMatchObject({ reason: "reoptin_pending" });
+      expect((await store.listOptOuts(A, { channel: "email", limit: 100, offset: 0 })).items.find(i => i.id === sid)!.reoptIn).toMatchObject({ status: "pending" });
+      // RLS: staff can't create requests or delete opt-outs; nobody can rewrite consent history.
+      await expect(asUser(STAFF, `insert into public.reoptin_requests (org_id, channel, value, requested_by) values ($1, 'email', 'x@y.z', $2)`, [ORG_A, STAFF])).rejects.toThrow();
+      expect((await asUser(ALICE, `delete from public.suppressions where org_id = $1`, [ORG_A]).catch(e => e)).message ?? "").toMatch(/permission denied/);
+      await expect(admin.query(`delete from public.consent_events where org_id = $1`, [ORG_A])).rejects.toThrow(/append-only/);
+      expect((await asUser(BOB, `select * from public.consent_events where org_id = $1`, [ORG_A])).rowCount).toBe(0);
+      expect((await store.getReoptInRequest(request.id))?.status).toBe("pending");
+      expect(await store.confirmReoptIn(request.id, { requestId: "req-3" })).toEqual({ removed: true });
+      expect(await store.confirmReoptIn(request.id)).toEqual({ removed: false });
+      expect((await store.getReoptInRequest(request.id))?.status).toBe("confirmed");
+      const ev = await admin.query(`select event, source, request_id from public.consent_events where org_id = $1 and value = 'priya@example.com' order by created_at`, [ORG_A]);
+      expect(ev.rows.map(r => `${r.event}:${r.source}:${r.request_id}`)).toEqual(["opt_out:email_unsubscribe:req-1", "reoptin_requested:store_request:req-2", "opt_in:reoptin_link:req-3"]);
     });
 
     it("threads: seeded, unread, mark read, reply blocked on opt-out, inbound via privileged path only", async () => {

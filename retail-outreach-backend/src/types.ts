@@ -159,11 +159,27 @@ export type SuppressionReason = "opt_out" | "bounce" | "complaint" | "manual";
 /** How an opt-out arrived: STOP reply, email unsubscribe link, staff action, or a provider (bounce/complaint) webhook. */
 export type OptOutSource = "sms_stop" | "email_unsubscribe" | "manual" | "provider";
 
+/** How a re-subscribe arrived. */
+export type OptInSource = "sms_start" | "email_resubscribe" | "reoptin_link";
+export type ConsentEventType = "opt_out" | "opt_in" | "reoptin_requested";
+export type ConsentSource = OptOutSource | OptInSource | "store_request";
+/** Who/what caused a consent change: a team member (actorId) and/or the HTTP request that carried it. */
+export type ConsentMeta = { actorId?: string | null; requestId?: string | null };
+export type ConsentEvent = {
+  id: string; channel: Channel; event: ConsentEventType; source: ConsentSource;
+  actorId: string | null; requestId: string | null; createdAt: string;
+};
+
 /** One row of the opt-out list (contact masked; never the raw phone/email). */
 export type OptOutEntry = {
   id: string; channel: Channel; contact: string; customerId: string | null; customerName: string | null;
   source: OptOutSource; reason: SuppressionReason; createdAt: string;
+  /** Latest re-opt-in request for this contact (pending = sent, not yet confirmed, not expired). */
+  reoptIn: { status: "pending" | "expired" | "confirmed"; requestedAt: string; expiresAt: string; nextAllowedAt: string } | null;
 };
+export const REOPTIN_COOLDOWN_DAYS = 30;
+/** A re-opt-in request: one per (org, channel, contact) per 30 days. Carries no message content. */
+export type ReoptInRequest = { id: string; orgId: string; channel: Channel; contact: string; status: "pending" | "expired" | "confirmed"; createdAt: string; expiresAt: string };
 
 export type TeamMember = { userId: string; email: string | null; role: MemberRole; joinedAt: string };
 

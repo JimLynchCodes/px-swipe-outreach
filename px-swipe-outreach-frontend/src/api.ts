@@ -1,5 +1,5 @@
 import type {
-  CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
+  CatalogProduct, Channel, ConsentEvent, ConversationMessage, ConversationSummary, Deal, DealInput, OptOutEntry, OrgSettings, OutreachCard,
   SendResult, Suggestion,
 } from './types'
 
@@ -118,6 +118,9 @@ export const api = {
     if (q.q) p.set('q', q.q)
     return request<{ items: OptOutEntry[]; total: number; page: number; pageSize: number }>(`/api/opt-outs?${p}`)
   },
+  optOutHistory: (id: string) => request<{ events: ConsentEvent[] }>(`/api/opt-outs/${encodeURIComponent(id)}/history`).then(r => r.events),
+  requestReoptIn: (id: string) =>
+    request<{ ok: true; channel: Channel; status: string; requestedAt: string; expiresAt: string }>(`/api/opt-outs/${encodeURIComponent(id)}/reopt-in`, { method: 'POST' }),
   replies: {
     list: () => request<{ conversations: ConversationSummary[] }>('/api/conversations').then(r => r.conversations),
     unread: () => request<{ count: number }>('/api/conversations/unread-count').then(r => r.count),

@@ -9,7 +9,7 @@ import { AuthError, createAuthenticator, resolveOrg, type Authenticator, type Au
 import { canContact, maskRecipient, recipientFor, SMS_MAX, toCardDto, withSmsOptOut } from "./domain.js";
 import { dealRoutes } from "./deals/routes.js";
 import { recommend } from "./recommend.js";
-import { optOutRoutes, TWILIO_WEBHOOK_PREFIX, UNSUBSCRIBE_PATH } from "./optout/routes.js";
+import { optOutRoutes, REOPTIN_PATH, RESUBSCRIBE_PATH, TWILIO_WEBHOOK_PREFIX, UNSUBSCRIBE_PATH } from "./optout/routes.js";
 import { unsubscribeLink } from "./optout/unsubscribe.js";
 import multipart from "@fastify/multipart";
 import { INBOUND_EMAIL_PATH, replyRoutes, replyToAddress } from "./replies/routes.js";
@@ -50,7 +50,7 @@ const PUBLIC_PATHS = new Set(["/health", "/health/live", "/health/ready"]);
 /** Routes that need a user but not an org (e.g. to list orgs before choosing one). */
 const NO_ORG_PATHS = new Set(["/api/me", INVITE_ACCEPT_PATH]);
 /** API routes reachable without a session (still rate limited per IP). */
-const ANON_PATHS = new Set([INVITE_PREVIEW_PATH, UNSUBSCRIBE_PATH]);
+const ANON_PATHS = new Set([INVITE_PREVIEW_PATH, UNSUBSCRIBE_PATH, RESUBSCRIBE_PATH, REOPTIN_PATH]);
 const isAnon = (path: string) => ANON_PATHS.has(path) || path === INBOUND_EMAIL_PATH || path.startsWith(TWILIO_WEBHOOK_PREFIX);
 
 /** Uniform error body: { error, code, requestId, details? }. */
@@ -139,7 +139,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     }
     if (error instanceof AuthError) return sendError(reply, error.status, error.code, error.message);
     if (error instanceof StoreError) {
-      const status = ({ not_found: 404, conflict: 409, suppressed: 422, forbidden: 403, gone: 410 } as const)[error.code];
+      const status = ({ not_found: 404, conflict: 409, suppressed: 422, forbidden: 403, gone: 410, rate_limited: 429 } as const)[error.code];
       return sendError(reply, status, error.reason ?? error.code, error.message);
     }
     const status: number = error.statusCode ?? 500;
@@ -222,7 +222,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       reason: z.enum(["opt_out", "bounce", "complaint", "manual"]).default("opt_out")
     }).strict().parse(request.body ?? {});
     const channels = body.channel === "all" ? (["sms", "email"] as const) : [body.channel];
-    await store.optOut(actorOf(request), id, [...channels], body.reason);
+    await store.optOut(actorOf(request), id, [...channels], body.reason, { requestId: request.id });
     return { ok: true, status: "suppressed", channels };
   });
 
@@ -286,7 +286,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // ── Promotions & settings ───────────────────────────────────────────
   await dealRoutes(app, { store, actorOf });
-  await optOutRoutes(app, { config, store, actorOf, sendError });
+  await optOutRoutes(app, { config, store, actorOf, messenger, sendError });
   // Inbound email webhooks may be multipart (SendGrid Inbound Parse). Attachments are discarded.
   await app.register(multipart, {
     attachFieldsToBody: "keyValues", limits: { fields: 50, fieldSize: 1024 * 1024, files: 20, fileSize: 10 * 1024 * 1024 },

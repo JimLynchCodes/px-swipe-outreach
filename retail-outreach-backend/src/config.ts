@@ -62,6 +62,11 @@ const schema = z.object({
   UNSUBSCRIBE_SIGNING_SECRET: z.string().min(32).optional(),
   /** BACKEND SECRET. When set, inbound SMS webhooks must carry a valid X-Twilio-Signature. */
   TWILIO_AUTH_TOKEN: z.string().min(16).optional(),
+  /**
+   * Texting a number that replied STOP is restricted (TCPA/CTIA): off by default, so SMS re-opt-in requests are refused.
+   * Only enable after confirming with counsel that a one-time re-permission text is acceptable for your program.
+   */
+  ALLOW_SMS_REOPTIN_REQUEST: z.enum(["true", "false"]).default("false").transform(v => v === "true"),
   /** Domain whose mail is routed to the inbound email webhook; outbound email uses Reply-To: reply+<token>@domain. */
   INBOUND_EMAIL_DOMAIN: z.string().regex(/^[a-z0-9.-]+\.[a-z]{2,}$/i, "must be a domain name").optional(),
   /** BACKEND SECRET. Required by the inbound email webhook (?key= or X-Inbound-Secret). */

@@ -14,7 +14,7 @@ export function verifyTwilioSignature(authToken: string, url: string, params: Re
 }
 
 export const STOP_KEYWORDS = ["STOP", "STOPALL", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"] as const;
-export const START_KEYWORDS = ["START", "UNSTOP"] as const;
+export const START_KEYWORDS = ["START", "UNSTOP", "JOIN"] as const;
 export const HELP_KEYWORDS = ["HELP"] as const;
 
 export type SmsKeyword = "stop" | "start" | "help" | null;
@@ -41,4 +41,9 @@ export function keywordReply(keyword: Exclude<SmsKeyword, null>, storeName: stri
     case "start": return `${storeName}: You have been resubscribed to messages. Msg & data rates may apply. Reply HELP for help, STOP to opt out.`;
     case "help": return `${storeName}: Offers for customers 21+. Msg & data rates may apply. Reply STOP to opt out, START to resubscribe.`;
   }
+}
+
+/** The single re-permission text: no offer content, says how to opt back in, and that silence keeps them opted out. */
+export function reoptInSms(storeName: string, firstName: string | null): string {
+  return `${storeName}: Hi${firstName ? ` ${firstName}` : ""}, you opted out of our texts. Want deals again? Reply START to resubscribe. No reply = no more texts.`;
 }

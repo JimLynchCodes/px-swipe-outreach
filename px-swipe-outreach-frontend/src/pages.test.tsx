@@ -104,7 +104,7 @@ describe('Settings page', () => {
 describe('Opt-out list', () => {
   it('lists, filters by channel, searches and paginates', async () => {
     const items = Array.from({ length: 20 }, (_, i) => ({ id: `o${i}`, channel: 'sms', contact: '•••-•••-12' + String(i).padStart(2, '0'),
-      customerId: null, customerName: `Cust ${i}`, source: 'sms_stop', reason: '', createdAt: '2026-11-01T00:00:00Z' }))
+      customerId: null, customerName: `Cust ${i}`, source: 'sms_stop', reason: 'opt_out', createdAt: '2026-11-01T00:00:00Z', reoptIn: null }))
     const calls = backend({ 'GET /api/opt-outs': () => json({ items, total: 45, page: 1, pageSize: 20 }) })
     go('/opt-outs')
     expect(await screen.findByText('Cust 0')).toBeInTheDocument()
@@ -258,5 +258,71 @@ describe('Seasonal & ongoing deals', () => {
     await waitFor(() => expect(scroll).toHaveBeenCalled())
     expect(document.activeElement?.id).toBe('promotions')
     expect(screen.getAllByText(/Seasonal · every day/).length).toBe(3)
+  })
+})
+
+describe('Opt-out list: re-opt-in and consent history', () => {
+  const base = { channel: 'email', contact: 'h•••@example.com', customerId: 'c', source: 'email_unsubscribe', reason: 'opt_out', createdAt: '2026-11-01T00:00:00Z' }
+  const soon = new Date(Date.now() + 10 * 86_400_000).toISOString()
+  const items = [
+    { ...base, id: 'o1', customerName: 'Hannah Lee', reoptIn: null },
+    { ...base, id: 'o2', customerName: 'Pending Pat', reoptIn: { status: 'pending', requestedAt: '2026-11-02T00:00:00Z', expiresAt: soon, nextAllowedAt: soon } },
+    { ...base, id: 'o3', customerName: 'Cooling Cal', reoptIn: { status: 'expired', requestedAt: '2026-10-20T00:00:00Z', expiresAt: '2026-11-01T00:00:00Z', nextAllowedAt: soon } },
+  ]
+  const EVENTS = [
+    { id: 'e2', channel: 'email', event: 'reoptin_requested', source: 'store_request', actorId: 'u', requestId: 'r2', createdAt: '2026-11-03T00:00:00Z' },
+    { id: 'e1', channel: 'email', event: 'opt_out', source: 'email_unsubscribe', actorId: null, requestId: 'req-1', createdAt: '2026-11-01T00:00:00Z' },
+  ]
+
+  it('owners send a re-opt-in request; pending and cooldown rows show status instead', async () => {
+    vi.stubGlobal('confirm', () => true)
+    const calls = backend({
+      'GET /api/opt-outs': () => json({ items, total: 3, page: 1, pageSize: 20 }),
+      'POST /api/opt-outs/o1/reopt-in': () => json({ ok: true, channel: 'email', status: 'pending' }, 201),
+    })
+    go('/opt-outs')
+    await screen.findByText('Hannah Lee')
+    expect(screen.getAllByRole('button', { name: /Send re-opt-in request/ })).toHaveLength(1)
+    expect(screen.getByText(/Pending since/)).toBeInTheDocument()
+    expect(screen.getByText(/Next request after/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Send re-opt-in request/ }))
+    expect(await screen.findByText('Re-opt-in request sent to Hannah Lee')).toBeInTheDocument()
+    expect(calls.some(c => c.method === 'POST' && c.url.endsWith('/api/opt-outs/o1/reopt-in'))).toBe(true)
+    expect(calls.filter(c => c.url.startsWith('/api/opt-outs?')).length).toBeGreaterThanOrEqual(2) // list refreshed
+  })
+
+  it('shows the server reason when a request is refused', async () => {
+    vi.stubGlobal('confirm', () => true)
+    backend({
+      'GET /api/opt-outs': () => json({ items: [items[0]], total: 1, page: 1, pageSize: 20 }),
+      'POST /api/opt-outs/o1/reopt-in': () => json({ error: 'Texting a number that replied STOP is restricted.', code: 'sms_reoptin_disabled' }, 403),
+    })
+    go('/opt-outs')
+    fireEvent.click(await screen.findByRole('button', { name: /Send re-opt-in request/ }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Texting a number that replied STOP is restricted.')
+  })
+
+  it('staff see no request button', async () => {
+    backend({ 'GET /api/opt-outs': () => json({ items: [items[0]], total: 1, page: 1, pageSize: 20 }) }, 'staff')
+    go('/opt-outs')
+    await screen.findByText('Hannah Lee')
+    expect(screen.queryByRole('button', { name: /Send re-opt-in request/ })).toBeNull()
+  })
+
+  it('expands a row to show consent history', async () => {
+    backend({
+      'GET /api/opt-outs': () => json({ items: [items[0]], total: 1, page: 1, pageSize: 20 }),
+      'GET /api/opt-outs/o1/history': () => json({ events: EVENTS }),
+    })
+    go('/opt-outs')
+    const toggle = await screen.findByRole('button', { name: 'History for Hannah Lee' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+    const list = await screen.findByRole('list', { name: 'Consent history' })
+    const rows = within(list).getAllByRole('listitem')
+    expect(rows[0]).toHaveTextContent('Re-opt-in requested · Email · Store request')
+    expect(rows[0]).toHaveTextContent('by a team member')
+    expect(rows[1]).toHaveTextContent('Opted out · Email · Unsubscribe link')
+    expect(rows[1]).toHaveTextContent('ref req-1')
   })
 })

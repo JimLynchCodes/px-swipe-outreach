@@ -137,6 +137,31 @@ Each email gets the link `${PUBLIC_API_URL}/unsubscribe?t=<id>.<HMAC-SHA256>`, s
 
 The pages are idempotent, rate-limited (30/min per IP), carry a strict CSP and contain **no PII**. Production refuses to start without a ≥ 32-char secret and an https `PUBLIC_API_URL`.
 
+## Re-opt-in and consent history
+
+Only the customer can lift an opt-out. Signed-in users (staff, admins **and** owners) can't delete suppressions: the API has no endpoint for it, and RLS revokes `delete` on `suppressions`.
+
+There are three ways back in:
+
+* **Email "Changed your mind?"** The unsubscribe confirmation page has a **Resubscribe** button. It POSTs to `/resubscribe?t=<id>.<HMAC>`, which is signed for that purpose only, so an unsubscribe token can't be replayed. It is POST-only (no GET handler, so link scanners can't trigger it), idempotent, rate-limited (30/min per IP) and shows no PII.
+* **SMS START / UNSTOP / JOIN.** These re-subscribe the number, reply with a confirmation and are logged in the thread.
+* **Re-opt-in request** (owners and admins, on the Opt-out list). This asks the customer once whether they want to hear from the store again:
+  * **Email:** one message with a signed `/reopt-in?t=…` link. GET shows a confirm page and POST resubscribes. The link expires after 30 days.
+  * **SMS:** one text: "Reply START to resubscribe. No reply = no more texts." This is **off by default**. Texting a number that replied STOP is restricted under CTIA guidance and the TCPA, so the API returns `403 sms_reoptin_disabled` unless `ALLOW_SMS_REOPTIN_REQUEST=true`. Turn it on only after a compliance review.
+  * Limits: one request per customer per channel per **30 days**, and never while a request is pending (`409 reoptin_pending` / `429 reoptin_cooldown`). The database also enforces at most one pending request per contact.
+  * If the provider fails to send, the request is cancelled so it can be retried.
+  * A START reply or a link click marks the request confirmed.
+  * Bounced or complained contacts can't be asked.
+
+**Consent history.** Every opt-out, opt-in and re-opt-in request is written to `consent_events` with:
+
+* channel and contact
+* event and source (`sms_stop`, `sms_start`, `email_unsubscribe`, `email_resubscribe`, `reoptin_link`, `store_request`, `manual`, `provider`)
+* timestamp
+* the acting team member, or the request ID (the Twilio MessageSid for texts)
+
+The table is append-only: a trigger blocks updates and deletes, except when the organization itself is deleted. Expand a row on the Opt-out list to see its history. Resubscribed customers drop off the list.
+
 ## Replies (two-way inbox)
 
 **Menu → Replies** works like iPhone Messages:

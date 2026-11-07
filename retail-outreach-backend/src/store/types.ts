@@ -1,9 +1,9 @@
 import type {
-  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
+  Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, OrgSettings, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
   Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
 
-export type StoreErrorCode = "not_found" | "conflict" | "suppressed" | "forbidden" | "gone";
+export type StoreErrorCode = "not_found" | "conflict" | "suppressed" | "forbidden" | "gone" | "rate_limited";
 
 export class StoreError extends Error {
   /** `reason` is a more specific machine-readable code returned to clients (e.g. "last_owner"). */
@@ -62,7 +62,7 @@ export interface OutreachStore {
   createDelivery(actor: Actor, opportunityId: string, d: NewDelivery): Promise<{ delivery: Delivery; duplicate: boolean }>;
   listDeliveries(actor: Actor, opportunityId: string): Promise<Delivery[]>;
   /** Adds the customer's contact value(s) to the suppression list and marks the opportunity suppressed. */
-  optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason): Promise<void>;
+  optOut(actor: Actor, opportunityId: string, channels: Channel[], reason: SuppressionReason, meta?: ConsentMeta): Promise<void>;
   metrics(actor: Actor): Promise<Metrics>;
   /** Demo helper: put every opportunity back to pending and clear suppressions. */
   reset(actor: Actor): Promise<void>;
@@ -78,6 +78,15 @@ export interface OutreachStore {
   listCatalog(actor: Actor): Promise<CatalogProduct[]>;
 
   /** Paged opt-out list, newest first. `search` matches customer name or contact. */
+  /** Consent history (opt-outs, re-opt-ins, re-opt-in requests) for the contact behind an opt-out entry. */
+  listConsentEvents(actor: Actor, optOutId: string): Promise<ConsentEvent[]>;
+  /**
+   * Owner/admin only. Records a re-opt-in request for an opted-out contact and returns the raw recipient so the caller can
+   * send exactly one message. Throws rate_limited (one per customer+channel per 30 days) or conflict (already pending).
+   */
+  createReoptInRequest(actor: Actor, optOutId: string, meta?: ConsentMeta, opts?: { allowSms?: boolean }): Promise<{ request: ReoptInRequest; recipient: string; customerFirstName: string | null }>;
+  /** Marks a request failed-to-send (so it doesn't block a retry). */
+  cancelReoptInRequest(actor: Actor, requestId: string): Promise<void>;
   listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }): Promise<{ items: OptOutEntry[]; total: number }>;
 
   // ── Replies (conversations). Members read, mark read and reply. ──
@@ -114,9 +123,13 @@ export interface OutreachStore {
 
   // System operations (no user context).
   /** Idempotent per (org, channel, contact). Audited. Returns created=false when already opted out. */
-  addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource): Promise<{ created: boolean }>;
+  addOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource, meta?: ConsentMeta): Promise<{ created: boolean }>;
   /** Re-subscribe (e.g. SMS START): removes only opt-outs (never bounces/complaints). Audited. */
-  removeOptOut(orgId: string, channel: Channel, contact: string, source: OptOutSource): Promise<{ removed: boolean }>;
+  removeOptOut(orgId: string, channel: Channel, contact: string, source: OptInSource, meta?: ConsentMeta): Promise<{ removed: boolean }>;
+  /** Re-opt-in request by id (system: used by the public confirm link). Expired pending requests report "expired". */
+  getReoptInRequest(id: string): Promise<ReoptInRequest | null>;
+  /** Customer confirmed a re-opt-in request: removes the opt-out, marks the request confirmed. Idempotent. */
+  confirmReoptIn(id: string, meta?: ConsentMeta): Promise<{ removed: boolean } | null>;
   /** Appends to the (org, channel, contact) thread, creating it if needed; inbound messages count as unread. */
   appendMessage(orgId: string, channel: Channel, contact: string, msg: NewMessage): Promise<{ conversationId: string; messageId: string; replyToken: string | null }>;
   /** Resolves a reply-to token from an outbound email. */
