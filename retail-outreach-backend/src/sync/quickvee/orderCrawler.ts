@@ -151,7 +151,15 @@ async function waitForRefresh(p: QuickveePortal, before: string) {
     if (now !== before && QV.ordersPage.showing.test(now)) break;
     await sleep(250);
   }
-  await p.page.waitForLoadState("networkidle", { timeout: 10_000 }).catch(() => {});
+  // Then wait until the page settles (same text twice, 750 ms apart) so "Showing N" is the new range's count.
+  let last = "";
+  while (Date.now() < deadline + 10_000) {
+    await p.page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
+    const now = await bodyText(p);
+    if (now === last) break;
+    last = now;
+    await sleep(750);
+  }
 }
 
 async function readCount(p: QuickveePortal): Promise<number | null> {
