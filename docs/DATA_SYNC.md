@@ -55,7 +55,7 @@ npm run sync:quickvee:orders -- --from 2023-01-01 --to 2023-12-31   # deep backf
 **Scrape only with the merchant's own Quickvee account.**
 
 - **Credentials.** The Quickvee login page has three fields, which map to `QUICKVEE_STORE_NAME`, `QUICKVEE_USERNAME` and `QUICKVEE_PASSWORD`. They come from the environment only and are never logged (they're redacted even if a page echoes them). The Data sync page shows **Not configured** and lists whichever names are missing until all three are set. `QUICKVEE_EMAIL` still works as a deprecated alias for `QUICKVEE_USERNAME`.
-- **Login selectors.** Each field is found by its label ("Store name", "Username", "Password"), then its placeholder, then its `name`/`id` (`QV.login` in `src/sync/quickvee/selectors.ts`). Small markup changes therefore don't break the login.
+- **Login.** No label matching: the first visible text input on the login page gets the store name, the second visible text/email input gets the username, and the first password input gets the password. Then it clicks the submit button (or presses Enter).
 - **Session.** Cookies persist in `QUICKVEE_STATE_DIR/session.json` (default `.quickvee/`, gitignored and dockerignored). The Docker image uses `/app/.quickvee`; mount a volume there.
 - **MFA.** A headless run stops with a clear error. Run once headed (below), complete MFA in the browser, and the session is saved.
 - **Polite.** At most one navigation per `QUICKVEE_MIN_DELAY_MS` (1500 ms). The scheduled orders sync goes in `QUICKVEE_CHUNK_DAYS` windows (7); the CLI uses the portal's 1-year maximum.
@@ -77,7 +77,7 @@ npm run sync:quickvee:orders -- --from 2023-01-01 --to 2023-12-31   # deep backf
 The real portal's markup isn't documented. Every selector and path lives in `src/sync/quickvee/selectors.ts`, and the mock portal (`test/fixtures/quickveePortal.ts`) implements exactly those. To calibrate:
 
 1. On a machine with a display: `cd retail-outreach-backend && QUICKVEE_HEADLESS=false QUICKVEE_MIN_DELAY_MS=3000 npm run sync -- quickvee-rewards --dry-run` (with `QUICKVEE_STORE_NAME`/`QUICKVEE_USERNAME`/`QUICKVEE_PASSWORD`/`QUICKVEE_BASE_URL` in your env file).
-2. Watch the login. If it stalls, inspect the page (DevTools) and update `QV.login.*`, `QV.loggedIn` and `QV.paths.*`. Complete MFA if asked; the session is then saved.
+2. Watch the login. If it stalls, inspect the page (DevTools) and check `QV.loggedIn`, `QV.loggedInText` and `QV.paths.*` (the login itself is by input position). Complete MFA if asked; the session is then saved.
 3. On the rewards page, check `QV.exportCsv` (or the table selectors and `QV.nextPage`). On Orders Management, check `QV.ordersPage`: the tab names, the Start/End Date inputs, the "Showing N orders" text, the order-ID pattern, and the Show Items / View Details button text. Order blocks are found by content (an order-ID line plus a View Details button), not by class names. Look at `QUICKVEE_STATE_DIR/raw/orders-api-*.json` to see what the list API returns.
 4. Re-run with `--dry-run` until the run log shows the expected row counts, then update the mock portal to match and run `npm test`.
 

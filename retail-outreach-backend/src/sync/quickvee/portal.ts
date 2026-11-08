@@ -61,11 +61,18 @@ export class QuickveePortal {
     if (await this.isLoggedIn()) { this.log("info", "Quickvee session reused"); return; }
     this.log("info", "Logging in to Quickvee");
     if (!this.page.url().includes(QV.paths.login)) await this.goto(QV.paths.login);
-    await this.fillField(QV.login.storeName, this.cfg.storeName, "Store name");
-    await this.fillField(QV.login.username, this.cfg.username, "Username");
-    await this.fillField(QV.login.password, this.cfg.password, "Password");
+    // By position, no clever selectors: 1st visible text input = store name, 2nd = username, 1st password input = password.
+    const text = this.page.locator(QV.login.textInputs).filter({ visible: true });
+    const pw = this.page.locator(QV.login.password).filter({ visible: true }).first();
+    if ((await text.count()) < 2 || !(await pw.count())) {
+      throw new LoginFailedError("Quickvee login page doesn't have two text inputs and a password input (see docs/DATA_SYNC.md).");
+    }
+    await text.nth(0).fill(this.cfg.storeName);
+    await text.nth(1).fill(this.cfg.username);
+    await pw.fill(this.cfg.password);
     await this.throttle();
-    await this.page.click(QV.login.submit);
+    const submit = this.page.locator(QV.login.submit).filter({ visible: true }).first();
+    if (await submit.count()) await submit.click(); else await pw.press("Enter");
     const outcome = await Promise.race([
       this.page.waitForSelector(QV.loggedIn).then(() => "ok" as const),
       this.page.getByText(QV.loggedInText).first().waitFor().then(() => "ok" as const),
@@ -85,14 +92,6 @@ export class QuickveePortal {
   async isLoggedIn() {
     if (this.page.url().includes(QV.paths.login)) return false;
     return (await this.page.locator(QV.loggedIn).count()) > 0 || (await this.page.getByText(QV.loggedInText).count()) > 0;
-  }
-
-  /** Fills a login field found by label, then placeholder, then name/id. Values are never logged. */
-  private async fillField(f: { label: RegExp; placeholder: RegExp; css: string }, value: string, name: string) {
-    const loc = this.page.getByLabel(f.label).or(this.page.getByPlaceholder(f.label)).or(this.page.getByPlaceholder(f.placeholder))
-      .or(this.page.locator(f.css)).first();
-    if (!(await loc.count())) throw new LoginFailedError(`Quickvee login page has no "${name}" field: selectors may need calibrating (see docs/DATA_SYNC.md).`);
-    await loc.fill(value);
   }
 
   /** Clicks the export control and returns the downloaded CSV, or null when there's no export on this page. */
