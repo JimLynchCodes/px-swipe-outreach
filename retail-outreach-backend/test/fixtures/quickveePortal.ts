@@ -6,7 +6,7 @@
 import http from "node:http";
 import { pathToFileURL } from "node:url";
 
-export const MOCK_USER = { email: "demo@store.test", password: "correct-horse" };
+export const MOCK_USER = { storeName: "cloud9-qv-store", username: "qv-user-7731", password: "correct-horse" };
 export const MOCK_REWARDS = [
   { id: "R100", name: "Jamal Carter", phone: "(555) 010-0001", email: "jamal@example.com", points: 340, joined: "03/14/2025" },
   { id: "R101", name: "Sarah Kim", phone: "555-010-0002", email: "SARAH@EXAMPLE.COM", points: 1200, joined: "11/02/2024" },
@@ -46,14 +46,14 @@ export async function startMockPortal(o: MockOptions = {}): Promise<MockPortal> 
 
     if (u.pathname === "/login" && req.method === "POST") {
       const f = await body();
-      if (f.get("email") !== MOCK_USER.email || f.get("password") !== MOCK_USER.password) return html(page('<p data-testid="login-error">Invalid login</p>', false), 401);
+      if (f.get("store_name") !== MOCK_USER.storeName || f.get("username") !== MOCK_USER.username || f.get("password") !== MOCK_USER.password) return html(page('<p data-testid="login-error">Invalid login</p>', false), 401);
       const id = Math.random().toString(36).slice(2);
       state.logins++;
       if (o.mfa) { pending.add(id); res.writeHead(302, { location: "/mfa", "set-cookie": `sid=${id}; Path=/; HttpOnly` }); return res.end(); }
       sessions.add(id);
       res.writeHead(302, { location: "/dashboard", "set-cookie": `sid=${id}; Path=/; HttpOnly` }); return res.end();
     }
-    if (u.pathname === "/login") return html(page(`<form method="post" action="/login"><input name="email"><input name="password" type="password"><button type="submit">Sign in</button></form>`, false));
+    if (u.pathname === "/login") return html(page(`<form method="post" action="/login"><label for="store">Store name</label><input id="store" name="store_name" placeholder="Enter store name"><label for="user">Username</label><input id="user" name="username" placeholder="Enter username"><label for="pw">Password</label><input id="pw" name="password" type="password" placeholder="Enter password"><button type="submit">Sign in</button></form>`, false));
     if (u.pathname === "/mfa") return html(page('<div data-testid="mfa-challenge"><input name="otp"></div>', false));
     if (!authed) { res.writeHead(302, { location: "/login" }); return res.end(); }
 
@@ -96,5 +96,5 @@ export async function startMockPortal(o: MockOptions = {}): Promise<MockPortal> 
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const p = await startMockPortal({ port: Number(process.env.PORT ?? 4799), mfa: process.env.MFA === "1", csv: process.env.CSV !== "0" });
-  console.log(`Mock Quickvee portal at ${p.url} (login ${MOCK_USER.email} / ${MOCK_USER.password})`);
+  console.log(`Mock Quickvee portal at ${p.url} (store ${MOCK_USER.storeName}, login ${MOCK_USER.username} / ${MOCK_USER.password})`);
 }

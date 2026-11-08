@@ -251,7 +251,7 @@ describe("data sync API", () => {
     const by = Object.fromEntries(r.sources.map((s: any) => [s.id, s]));
     expect(Object.keys(by)).toEqual(["ai-usage", "twilio", "email", "quickvee-rewards", "quickvee-orders"]);
     expect(by.twilio).toMatchObject({ configured: false, missing: ["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"], lastRun: null, schedule: { frequency: "off" } });
-    expect(by["quickvee-orders"]).toMatchObject({ configured: false, missing: ["QUICKVEE_EMAIL"], supportsBackfill: true });
+    expect(by["quickvee-orders"]).toMatchObject({ configured: false, missing: ["QUICKVEE_STORE_NAME", "QUICKVEE_USERNAME"], supportsBackfill: true });
     expect(by.email.configured).toBe(true);
     expect(JSON.stringify(r)).not.toContain("hunter2");
     expect(by.email.schedule.startLocal).toMatch(/T03:00:00$/);
@@ -292,7 +292,7 @@ describe("data sync API", () => {
 
   it("validates backfill ranges and refuses unconfigured sources", async () => {
     const ran: unknown[] = [];
-    const { app, h } = await setup({ QUICKVEE_EMAIL: "a@b.co", QUICKVEE_PASSWORD: "pw" }, { "quickvee-orders": { ...fakeJob(), id: "quickvee-orders", supportsBackfill: true, run: async ctx => { ran.push(ctx.params); } } });
+    const { app, h } = await setup({ QUICKVEE_STORE_NAME: "cloud9", QUICKVEE_EMAIL: "a@b.co", QUICKVEE_PASSWORD: "pw" }, { "quickvee-orders": { ...fakeJob(), id: "quickvee-orders", supportsBackfill: true, run: async ctx => { ran.push(ctx.params); } } });
     const post = async (job: string, payload: object) => app.inject({ method: "POST", url: `/api/sync/${job}/run`, headers: await h(OWNER), payload });
     expect((await post("twilio", {})).json()).toMatchObject({ code: "not_configured" });
     expect((await post("email", { from: "2026-01-01" })).statusCode).toBe(400);

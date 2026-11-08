@@ -84,7 +84,9 @@ const schema = z.object({
   /** console = log the invite link (dev); supabase = Supabase Auth sends the email (needs the service role key). */
   INVITE_MAILER: z.enum(["console", "supabase"]).default("console"),
   /** BACKEND SECRET. Only used to call the Supabase Auth admin API for invites. Never expose to the frontend. */
+  // Accepts the legacy service_role JWT or the new secret key (sb_secret_…). SUPABASE_SECRET_KEY is an alias.
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
+  SUPABASE_SECRET_KEY: z.string().min(20).optional(),
   INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(168),
   INVITE_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
   INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60),
@@ -114,6 +116,11 @@ const schema = z.object({
   EMAIL_EVENTS_PROVIDER: z.enum(["ledger", "sendgrid"]).default("ledger"),
   SENDGRID_API_KEY: z.string().min(10).optional(),
   /** Quickvee merchant portal login (the merchant's own account only). Never logged. */
+  /** The "Store name" field on the Quickvee login page. */
+  QUICKVEE_STORE_NAME: z.string().min(1).optional(),
+  /** The "Username" field on the Quickvee login page. */
+  QUICKVEE_USERNAME: z.string().min(1).optional(),
+  /** @deprecated alias for QUICKVEE_USERNAME (older setups signed in with an email). */
   QUICKVEE_EMAIL: z.string().min(3).optional(),
   QUICKVEE_PASSWORD: z.string().min(1).optional(),
   QUICKVEE_BASE_URL: z.string().url().default("https://merchant.quickvee.com"),
@@ -136,7 +143,7 @@ const schema = z.object({
   if (c.DATA_STORE === "postgres" && !c.DATABASE_URL) issue("DATABASE_URL", "required when DATA_STORE=postgres");
   if (c.INVITE_MAILER === "supabase") {
     if (!c.SUPABASE_URL) issue("SUPABASE_URL", "required when INVITE_MAILER=supabase");
-    if (!c.SUPABASE_SERVICE_ROLE_KEY) issue("SUPABASE_SERVICE_ROLE_KEY", "required when INVITE_MAILER=supabase");
+    if (!c.SUPABASE_SERVICE_ROLE_KEY && !c.SUPABASE_SECRET_KEY) issue("SUPABASE_SERVICE_ROLE_KEY", "required when INVITE_MAILER=supabase (or set SUPABASE_SECRET_KEY)");
   }
   if (c.EMAIL_PROVIDER === "smtp") {
     if (!c.SMTP_HOST) issue("SMTP_HOST", "required when EMAIL_PROVIDER=smtp");
@@ -168,6 +175,8 @@ const schema = z.object({
 }).transform(c => ({
   ...c,
   ENABLE_DEMO_RESET: c.ENABLE_DEMO_RESET ?? c.NODE_ENV !== "production",
+  SUPABASE_SERVICE_ROLE_KEY: c.SUPABASE_SERVICE_ROLE_KEY ?? c.SUPABASE_SECRET_KEY,
+  QUICKVEE_USERNAME: c.QUICKVEE_USERNAME ?? c.QUICKVEE_EMAIL,
   SUPABASE_URL: c.SUPABASE_URL?.replace(/\/+$/, ""),
   APP_URL: c.APP_URL.replace(/\/+$/, ""),
   PUBLIC_API_URL: c.PUBLIC_API_URL.replace(/\/+$/, ""),

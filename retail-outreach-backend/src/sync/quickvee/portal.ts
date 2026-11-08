@@ -1,6 +1,6 @@
 /**
  * Quickvee merchant portal driver (Playwright). Scrape ONLY with the merchant's own account.
- *  - Credentials come from env (QUICKVEE_EMAIL / QUICKVEE_PASSWORD) and are never logged.
+ *  - Credentials come from env (QUICKVEE_STORE_NAME / QUICKVEE_USERNAME / QUICKVEE_PASSWORD) and are never logged.
  *  - The session (cookies) persists in QUICKVEE_STATE_DIR/session.json, so logins are rare.
  *  - If Quickvee asks for MFA: headless runs stop with MfaRequiredError; a headed run (QUICKVEE_HEADLESS=false) waits
  *    up to 5 minutes for you to finish it in the browser, then saves the session.
@@ -19,7 +19,7 @@ export class MfaRequiredError extends Error {
     this.name = "MfaRequiredError";
   }
 }
-export class LoginFailedError extends Error { constructor(m = "Quickvee login failed: check QUICKVEE_EMAIL / QUICKVEE_PASSWORD.") { super(m); this.name = "ConfigError"; } }
+export class LoginFailedError extends Error { constructor(m = "Quickvee login failed: check QUICKVEE_STORE_NAME / QUICKVEE_USERNAME / QUICKVEE_PASSWORD.") { super(m); this.name = "ConfigError"; } }
 
 type Page = import("playwright-core").Page;
 type Browser = import("playwright-core").Browser;
@@ -61,8 +61,9 @@ export class QuickveePortal {
     if (await this.page.locator(QV.loggedIn).count()) { this.log("info", "Quickvee session reused"); return; }
     this.log("info", "Logging in to Quickvee");
     if (!this.page.url().includes(QV.paths.login)) await this.goto(QV.paths.login);
-    await this.page.fill(QV.login.email, this.cfg.email);
-    await this.page.fill(QV.login.password, this.cfg.password);
+    await this.fillField(QV.login.storeName, this.cfg.storeName, "Store name");
+    await this.fillField(QV.login.username, this.cfg.username, "Username");
+    await this.fillField(QV.login.password, this.cfg.password, "Password");
     await this.throttle();
     await this.page.click(QV.login.submit);
     const outcome = await Promise.race([
@@ -78,6 +79,14 @@ export class QuickveePortal {
     }
     await this.context.storageState({ path: path.join(this.cfg.stateDir, "session.json") });
     this.log("info", "Quickvee session saved");
+  }
+
+  /** Fills a login field found by label, then placeholder, then name/id. Values are never logged. */
+  private async fillField(f: { label: RegExp; placeholder: RegExp; css: string }, value: string, name: string) {
+    const loc = this.page.getByLabel(f.label).or(this.page.getByPlaceholder(f.label)).or(this.page.getByPlaceholder(f.placeholder))
+      .or(this.page.locator(f.css)).first();
+    if (!(await loc.count())) throw new LoginFailedError(`Quickvee login page has no "${name}" field: selectors may need calibrating (see docs/DATA_SYNC.md).`);
+    await loc.fill(value);
   }
 
   /** Clicks the export control and returns the downloaded CSV, or null when there's no export on this page. */
@@ -114,8 +123,8 @@ export class QuickveePortal {
   async close() { await this.context.close().catch(() => {}); await this.browser.close().catch(() => {}); }
 }
 
-export type PortalConfig = { baseUrl: string; email: string; password: string; stateDir: string; headless: boolean; minDelayMs: number; timeoutMs: number; chromiumPath?: string; saveRaw: boolean };
+export type PortalConfig = { baseUrl: string; storeName: string; username: string; password: string; stateDir: string; headless: boolean; minDelayMs: number; timeoutMs: number; chromiumPath?: string; saveRaw: boolean };
 export const portalConfig = (c: AppConfig): PortalConfig => ({
-  baseUrl: c.QUICKVEE_BASE_URL, email: c.QUICKVEE_EMAIL ?? "", password: c.QUICKVEE_PASSWORD ?? "", stateDir: c.QUICKVEE_STATE_DIR,
+  baseUrl: c.QUICKVEE_BASE_URL, storeName: c.QUICKVEE_STORE_NAME ?? "", username: c.QUICKVEE_USERNAME ?? "", password: c.QUICKVEE_PASSWORD ?? "", stateDir: c.QUICKVEE_STATE_DIR,
   headless: c.QUICKVEE_HEADLESS, minDelayMs: c.QUICKVEE_MIN_DELAY_MS, timeoutMs: 30_000, chromiumPath: c.QUICKVEE_CHROMIUM_PATH, saveRaw: c.QUICKVEE_SAVE_RAW
 });

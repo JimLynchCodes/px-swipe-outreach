@@ -70,7 +70,7 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `SUPABASE_JWT_AUDIENCE` | `authenticated` | |
 | `DATA_STORE` | `memory` | `memory` or `postgres` |
 | `DATABASE_URL` | – | Required when `DATA_STORE=postgres`. Backend secret |
-| `DATABASE_POOL_MAX` / `DATABASE_CA_CERT` | `10` / – | CA cert as PEM text or a file path |
+| `DATABASE_POOL_MAX` / `DATABASE_CA_CERT` | `10` / – | Optional CA cert (PEM text or a file path) for verified TLS |
 | `CORS_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | Comma-separated allowlist |
 | `TRUST_PROXY` | `false` | Set `true` behind a load balancer |
 | `RATE_LIMIT_PER_MINUTE` / `SEND_RATE_LIMIT_PER_MINUTE` | `300` / `30` | Per user (or IP when unauthenticated) |
@@ -83,11 +83,11 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `SYNC_SCHEDULER` / `SYNC_SCHEDULER_INTERVAL_SECONDS` | `true` / `60` | Data sync scheduler loop in the API process (DB-backed, multi-instance safe) |
 | `OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY` | – | ai-usage sync (OpenAI Usage/Costs APIs; OpenRouter `/activity`) |
 | `EMAIL_EVENTS_PROVIDER` / `SENDGRID_API_KEY` | `ledger` / – | email tracking source |
-| `QUICKVEE_EMAIL` / `QUICKVEE_PASSWORD` | – | Quickvee rewards/orders sync (merchant's own login; never logged). More `QUICKVEE_*` knobs in `.env.example` and [docs/DATA_SYNC.md](../docs/DATA_SYNC.md) |
+| `QUICKVEE_STORE_NAME` / `QUICKVEE_USERNAME` / `QUICKVEE_PASSWORD` | – | Quickvee rewards/orders sync: the three login fields (merchant's own login; never logged). `QUICKVEE_EMAIL` is a deprecated alias for the username. More `QUICKVEE_*` knobs in `.env.example` and [docs/DATA_SYNC.md](../docs/DATA_SYNC.md) |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
 | `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
 | `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |
-| `SUPABASE_SERVICE_ROLE_KEY` | – | Required for `INVITE_MAILER=supabase`. Backend secret, only used to send invite emails |
+| `SUPABASE_SERVICE_ROLE_KEY` (alias `SUPABASE_SECRET_KEY`) | – | Required for `INVITE_MAILER=supabase`. The new secret key (`sb_secret_…`) or the legacy `service_role` JWT. Backend secret, only used to send invite emails |
 | `INVITE_TTL_HOURS` / `INVITE_RATE_LIMIT_PER_HOUR` / `INVITE_RESEND_COOLDOWN_SECONDS` | `168` / `30` / `60` | |
 | `PUBLIC_API_URL` | `http://localhost:3000` | Public origin of this API, used in unsubscribe links and Twilio signature checks. Must be `https` in production |
 | `UNSUBSCRIBE_SIGNING_SECRET` | dev default | ≥ 32 chars. HMAC key for unsubscribe links. **Required in production** (the server refuses to boot) |
@@ -252,13 +252,13 @@ Set the keys in two files, and each one starts as a copy of its folder's `.env.e
 
 
 Service	Variables	Where to get them
-Supabase (backend)	`SUPABASE_URL`, `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`	In Supabase, under Project Settings: the API page (URL and service_role key) and the Database page (connection string)
-Supabase (frontend)	`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`	Same API page, but use the anon key here, never the service_role key
+Supabase (backend)	`SUPABASE_URL`, `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`	In Supabase, under Project Settings: API Keys (secret `sb_secret_…` key, or legacy service_role) plus the Project URL and the Database page (connection string)
+Supabase (frontend)	`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (or `VITE_SUPABASE_ANON_KEY`)	Project Settings → API Keys: the publishable `sb_publishable_…` key (or legacy anon key), never a secret key
 AI	`OPENROUTER_API_KEY`, or `OPENAI_API_KEY`	openrouter.ai/keys. If neither is set, suggestions fall back to the built-in rules.
 Twilio	`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`	Twilio Console. Also set `SMS_PROVIDER=twilio`.
 Email	`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`	Any SMTP provider (a Gmail app password works). Also set `EMAIL_PROVIDER=smtp`.
 Unsubscribe links	`UNSUBSCRIBE_SIGNING_SECRET`	Make one with `openssl rand -base64 48`
-Quickvee	`QUICKVEE_EMAIL`, `QUICKVEE_PASSWORD`, `QUICKVEE_BASE_URL`	Your merchant login and the portal address you sign in at
+Quickvee	`QUICKVEE_STORE_NAME`, `QUICKVEE_USERNAME`, `QUICKVEE_PASSWORD`, `QUICKVEE_BASE_URL`	Your merchant login (Store name, Username, Password) and the portal address you sign in at
 Optional data sync	`OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY`, `SENDGRID_API_KEY`	Only needed to pull detailed usage history
 
 
