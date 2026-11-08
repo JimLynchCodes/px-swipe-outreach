@@ -9,7 +9,7 @@ import { maskRecipient } from "../domain.js";
  * match the Quickvee aliases (src/sync/quickvee/selectors.ts → CSV_ALIASES).
  */
 export const ORDER_CSV_HEADERS = ["Order ID", "Date", "Customer ID", "Customer name", "Phone", "Email", "Item", "SKU", "Category", "Brand",
-  "Qty", "Unit price", "Item discount", "Order discount", "Subtotal", "Total", "Payment"] as const;
+  "Qty", "Unit price", "Item discount", "Order discount", "Subtotal", "Total", "Payment", "Status"] as const;
 
 export const MAX_ORDER_ROWS = 50_000;
 export type OrderParse = { orders: Order[]; invalid: Array<{ row: number; reason: string }> };
@@ -59,7 +59,7 @@ export function ordersToCsv(orders: Order[]): string {
   const lines = [ORDER_CSV_HEADERS.join(",")];
   for (const o of orders) {
     const base = [o.externalId, o.at, o.customer.externalId, o.customer.name, o.customer.phone, o.customer.email];
-    const tail = [money(o.discountCents), money(o.subtotalCents), money(o.totalCents), o.paymentMethod];
+    const tail = [money(o.discountCents), money(o.subtotalCents), money(o.totalCents), o.paymentMethod, o.refunded ? "Refunded" : ""];
     const items = o.items.length ? o.items : [null];
     for (const i of items) {
       lines.push([...base, i?.name, i?.sku, i?.category, i?.brand, i ? i.quantity : "", i ? money(i.unitPriceCents) : "", i ? money(i.discountCents) : "", ...tail].map(cell).join(","));

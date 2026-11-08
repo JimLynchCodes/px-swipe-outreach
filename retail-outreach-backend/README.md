@@ -259,7 +259,7 @@ AI	`OPENROUTER_API_KEY`, or `OPENAI_API_KEY`	openrouter.ai/keys. If neither is s
 Twilio	`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`	Twilio Console. Also set `SMS_PROVIDER=twilio`.
 Email	`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`	Any SMTP provider (a Gmail app password works). Also set `EMAIL_PROVIDER=smtp`.
 Unsubscribe links	`UNSUBSCRIBE_SIGNING_SECRET`	Make one with `openssl rand -base64 48`
-Quickvee	`QUICKVEE_STORE_NAME`, `QUICKVEE_USERNAME`, `QUICKVEE_PASSWORD`, `QUICKVEE_BASE_URL`	Your merchant login (Store name, Username, Password) and the portal address you sign in at
+Quickvee	`QUICKVEE_STORE_NAME`, `QUICKVEE_USERNAME`, `QUICKVEE_PASSWORD`, `QUICKVEE_BASE_URL`	Your merchant login (Store name, Username, Password) and the portal address (default `https://quickvee.com`). Orders sync: `QUICKVEE_ORDER_LIMIT` (default all), `QUICKVEE_ORDER_CHANNEL` (in-store)
 Optional data sync	`OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY`, `SENDGRID_API_KEY`	Only needed to pull detailed usage history
 
 

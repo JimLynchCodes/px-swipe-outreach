@@ -6,10 +6,14 @@
 export const QV = {
   paths: {
     login: "/login",
-    home: "/dashboard",
+    /** First page after login; also the session check. The real portal lives at https://quickvee.com/merchants/…. */
+    home: "/merchants/order-new",
     rewards: (page: number) => `/rewards?page=${page}`,
-    orders: (from: string, to: string, page: number) => `/orders?from=${from}&to=${to}&page=${page}`
+    /** "Orders Management": In-Store / Online tabs, Start/End date inputs, "Showing N orders", infinite-scroll order blocks. */
+    orders: "/merchants/order-new"
   },
+  /** Text that only appears when signed in (any of these). */
+  loggedInText: /Orders Management|Sign out|Log out|Logout/i,
   /**
    * The login page has three fields: Store name, Username, Password. Each is found by its label, then placeholder,
    * then name/id attribute, so small markup changes don't break the login.
@@ -26,8 +30,22 @@ export const QV = {
   exportCsv: 'a[data-action="export-csv"], button[data-action="export-csv"]',
   nextPage: 'a[rel="next"]',
   rewards: { row: "table.rewards-table tbody tr", cell: (col: string) => `td[data-col="${col}"]` },
-  orders: { row: "table.orders-table tbody tr", cell: (col: string) => `td[data-col="${col}"]`, detailLink: "a[data-order-link]" },
-  orderItems: { row: "table.order-items tbody tr", cell: (col: string) => `td[data-col="${col}"]` }
+  /**
+   * Orders Management page. The markup isn't documented, so blocks are found by content, not class names: an order block
+   * is the nearest ancestor of an order-ID line (e.g. F3E37BE717735EA1) that also holds a "View Details" button.
+   */
+  ordersPage: {
+    tab: (channel: "in-store" | "online") => (channel === "online" ? /^\s*Online\s*$/i : /^\s*In[-\s]?Store\s*$/i),
+    startDate: { label: /start\s*date/i, css: 'input[name*="start" i], input[id*="start" i], input[placeholder*="MM/DD/YYYY" i]' },
+    endDate: { label: /end\s*date/i, css: 'input[name*="end" i], input[id*="end" i]' },
+    showing: /Showing\s+([\d,]+)\s+orders?/i,
+    refundedOnly: /Refunded\s+Only\s+([\d,]+)/i,
+    orderId: "^[0-9A-F]{10,24}$",
+    viewDetails: /^\s*View\s+Details\s*$/i,
+    showItems: /^\s*Show\s+Items\s*$/i,
+    hideItems: /^\s*Hide\s+Items\s*$/i,
+    walkIn: /^walk[-\s]?in(\s+customer)?$/i
+  },
 } as const;
 
 /** CSV header aliases (lowercased, non-alphanumerics stripped) → our fields. */
@@ -51,5 +69,6 @@ export const CSV_ALIASES: Record<string, string[]> = {
   orderDiscount: ["orderdiscount", "discount", "discounts", "totaldiscount"],
   subtotal: ["subtotal"],
   total: ["total", "ordertotal", "grandtotal"],
-  payment: ["payment", "paymenttype", "paymentmethod", "tender"]
+  payment: ["payment", "paymenttype", "paymentmethod", "tender"],
+  status: ["status", "orderstatus", "refundstatus"]
 };

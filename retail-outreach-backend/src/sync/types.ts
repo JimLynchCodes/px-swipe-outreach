@@ -25,6 +25,8 @@ export type OrderItem = { name: string; sku: string | null; category: string | n
 export type Order = {
   externalId: string; at: string; customer: { externalId: string | null; name: string | null; phone: string | null; email: string | null };
   items: OrderItem[]; subtotalCents: number; discountCents: number; totalCents: number; paymentMethod: string | null;
+  /** True for refunded orders (Quickvee "Refunded" badge / CSV Status column). */
+  refunded?: boolean;
 };
 export type UpsertResult = { inserted: number; updated: number; matched?: number; skipped?: number };
 

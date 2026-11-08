@@ -31,7 +31,7 @@ export const findChromium = (explicit?: string) => explicit ?? CHROMIUM_CANDIDAT
 
 export class QuickveePortal {
   private last = 0;
-  private constructor(private browser: Browser, private context: Context, readonly page: Page, private cfg: PortalConfig, private log: Log) {}
+  private constructor(private browser: Browser, private context: Context, readonly page: Page, readonly cfg: PortalConfig, private log: Log) {}
 
   static async open(cfg: PortalConfig, log: Log): Promise<QuickveePortal> {
     const { chromium } = await import("playwright-core");
@@ -46,7 +46,7 @@ export class QuickveePortal {
     return new QuickveePortal(browser, context, page, cfg, log);
   }
 
-  private async throttle() {
+  async throttle() {
     const wait = this.last + this.cfg.minDelayMs - Date.now();
     if (wait > 0) await new Promise(r => setTimeout(r, wait));
     this.last = Date.now();
@@ -58,7 +58,7 @@ export class QuickveePortal {
 
   async ensureLoggedIn() {
     await this.goto(QV.paths.home);
-    if (await this.page.locator(QV.loggedIn).count()) { this.log("info", "Quickvee session reused"); return; }
+    if (await this.isLoggedIn()) { this.log("info", "Quickvee session reused"); return; }
     this.log("info", "Logging in to Quickvee");
     if (!this.page.url().includes(QV.paths.login)) await this.goto(QV.paths.login);
     await this.fillField(QV.login.storeName, this.cfg.storeName, "Store name");
@@ -68,6 +68,7 @@ export class QuickveePortal {
     await this.page.click(QV.login.submit);
     const outcome = await Promise.race([
       this.page.waitForSelector(QV.loggedIn).then(() => "ok" as const),
+      this.page.getByText(QV.loggedInText).first().waitFor().then(() => "ok" as const),
       this.page.waitForSelector(QV.login.mfa).then(() => "mfa" as const),
       this.page.waitForSelector(QV.login.error).then(() => "error" as const)
     ]).catch(() => "timeout" as const);
@@ -75,10 +76,15 @@ export class QuickveePortal {
     if (outcome === "mfa") {
       if (this.cfg.headless) throw new MfaRequiredError();
       this.log("warn", "Quickvee MFA: complete it in the browser window (waiting up to 5 minutes)");
-      await this.page.waitForSelector(QV.loggedIn, { timeout: 5 * 60_000 });
+      await this.page.locator(QV.loggedIn).or(this.page.getByText(QV.loggedInText)).first().waitFor({ timeout: 5 * 60_000 });
     }
     await this.context.storageState({ path: path.join(this.cfg.stateDir, "session.json") });
     this.log("info", "Quickvee session saved");
+  }
+
+  async isLoggedIn() {
+    if (this.page.url().includes(QV.paths.login)) return false;
+    return (await this.page.locator(QV.loggedIn).count()) > 0 || (await this.page.getByText(QV.loggedInText).count()) > 0;
   }
 
   /** Fills a login field found by label, then placeholder, then name/id. Values are never logged. */

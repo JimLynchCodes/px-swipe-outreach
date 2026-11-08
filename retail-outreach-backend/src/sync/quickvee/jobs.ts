@@ -1,8 +1,9 @@
-/** quickvee-rewards and quickvee-orders: CSV export first, table crawl as the fallback. */
+/** quickvee-rewards (CSV export, table crawl fallback) and quickvee-orders (Orders Management infinite-scroll crawler). */
 import { addDays, isoDay, type JobContext, type JobDef } from "../job.js";
 import { MfaRequiredError, portalConfig, QuickveePortal } from "./portal.js";
 import { QV } from "./selectors.js";
-import { parseCsv, toOrders, toRewardsMember } from "./normalize.js";
+import { parseCsv, toRewardsMember } from "./normalize.js";
+import { crawlOrders } from "./orderCrawler.js";
 import type { Order, RewardsMember } from "../types.js";
 
 const missing = (c: import("../../config.js").AppConfig) => [!c.QUICKVEE_STORE_NAME && "QUICKVEE_STORE_NAME", !c.QUICKVEE_USERNAME && "QUICKVEE_USERNAME", !c.QUICKVEE_PASSWORD && "QUICKVEE_PASSWORD"].filter(Boolean) as string[];
@@ -40,30 +41,26 @@ export async function scrapeRewards(ctx: JobContext, p: QuickveePortal): Promise
   return raw.map(r => toRewardsMember(r, tz)).filter((m): m is RewardsMember => !!m);
 }
 
-export async function scrapeOrders(ctx: JobContext, p: QuickveePortal, from: string, to: string): Promise<Order[]> {
-  await p.goto(QV.paths.orders(from, to, 1));
-  const csv = await p.exportCsv(`orders-${from}_${to}`);
+/**
+ * Orders for [from, to] via the Orders Management crawler (infinite scroll; there is no export). Windows longer than a
+ * year (the portal's limit) are split. `channel` both = In-Store then Online. Stops after `limit` new orders.
+ */
+export async function scrapeOrders(ctx: JobContext, p: QuickveePortal, from: string, to: string,
+  o: { channel?: "in-store" | "online" | "both"; limit?: number; seen?: Set<string> } = {}): Promise<Order[]> {
   const tz = await ctx.repo.getTimezone(ctx.orgId);
-  if (csv) { const rows = parseCsv(csv); ctx.read(rows.length); return toOrders(rows, tz); }
-  ctx.log("warn", `No orders CSV export for ${from}..${to}; crawling`);
-  const headers: Array<Record<string, string>> = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
-    if (page > 1) await p.goto(QV.paths.orders(from, to, page));
-    headers.push(...await p.readTable(QV.orders.row, ["orderId", "date", "customer", "phone", "email", "subtotal", "discount", "total", "payment"], QV.orders.cell, QV.orders.detailLink));
-    if (!(await p.hasNext())) break;
+  const out: Order[] = [];
+  const channels = (o.channel ?? ctx.config.QUICKVEE_ORDER_CHANNEL) === "both" ? ["in-store", "online"] as const : [(o.channel ?? ctx.config.QUICKVEE_ORDER_CHANNEL) as "in-store" | "online"];
+  for (const channel of channels) {
+    for (const [a, b] of dateWindows(from, to, 365).reverse()) {
+      const left = o.limit ? o.limit - out.length : undefined;
+      if (left !== undefined && left <= 0) break;
+      await crawlOrders(p, { from: a, to: b, channel, tz, limit: left, seen: o.seen, stallMs: ctx.config.QUICKVEE_STALL_SECONDS * 1000,
+        log: ctx.log, progress: x => ctx.progress({ phase: `Orders ${a} → ${b} (${channel})`, done: x.done, total: x.expected ?? undefined }),
+        onOrders: batch => { out.push(...batch); } });
+    }
   }
-  const lines: Record<string, string>[] = [];
-  for (const h of headers) {
-    const base = { order_id: h.orderId, date: h.date, customer_name: h.customer, phone: h.phone, email: h.email, subtotal: h.subtotal, order_discount: h.discount, total: h.total, payment: h.payment };
-    if (h._href) {
-      await p.goto(h._href);
-      const items = await p.readTable(QV.orderItems.row, ["name", "sku", "category", "brand", "qty", "price", "discount"], QV.orderItems.cell);
-      for (const i of items) lines.push({ ...base, item: i.name, sku: i.sku, category: i.category, brand: i.brand, qty: i.qty, unit_price: i.price, item_discount: i.discount });
-      if (!items.length) lines.push(base);
-    } else lines.push(base);
-  }
-  ctx.read(headers.length);
-  return toOrders(lines, tz);
+  ctx.read(out.length);
+  return out;
 }
 
 export const quickveeRewardsJob: JobDef = {
@@ -102,17 +99,21 @@ export const quickveeOrdersJob: JobDef = {
     const from = backfill ? String(ctx.params.from) : wm ? addDays(wm, -1) : addDays(today, -30);
     const to = typeof ctx.params.to === "string" ? String(ctx.params.to) : today;
     const windows = dateWindows(from, to, ctx.config.QUICKVEE_CHUNK_DAYS);
+    const limit = ctx.config.QUICKVEE_ORDER_LIMIT || undefined;
+    const seen = new Set<string>();
     let total = 0;
     await withPortal(ctx, async p => {
       for (const [i, [a, b]] of windows.entries()) {
         ctx.progress({ phase: `Orders ${a} → ${b}`, done: i, total: windows.length });
-        const orders = await scrapeOrders(ctx, p, a, b);
+        if (limit && total >= limit) { ctx.log("info", `Stopped at QUICKVEE_ORDER_LIMIT=${limit}`); break; }
+        const orders = await scrapeOrders(ctx, p, a, b, { limit: limit ? limit - total : undefined, seen });
         const r = await ctx.repo.upsertOrders(ctx.orgId, orders);
         total += orders.length;
         ctx.wrote(r.inserted + r.updated);
         ctx.log("info", `${a} → ${b}: ${orders.length} orders (${r.inserted} new, ${r.updated} updated, ${r.skipped ?? 0} without a customer)`);
         // Incremental runs advance the watermark per window so a failure resumes where it stopped. Backfills leave it alone.
-        if (!ctx.dryRun && !backfill && (!wm || b > wm) && b <= today) await ctx.repo.setWatermark(ctx.orgId, "quickvee-orders", b);
+        const limited = !!limit && total >= limit; // a cut-short window isn't complete: don't advance past it
+        if (!ctx.dryRun && !backfill && !limited && (!wm || b > wm) && b <= today) await ctx.repo.setWatermark(ctx.orgId, "quickvee-orders", b);
       }
     });
     ctx.progress({ phase: "Done", done: windows.length, total: windows.length });
