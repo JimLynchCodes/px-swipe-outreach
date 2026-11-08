@@ -5,7 +5,7 @@
  */
 export const QV = {
   paths: {
-    login: "/login",
+    login: "/merchants/login",
     /** First page after login; also the session check. The real portal lives at https://quickvee.com/merchants/…. */
     home: "/merchants/order-new",
     rewards: (page: number) => `/rewards?page=${page}`,

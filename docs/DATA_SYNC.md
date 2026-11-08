@@ -59,6 +59,7 @@ npm run sync:quickvee:orders -- --from 2023-01-01 --to 2023-12-31   # deep backf
 - **Session.** Cookies persist in `QUICKVEE_STATE_DIR/session.json` (default `.quickvee/`, gitignored and dockerignored). The Docker image uses `/app/.quickvee`; mount a volume there.
 - **MFA.** A headless run stops with a clear error. Run once headed (below), complete MFA in the browser, and the session is saved.
 - **Polite.** At most one navigation per `QUICKVEE_MIN_DELAY_MS` (1500 ms). The scheduled orders sync goes in `QUICKVEE_CHUNK_DAYS` windows (7); the CLI uses the portal's 1-year maximum.
+- **Login page:** `https://quickvee.com/merchants/login` (`QV.paths.login`, default base `https://quickvee.com`); orders live at `/merchants/order-new`.
 - **Rewards: CSV first, crawl fallback.** If the rewards page has an export control, the job downloads the CSV; otherwise it crawls the table and follows pagination.
 - **Orders: the Orders Management crawler** (`src/sync/quickvee/orderCrawler.ts`), used by both the `quickvee-orders` job and `scrape:quickvee:orders`. There's no usable export, so it:
   1. opens `https://quickvee.com/merchants/order-new` and clicks the **In-Store** tab (or **Online**; `QUICKVEE_ORDER_CHANNEL` / `--channel`, `both` does In-Store then Online);

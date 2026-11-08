@@ -62,7 +62,7 @@ export async function startMockPortal(o: MockOptions = {}): Promise<MockPortal> 
     const html = (s: string, code = 200) => { res.writeHead(code, { "content-type": "text/html" }); res.end(s); };
     const body = async () => { let b = ""; for await (const c of req) b += c; return new URLSearchParams(b); };
 
-    if (u.pathname === "/login" && req.method === "POST") {
+    if (u.pathname === "/merchants/login" && req.method === "POST") {
       const f = await body();
       if (f.get("hp") || f.get("store_name") !== MOCK_USER.storeName || f.get("username") !== MOCK_USER.username || f.get("password") !== MOCK_USER.password) return html(page('<p data-testid="login-error">Invalid login</p>', false), 401);
       const id = Math.random().toString(36).slice(2);
@@ -71,9 +71,9 @@ export async function startMockPortal(o: MockOptions = {}): Promise<MockPortal> 
       sessions.add(id);
       res.writeHead(302, { location: "/dashboard", "set-cookie": `sid=${id}; Path=/; HttpOnly` }); return res.end();
     }
-    if (u.pathname === "/login") return html(page(`<form method="post" action="/login"><input type="text" name="hp" style="display:none"><input type="hidden" name="csrf" value="x"><div>Store name</div><input name="store_name" class="a1"><div>Username</div><input type="text" name="username" class="b2"><div>Password</div><input name="password" type="password"><button type="submit">Sign in</button></form>`, false));
+    if (u.pathname === "/merchants/login") return html(page(`<form method="post" action="/merchants/login"><input type="text" name="hp" style="display:none"><input type="hidden" name="csrf" value="x"><div>Store name</div><input name="store_name" class="a1"><div>Username</div><input type="text" name="username" class="b2"><div>Password</div><input name="password" type="password"><button type="submit">Sign in</button></form>`, false));
     if (u.pathname === "/mfa") return html(page('<div data-testid="mfa-challenge"><input name="otp"></div>', false));
-    if (!authed) { res.writeHead(302, { location: "/login" }); return res.end(); }
+    if (!authed) { res.writeHead(302, { location: "/merchants/login" }); return res.end(); }
 
     if (u.pathname === "/dashboard") return html(page("<h1>Dashboard</h1>", true));
     if (u.pathname === "/rewards/export.csv") {
