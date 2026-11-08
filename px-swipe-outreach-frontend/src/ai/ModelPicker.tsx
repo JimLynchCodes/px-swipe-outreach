@@ -3,6 +3,8 @@ import { Check, ChevronDown, Sparkles } from 'lucide-react'
 import { api } from '../api'
 import { useOptionalAuth } from '../auth/AuthProvider'
 import type { AiModelOption } from '../types'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 export const AI_MODEL_CHANGED = 'ai-model:changed'
 
@@ -43,7 +45,7 @@ export function ModelPicker() {
       setData(await api.aiModels())
       setOpen(false)
       window.dispatchEvent(new Event(AI_MODEL_CHANGED))
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
+    } catch (e) { setError(friendlyError(e)) }
     finally { setSaving(false) }
   }
 
@@ -69,7 +71,7 @@ export function ModelPicker() {
           {data.models.some(m => !m.available) && (
             <p className="muted small model-note">{data.models.find(m => !m.available)?.note}</p>
           )}
-          {error && <p className="error small" role="alert">{error}</p>}
+          <ErrorBubble error={error} />
         </div>
       )}
     </div>

@@ -5,6 +5,8 @@ import { PageShell } from '../components/PageShell'
 import { money, sinceShort } from '../lib/format'
 import { navigate, ROUTES } from '../router'
 import type { CustomerSummary } from '../types'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 /** Customers in this store (newest first). Clicking one opens a fresh suggestion card for them on the deck. */
 export function RegisteredUsersPage() {
@@ -13,21 +15,22 @@ export function RegisteredUsersPage() {
   const [data, setData] = useState<{ items: CustomerSummary[]; total: number; pageSize: number } | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [opening, setOpening] = useState<string | null>(null)
+  const [openErr, setOpenErr] = useState<{ id: string; text: string } | null>(null)
 
   useEffect(() => {
     let live = true
     const t = setTimeout(() => {
-      api.customers.list(search.trim(), page).then(d => { if (live) { setData(d); setErr(null) } }, e => live && setErr(e.message))
+      api.customers.list(search.trim(), page).then(d => { if (live) { setData(d); setErr(null) } }, e => live && setErr(friendlyError(e)))
     }, 200)
     return () => { live = false; clearTimeout(t) }
   }, [search, page])
 
   async function open(c: CustomerSummary) {
-    setOpening(c.id); setErr(null)
+    setOpening(c.id); setOpenErr(null)
     try {
       const opp = await api.customers.open(c.id)
       navigate(`${ROUTES.home}?customer=${encodeURIComponent(opp)}`)
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setOpening(null) }
+    } catch (e) { setOpenErr({ id: c.id, text: friendlyError(e) }); setOpening(null) }
   }
 
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1
@@ -36,7 +39,7 @@ export function RegisteredUsersPage() {
       <section className="panel">
         <input type="search" aria-label="Search customers" placeholder="Search name, phone or email" value={search}
           onChange={e => { setSearch(e.target.value); setPage(1) }} />
-        {err && <p className="error" role="alert">{err}</p>}
+        <ErrorBubble error={err} />
         {!data ? <p className="muted">Loading…</p> : data.items.length === 0 ? <p className="muted">No customers found.</p> : (
           <ul className="rows" aria-label="Customers">
             {data.items.map(c => (
@@ -51,6 +54,7 @@ export function RegisteredUsersPage() {
                   </div>
                 </button>
                 <ChevronRight size={18} className="muted" aria-hidden />
+                {openErr?.id === c.id && <ErrorBubble error={openErr.text} className="row-error" />}
               </li>
             ))}
           </ul>

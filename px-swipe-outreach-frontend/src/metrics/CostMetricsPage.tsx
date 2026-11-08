@@ -5,19 +5,21 @@ import { PageShell } from '../components/PageShell'
 import { compact, monthLabel, usd } from '../lib/format'
 import { MetricCard } from '../components/MetricCard'
 import type { CostReport, ModelCost } from '../types'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 export function CostMetricsPage() {
   const auth = useAuth()
   const canView = auth.role === 'owner' || auth.role === 'admin'
   const [r, setR] = useState<CostReport | null>(null)
   const [err, setErr] = useState<string | null>(null)
-  useEffect(() => { if (canView) api.metrics.costs().then(setR, e => setErr(e.message)) }, [canView])
+  useEffect(() => { if (canView) api.metrics.costs().then(setR, e => setErr(friendlyError(e))) }, [canView])
   const tw = r?.ytd.twilio ?? { costUsd: 0, texts: 0, segments: 0, estimatedTexts: 0, numberFeesUsd: 0 }
   return (
     <PageShell title="Cost metrics" wide
       subtitle={r ? <>AI and Twilio spend for {r.year} · prices v{r.priceTableVersion}{r.demo && <span className="pill demo">includes demo data</span>}</> : 'AI spend per model and month'}>
       {!canView ? <p className="error" role="alert">Only owners and admins can view cost metrics.</p>
-        : err ? <p className="error" role="alert">{err}</p>
+        : err ? <ErrorBubble error={err} />
         : !r ? <p className="muted">Loading…</p>
         : <>
           <section className="panel" aria-label="Year to date">

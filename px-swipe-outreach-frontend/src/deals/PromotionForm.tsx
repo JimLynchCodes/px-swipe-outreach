@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import type { CatalogProduct, DealInput, DealSchedule, DiscountType } from '../types'
 import { categoryLabel, DAYS_SHORT } from '../lib/week'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 export const emptyDeal = (days: number[] = [], schedule: DealSchedule = 'weekly'): DealInput => ({
   schedule, days: schedule === 'range' ? [0, 1, 2, 3, 4, 5, 6] : days, title: '', description: '', discountType: 'percent', discountValue: 10, categories: [], productIds: [],
@@ -40,7 +42,7 @@ export function PromotionForm({ initial, catalog, onSave, onCancel }: Props) {
         discountValue: !needsValue ? null : d.discountType === 'amount' ? Math.round(n * 100) : Math.round(n),
       })
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(friendlyError(err))
       setSaving(false)
     }
   }
@@ -99,11 +101,11 @@ export function PromotionForm({ initial, catalog, onSave, onCancel }: Props) {
         <label>Ends<input type="date" required={d.schedule === 'range'} value={d.endsOn ?? ''} onChange={e => set('endsOn', e.target.value || null)} /></label>
       </div>
       <label className="check"><input type="checkbox" checked={d.active} onChange={e => set('active', e.target.checked)} /> Enabled</label>
-      {error && <p className="error" role="alert">{error}</p>}
       <div className="form-actions">
         <button type="button" className="btn-small" onClick={onCancel}>Cancel</button>
         <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
       </div>
+      <ErrorBubble error={error} />
     </form>
   )
 }

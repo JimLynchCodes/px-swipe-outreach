@@ -6,6 +6,8 @@ import { useAuth } from '../auth/AuthProvider'
 import { LoginPage } from '../auth/LoginPage'
 import { navigate, ROUTES } from '../router'
 import { ROLE_LABEL } from './roles'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 const TOKEN_KEY = 'outreach.inviteToken'
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/
@@ -57,7 +59,7 @@ export function AcceptInvitePage() {
       await auth.refresh()
       finish(r.orgId)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(friendlyError(e))
       setAccepting(false)
     }
   }
@@ -114,7 +116,7 @@ export function AcceptInvitePage() {
             {accepting ? 'Joining…' : <><CheckCircle2 size={16} aria-hidden /> Accept invitation</>}
           </button>
         )}
-        {error && <p className="error" role="alert">{error}</p>}
+        <ErrorBubble error={error} />
         <div className="login-links">
           {auth.mode === 'supabase' && <button type="button" className="link" onClick={() => void auth.signOut()}>Sign out</button>}
           <button type="button" className="link" onClick={() => navigate(ROUTES.home)}>Not now</button>

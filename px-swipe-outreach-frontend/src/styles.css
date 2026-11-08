@@ -352,3 +352,15 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .consent { border: 1px solid var(--line, #e5e7eb); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 .last-contact.recent { font-size: 15px; font-weight: 600; color: var(--red-ink); opacity: 1; }
 .customer-row { cursor: pointer; text-align: left; width: 100%; background: none; border: 0; padding: 0; font: inherit; color: inherit; }
+.error-bubble { display: flex; align-items: flex-start; gap: 6px; margin: 6px 0 0; padding: 8px 12px; border-radius: 12px;
+  background: #fdecec; border: 1px solid #f5b5b5; color: #b42318; font-size: 13px; line-height: 1.35; max-width: 100%; text-align: left; }
+.error-bubble svg { flex: none; margin-top: 1px; }
+.action-wrap { display: flex; flex-direction: column; align-items: stretch; }
+.btn-wrap { display: inline-flex; flex-direction: column; align-items: flex-end; }
+.deal, .row, .seasonal-item { flex-wrap: wrap; }
+.row-error { flex-basis: 100%; }
+.composer-error { margin-left: auto; }
+.modal-error { flex-basis: 100%; justify-content: flex-start; }
+.modal-actions { flex-wrap: wrap; }
+.sync-actions { display: flex; flex-direction: column; align-items: flex-start; }
+.sync-backfill, .sync-schedule { flex-wrap: wrap; }

@@ -6,6 +6,8 @@ import type { Deal, DealInput } from '../types'
 import { categoryLabel, DAYS, discountLabel, formatRange, rangeStatus, todayIndex } from '../lib/week'
 import { emptyDeal, PromotionForm } from './PromotionForm'
 import { toInput, useDeals } from './useDeals'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 /**
  * Weekly slots (Mon–Sun) of deals, specials and promotions. Each slot shows the enabled promotions that run
@@ -17,19 +19,25 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
   const { deals, catalog, error, create, update, remove } = useDeals(onChange)
   const [editing, setEditing] = useState<{ id: string | null; input: DealInput } | null>(null)
   const today = todayIndex()
+  // Failed remove actions show a bubble under that deal's buttons (keyed by deal id + day so only one row shows it).
+  const [actionErr, setActionErr] = useState<{ key: string; text: string } | null>(null)
+  const attempt = async (key: string, fn: () => Promise<unknown>) => {
+    setActionErr(null)
+    try { await fn() } catch (e) { setActionErr({ key, text: friendlyError(e) }) }
+  }
 
   async function removeSeasonal(deal: Deal) {
     if (!window.confirm(`Delete "${deal.title}"? To pause it instead, untick it in Settings → Promotions.`)) return
-    await remove(deal.id)
+    await attempt(`s:${deal.id}`, () => remove(deal.id))
   }
 
   async function removeFromDay(deal: Deal, day: number) {
     if (deal.days.length > 1) {
       if (!window.confirm(`Remove "${deal.title}" from ${DAYS[day]}? It stays on its other days.`)) return
-      await update(deal.id, { ...toInput(deal), days: deal.days.filter(d => d !== day) })
+      await attempt(`${day}:${deal.id}`, () => update(deal.id, { ...toInput(deal), days: deal.days.filter(d => d !== day) }))
     } else {
       if (!window.confirm(`Delete "${deal.title}"? To pause it instead, untick it in Settings → Promotions.`)) return
-      await remove(deal.id)
+      await attempt(`${day}:${deal.id}`, () => remove(deal.id))
     }
   }
 
@@ -37,7 +45,7 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
     <aside className="deals-panel" aria-label="Deals this week">
       <h2 className="panel-title"><CalendarDays size={18} aria-hidden /> Deals this week</h2>
       <p className="muted small">The AI picks the best enabled deal for each customer.</p>
-      {error && <p className="error" role="alert">{error}</p>}
+      <ErrorBubble error={error} />
       {!deals && !error && <p className="muted small">Loading…</p>}
       {editing && (
         <div className="panel-form">
@@ -73,6 +81,7 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
                         <button className="icon-btn sm danger" aria-label={`Remove ${d.title} from ${day}`} onClick={() => void removeFromDay(d, i)}><X size={13} /></button>
                       </span>
                     )}
+                    {actionErr?.key === `${i}:${d.id}` && <ErrorBubble error={actionErr.text} className="row-error" />}
                   </div>
                 ))}
               </li>
@@ -80,7 +89,7 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
           })}
         </ol>
       )}
-      {deals && <SeasonalDeals deals={deals.filter(d => d.schedule === 'range')} canEdit={canEdit}
+      {deals && <SeasonalDeals deals={deals.filter(d => d.schedule === 'range')} canEdit={canEdit} errorFor={id => (actionErr?.key === `s:${id}` ? actionErr.text : null)}
         onAdd={() => setEditing({ id: null, input: emptyDeal([], 'range') })}
         onEdit={d => setEditing({ id: d.id, input: toInput(d) })} onRemove={d => void removeSeasonal(d)} />}
       <button className="btn-small manage-promos" onClick={() => navigate('/settings#promotions')}>
@@ -94,8 +103,8 @@ export function DealsPanel({ onChange }: { onChange?: () => void }) {
  * Longer-running promotions (holiday season, Black Friday weekend, 4/20 week, month-long specials) that apply every
  * day in a date range. Ended ones are hidden here (they stay in Settings → Promotions).
  */
-function SeasonalDeals({ deals, canEdit, onAdd, onEdit, onRemove }: {
-  deals: Deal[]; canEdit: boolean; onAdd: () => void; onEdit: (d: Deal) => void; onRemove: (d: Deal) => void
+function SeasonalDeals({ deals, canEdit, errorFor, onAdd, onEdit, onRemove }: {
+  deals: Deal[]; canEdit: boolean; errorFor: (id: string) => string | null; onAdd: () => void; onEdit: (d: Deal) => void; onRemove: (d: Deal) => void
 }) {
   const items = deals
     .map(d => ({ d, status: rangeStatus(d.startsOn, d.endsOn) }))
@@ -128,6 +137,7 @@ function SeasonalDeals({ deals, canEdit, onAdd, onEdit, onRemove }: {
                 <button className="icon-btn sm danger" aria-label={`Delete ${d.title}`} onClick={() => onRemove(d)}><Trash2 size={13} /></button>
               </span>
             )}
+            <ErrorBubble error={errorFor(d.id)} className="row-error" />
           </li>
         ))}
       </ul>

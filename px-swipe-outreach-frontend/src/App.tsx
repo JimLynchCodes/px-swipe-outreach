@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeft, ArrowRight, PartyPopper, RotateCcw } from 'lucide-react'
 import { api, ApiError, newIdempotencyKey } from './api'
+import { ErrorBubble } from './components/ErrorBubble'
+import { friendlyError, useApiAction } from './lib/errors'
 import { Header } from './components/Header'
 import { CustomerCard, type CardDraft } from './components/CustomerCard'
 import { DealsPanel } from './deals/DealsPanel'
@@ -27,7 +29,10 @@ export default function App() {
   const [load, setLoad] = useState<Load>({ state: 'loading' })
   const [draft, setDraft] = useState<CardDraft | null>(null)
   const [busy, setBusy] = useState<'skip' | 'send' | null>(null)
-  const [toast, setToast] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [toast, setToast] = useState<{ kind: 'ok'; text: string } | null>(null)
+  /** Error from the last deck action, shown in a bubble under that button. Cleared on retry, success or a new card. */
+  const [actionError, setActionError] = useState<{ action: 'skip' | 'send' | 'optout'; text: string } | null>(null)
+  const fail = (action: 'skip' | 'send' | 'optout', text: string) => { setDragX(0); setActionError({ action, text }) }
   const [dragX, setDragX] = useState(0)
   const [leaving, setLeaving] = useState<'left' | 'right' | null>(null)
   const drag = useRef<{ x: number; id: number } | null>(null)
@@ -51,7 +56,7 @@ export default function App() {
       setDone(0)
       setLoad({ state: 'ready' })
     } catch (e) {
-      setLoad({ state: 'error', message: e instanceof Error ? e.message : String(e) })
+      setLoad({ state: 'error', message: friendlyError(e) })
     }
   }, [])
 
@@ -77,12 +82,13 @@ export default function App() {
       setDraft(d => d && { ...d, suggestion: s, message: s.message, subject: s.subject ?? '', loading: false, error: null, editing: false })
     } catch (e) {
       if (seq !== suggestionSeq.current) return
-      setDraft(d => d && { ...d, loading: false, error: e instanceof Error ? e.message : String(e) })
+      setDraft(d => d && { ...d, loading: false, error: friendlyError(e) })
     }
   }, [])
 
   // New top card → fresh draft + suggestion + idempotency key.
   useEffect(() => {
+    setActionError(null)
     if (!current) { setDraft(null); return }
     if (settings === undefined) return // wait for the default channel
     const d = initialDraft(current, settings?.defaultChannel ?? null)
@@ -109,35 +115,31 @@ export default function App() {
 
   const skip = useCallback(async () => {
     if (!current || busy) return
-    setBusy('skip')
+    setBusy('skip'); setActionError(null)
     try {
       await api.skip(current.id)
       advance('left')
     } catch (e) {
-      setDragX(0)
-      setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+      fail('skip', friendlyError(e))
     } finally { setBusy(null) }
   }, [current, busy, advance])
 
   const send = useCallback(async () => {
     if (!current || !draft || busy) return
     if (draft.editing) { // unsaved edits: never send (covers button, swipe and → key)
-      setDragX(0)
-      setToast({ kind: 'err', text: 'Click Done or Cancel to send' })
+      fail('send', 'Click Done or Cancel to send')
       return
     }
     const reachable = draft.channel === 'sms' ? current.customer.contact.sms : current.customer.contact.email
     if (current.customer.contact.blockedReason === 'age_unverified') {
-      setDragX(0)
-      setToast({ kind: 'err', text: 'Verify this customer is 21+ before sending' })
+      fail('send', 'Verify this customer is 21+ before sending')
       return
     }
     if (!reachable || !draft.message.trim()) {
-      setDragX(0)
-      setToast({ kind: 'err', text: !reachable ? 'Customer cannot be reached on this channel' : 'Message is empty' })
+      fail('send', !reachable ? 'Customer cannot be reached on this channel' : 'Message is empty')
       return
     }
-    setBusy('send')
+    setBusy('send'); setActionError(null)
     try {
       const r = await api.send(current.id, {
         channel: draft.channel, message: draft.message.trim(),
@@ -148,9 +150,9 @@ export default function App() {
       setToast({ kind: 'ok', text: r.status === 'queued' ? `Queued for ${current.customer.firstName}` : `Sent to ${current.customer.firstName}` })
       advance('right')
     } catch (e) {
-      setDragX(0)
       const already = e instanceof ApiError && e.status === 409
-      setToast({ kind: 'err', text: already ? 'This customer was already contacted' : e instanceof Error ? e.message : String(e) })
+      if (already) setToast({ kind: 'ok', text: 'This customer was already contacted' })
+      else fail('send', friendlyError(e))
       if (already) advance('right')
     } finally { setBusy(null) }
   }, [current, draft, busy, advance])
@@ -160,13 +162,13 @@ export default function App() {
     const ch = draft?.channel ?? 'sms'
     const what = ch === 'sms' ? 'texts' : 'emails'
     if (!window.confirm(`Stop ${what} to ${current.customer.firstName}? Their ${ch === 'sms' ? 'number' : 'address'} goes on the opt-out list.`)) return
-    setBusy('skip')
+    setBusy('skip'); setActionError(null)
     try {
       await api.optOut(current.id, ch)
       setToast({ kind: 'ok', text: `${current.customer.firstName} won't get ${what} again` })
       advance('left')
     } catch (e) {
-      setToast({ kind: 'err', text: e instanceof Error ? e.message : String(e) })
+      fail('optout', friendlyError(e))
     } finally { setBusy(null) }
   }, [current, busy, advance, draft?.channel])
 
@@ -210,6 +212,7 @@ export default function App() {
     return () => window.removeEventListener(AI_MODEL_CHANGED, onModel)
   }, [onDealsChanged])
 
+  const reset = useApiAction(() => api.resetDemo().then(() => true))
   const blocked = current?.customer.contact.blockedReason ?? null
   const position = done + 1
   const offset = leaving === 'left' ? -600 : leaving === 'right' ? 600 : dragX
@@ -222,9 +225,9 @@ export default function App() {
       <main className="deck-area">
         {load.state === 'loading' && <div className="state">Loading customers…</div>}
         {load.state === 'error' && (
-          <div className="state" role="alert">
-            <p>{load.message}</p>
+          <div className="state">
             <button className="btn-secondary" onClick={() => void loadQueue()}><RotateCcw size={16} /> Try again</button>
+            <ErrorBubble error={load.message} />
           </div>
         )}
         {load.state === 'ready' && !current && (
@@ -232,9 +235,10 @@ export default function App() {
             <PartyPopper size={40} className="green" />
             <h2>All caught up!</h2>
             <p className="muted">You reviewed {done} customer{done === 1 ? '' : 's'}.</p>
-            <button className="btn-secondary" onClick={async () => { await api.resetDemo().catch(() => {}); await loadQueue() }}>
+            <button className="btn-secondary" disabled={reset.busy} onClick={async () => { if ((await reset.run()) !== undefined) await loadQueue() }}>
               <RotateCcw size={16} /> Reset demo data
             </button>
+            <ErrorBubble error={reset.error} />
           </div>
         )}
         {load.state === 'ready' && current && draft && (
@@ -265,13 +269,19 @@ export default function App() {
 
       {load.state === 'ready' && current && (
         <footer className="actions">
+          <div className="action-wrap">
           <button className="action skip" onClick={() => void skip()} disabled={!!busy} aria-label="Skip customer">
             <span className="circle"><ArrowLeft size={22} /></span><span>{busy === 'skip' ? 'Skipping…' : 'Skip'}</span>
           </button>
+          <ErrorBubble error={actionError?.action === 'skip' ? actionError.text : null} />
+          </div>
+          <div className="action-wrap">
           <button className="action send" onClick={() => void send()} disabled={!!busy || !draft?.suggestion || !!blocked || !!draft?.editing} aria-label="Send message"
             title={draft?.editing ? 'Click Done or Cancel to send' : undefined}>
             <span>{busy === 'send' ? 'Sending…' : 'Send'}</span><span className="circle"><ArrowRight size={22} /></span>
           </button>
+          <ErrorBubble error={actionError?.action === 'send' ? actionError.text : null} />
+          </div>
         </footer>
       )}
       {load.state === 'ready' && current && (
@@ -279,6 +289,7 @@ export default function App() {
           Customer opted out? Stop {draft?.channel === 'email' ? 'emails' : 'texts'}
         </button>
       )}
+      {load.state === 'ready' && current && <ErrorBubble className="optout-error" error={actionError?.action === 'optout' ? actionError.text : null} />}
       {load.state === 'ready' && current && (
         <div className="dots" aria-hidden>
           {[0, 1, 2].map(i => <span key={i} className={i === done % 3 ? 'on' : ''} />)}
