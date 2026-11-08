@@ -78,7 +78,8 @@ export function toOrders(rows: Record<string, string>[], tz?: string): Order[] {
       const at = toIso(r.date, tz);
       if (!at) continue;
       o = { externalId: r.orderId, at, customer: { externalId: r.id || null, name: r.name || null, phone: normalizePhone(r.phone), email: normalizeEmail(r.email) },
-        items: [], subtotalCents: toCents(r.subtotal), discountCents: Math.abs(toCents(r.orderDiscount)), totalCents: toCents(r.total), paymentMethod: r.payment || null };
+        items: [], subtotalCents: toCents(r.subtotal), discountCents: Math.abs(toCents(r.orderDiscount)), totalCents: toCents(r.total), paymentMethod: r.payment || null,
+        ...(/refund/i.test(r.status ?? "") ? { refunded: true } : {}) };
       orders.set(r.orderId, o);
     }
     if (r.item) o.items.push({ name: r.item, sku: r.sku || null, category: r.category || null, brand: r.brand || null,

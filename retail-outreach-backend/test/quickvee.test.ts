@@ -1,6 +1,6 @@
 /**
  * Quickvee scraper against the local mock portal with a real Chromium (Playwright). Skipped when no Chromium is found
- * (set QUICKVEE_CHROMIUM_PATH). Covers CSV export, crawl fallback (pagination + order detail pages), session reuse,
+ * (set QUICKVEE_CHROMIUM_PATH). Covers rewards CSV export, the orders crawler (via the sync job), session reuse,
  * MFA stop, bad credentials, and that credentials never reach the run log.
  */
 import { mkdtempSync, existsSync, readdirSync } from "node:fs";
@@ -22,10 +22,10 @@ describe.skipIf(!chromium && !process.env.CI)("Quickvee scraper (mock portal, re
   beforeAll(async () => { portal = await startMockPortal({ pageSize: 2 }); });
   afterAll(async () => { await portal?.close(); });
 
-  const run = async (job: "quickvee-rewards" | "quickvee-orders", o: { url?: string; stateDir?: string; password?: string; params?: Record<string, unknown>; repo?: MemorySyncRepo } = {}) => {
+  const run = async (job: "quickvee-rewards" | "quickvee-orders", o: { url?: string; stateDir?: string; password?: string; params?: Record<string, unknown>; repo?: MemorySyncRepo; env?: Record<string, string> } = {}) => {
     const stateDir = o.stateDir ?? mkdtempSync(path.join(tmpdir(), "qv-"));
     const config = loadConfig({ NODE_ENV: "test", QUICKVEE_STORE_NAME: MOCK_USER.storeName, QUICKVEE_USERNAME: MOCK_USER.username, QUICKVEE_PASSWORD: o.password ?? MOCK_USER.password, QUICKVEE_BASE_URL: o.url ?? portal.url,
-      QUICKVEE_STATE_DIR: stateDir, QUICKVEE_MIN_DELAY_MS: "0", QUICKVEE_CHUNK_DAYS: "31", ...(chromium ? { QUICKVEE_CHROMIUM_PATH: chromium } : {}) });
+      QUICKVEE_STATE_DIR: stateDir, QUICKVEE_MIN_DELAY_MS: "0", QUICKVEE_CHUNK_DAYS: "31", QUICKVEE_STALL_SECONDS: "5", ...o.env, ...(chromium ? { QUICKVEE_CHROMIUM_PATH: chromium } : {}) });
     const repo = o.repo ?? new MemorySyncRepo();
     const runner = new SyncRunner(repo, config, { now: () => new Date("2026-11-07T17:00:00Z") });
     const r = await runner.start({ orgId: ORG, job, trigger: "manual", params: o.params });
@@ -50,29 +50,33 @@ describe.skipIf(!chromium && !process.env.CI)("Quickvee scraper (mock portal, re
     expect(JSON.stringify(r.log)).not.toContain(MOCK_USER.storeName);
   }, 60_000);
 
-  it("orders: date-range backfill via CSV, walk-ins skipped, watermark untouched by backfill", async () => {
+  it("orders: date-range backfill via the Orders Management crawler; walk-ins skipped, watermark untouched by backfill", async () => {
     const { repo, run: r } = await run("quickvee-orders", { params: { from: "2026-09-01", to: "2026-11-07" } });
     expect(r.status, r.error ?? "").toBe("succeeded");
     const orders = [...repo.orders.values()];
-    expect(orders.map(o => o.externalId).sort()).toEqual(["O-8800", "O-9001"]);
-    const o = orders.find(x => x.externalId === "O-9001")!;
+    expect(orders.map(o => o.externalId).sort()).toEqual(["0A1B2C3D4E5F6071", "F3E37BE717735EA1"]); // in-store; the walk-in has no customer
+    const o = orders.find(x => x.externalId === "F3E37BE717735EA1")!;
     expect(o).toMatchObject({ totalCents: 2000, discountCents: 100, paymentMethod: "Card", at: "2026-11-02T15:15:00.000Z" });
-    expect(o.items.map(i => i.category)).toEqual(["Cigars", "Papers"]);
+    expect(o.items.map(i => [i.name, i.quantity, i.unitPriceCents, i.category])).toEqual([["Arturo Fuente Hemingway", 2, 950, "Cigars"], ["Zig-Zag Papers", 1, 200, "Papers"]]);
     expect(await repo.getWatermark(ORG, "quickvee-orders")).toBeNull();
   }, 60_000);
 
-  it("crawl fallback when there's no export: paginates and opens order detail pages", async () => {
+  it("orders: incremental run advances the watermark; QUICKVEE_ORDER_LIMIT stops early and holds it", async () => {
+    const od = await run("quickvee-orders");
+    expect(od.run.status, od.run.error ?? "").toBe("succeeded");
+    expect(await od.repo.getWatermark(ORG, "quickvee-orders")).toBe("2026-11-07");
+    const lim = await run("quickvee-orders", { env: { QUICKVEE_ORDER_LIMIT: "1" }, params: { from: "2026-09-01", to: "2026-11-07" } });
+    expect(lim.run.status, lim.run.error ?? "").toBe("succeeded");
+    expect(lim.repo.orders.size).toBe(1);
+  }, 60_000);
+
+  it("rewards crawl fallback when there's no export: paginates the table", async () => {
     const crawl = await startMockPortal({ csv: false, pageSize: 1 });
     try {
       const rw = await run("quickvee-rewards", { url: crawl.url });
       expect(rw.run.status, rw.run.error ?? "").toBe("succeeded");
       expect(rw.repo.customers.size).toBe(3);
       expect(crawl.requests.filter(q => q.startsWith("GET /rewards?page=")).length).toBe(3);
-      const od = await run("quickvee-orders", { url: crawl.url });
-      expect(od.run.status, od.run.error ?? "").toBe("succeeded");
-      const o = [...od.repo.orders.values()].find(x => x.externalId === "O-9001")!;
-      expect(o.items.map(i => [i.name, i.quantity, i.unitPriceCents, i.brand])).toEqual([["Arturo Fuente Hemingway", 2, 950, "Arturo Fuente"], ["Zig-Zag Papers", 1, 200, "Zig-Zag"]]);
-      expect(await od.repo.getWatermark(ORG, "quickvee-orders")).toBe("2026-11-07"); // incremental run advances it
     } finally { await crawl.close(); }
   }, 60_000);
 

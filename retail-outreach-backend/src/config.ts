@@ -129,7 +129,13 @@ const schema = z.object({
   /** @deprecated alias for QUICKVEE_USERNAME (older setups signed in with an email). */
   QUICKVEE_EMAIL: z.string().min(3).optional(),
   QUICKVEE_PASSWORD: z.string().min(1).optional(),
-  QUICKVEE_BASE_URL: z.string().url().default("https://merchant.quickvee.com"),
+  QUICKVEE_BASE_URL: z.string().url().default("https://quickvee.com"),
+  /** Scheduled orders sync: stop after this many orders per run (0/empty = all). The CLI uses --limit. */
+  QUICKVEE_ORDER_LIMIT: z.preprocess(v => (v === "" ? undefined : v), z.coerce.number().int().min(0).default(0)),
+  /** in-store (default), online, or both: which Orders Management tab(s) to crawl. */
+  QUICKVEE_ORDER_CHANNEL: z.enum(["in-store", "online", "both"]).default("in-store"),
+  /** Stop scrolling when no new order blocks appear for this long. */
+  QUICKVEE_STALL_SECONDS: z.coerce.number().int().min(3).max(600).default(30),
   /** Session cookies + raw snapshots (gitignored; contains PII). */
   QUICKVEE_STATE_DIR: z.string().default(".quickvee"),
   QUICKVEE_HEADLESS: z.preprocess(v => v === undefined || v === "" ? undefined : !["false", "0", "no"].includes(String(v).toLowerCase()), z.boolean().default(true)),

@@ -58,8 +58,17 @@ npm run sync:quickvee:orders -- --from 2023-01-01 --to 2023-12-31   # deep backf
 - **Login selectors.** Each field is found by its label ("Store name", "Username", "Password"), then its placeholder, then its `name`/`id` (`QV.login` in `src/sync/quickvee/selectors.ts`). Small markup changes therefore don't break the login.
 - **Session.** Cookies persist in `QUICKVEE_STATE_DIR/session.json` (default `.quickvee/`, gitignored and dockerignored). The Docker image uses `/app/.quickvee`; mount a volume there.
 - **MFA.** A headless run stops with a clear error. Run once headed (below), complete MFA in the browser, and the session is saved.
-- **Polite.** At most one navigation per `QUICKVEE_MIN_DELAY_MS` (1500 ms). Orders go in `QUICKVEE_CHUNK_DAYS` windows (7).
-- **CSV first, crawl fallback.** If the page has an export control, the job downloads the CSV. Otherwise it crawls the table, follows pagination, and opens each order's detail page for line items. Header aliases cover common export column names (`src/sync/quickvee/selectors.ts` → `CSV_ALIASES`).
+- **Polite.** At most one navigation per `QUICKVEE_MIN_DELAY_MS` (1500 ms). The scheduled orders sync goes in `QUICKVEE_CHUNK_DAYS` windows (7); the CLI uses the portal's 1-year maximum.
+- **Rewards: CSV first, crawl fallback.** If the rewards page has an export control, the job downloads the CSV; otherwise it crawls the table and follows pagination.
+- **Orders: the Orders Management crawler** (`src/sync/quickvee/orderCrawler.ts`), used by both the `quickvee-orders` job and `scrape:quickvee:orders`. There's no usable export, so it:
+  1. opens `https://quickvee.com/merchants/order-new` and clicks the **In-Store** tab (or **Online**; `QUICKVEE_ORDER_CHANNEL` / `--channel`, `both` does In-Store then Online);
+  2. types the range into **Start Date** / **End Date** (`MM/DD/YYYY`), falling back to setting the input value with change events if typing doesn't stick; ranges over 1 year are split;
+  3. waits for the list to refresh and reads the expected count from "Showing N orders";
+  4. scrolls the infinite list (window and any scrollable container) until it has N blocks, or nothing new loads for `QUICKVEE_STALL_SECONDS` (30s; logs a warning when short of N);
+  5. clicks **Show Items** on each block and reads order ID, date/time, customer (Walk-In Customer = no customer), total, payment, the Refunded badge and line items (name, qty, price);
+  6. also reads any JSON responses the page loads that contain order-like objects (matched by order ID) for phone, email, SKU, category and brand. The first 3 bodies are saved to `QUICKVEE_STATE_DIR/raw/` for calibration.
+  Orders are de-duplicated by order ID. `QUICKVEE_ORDER_LIMIT` (scheduled sync) / `--limit` (CLI) stop after N orders; the default is all. A run cut short by the limit doesn't advance the incremental watermark.
+- Header aliases for CSV imports cover common export column names (`src/sync/quickvee/selectors.ts` → `CSV_ALIASES`).
 - **Raw snapshots.** CSVs are kept in `QUICKVEE_STATE_DIR/raw/` (PII, gitignored). Set `QUICKVEE_SAVE_RAW=false` to skip them.
 - **Normalization.** Phones go to E.164 (US) and emails to lowercase. Portal dates are store-local and converted with the store timezone. Customers are matched by external id (`qv:<id>`), then phone (last 10 digits), then email. Walk-in orders with no contact are skipped and counted in the log. After orders load, each touched customer's profile is recomputed from real history: lifetime spend, last purchase, AOV, visits/month (last 90 days), typical weekday and time of day, and top categories and brands.
 
@@ -69,31 +78,35 @@ The real portal's markup isn't documented. Every selector and path lives in `src
 
 1. On a machine with a display: `cd retail-outreach-backend && QUICKVEE_HEADLESS=false QUICKVEE_MIN_DELAY_MS=3000 npm run sync -- quickvee-rewards --dry-run` (with `QUICKVEE_STORE_NAME`/`QUICKVEE_USERNAME`/`QUICKVEE_PASSWORD`/`QUICKVEE_BASE_URL` in your env file).
 2. Watch the login. If it stalls, inspect the page (DevTools) and update `QV.login.*`, `QV.loggedIn` and `QV.paths.*`. Complete MFA if asked; the session is then saved.
-3. On the rewards and orders pages, check that `QV.exportCsv` matches the export button. If there's no export, set the table, row and `data-col` cell selectors and `QV.nextPage`.
+3. On the rewards page, check `QV.exportCsv` (or the table selectors and `QV.nextPage`). On Orders Management, check `QV.ordersPage`: the tab names, the Start/End Date inputs, the "Showing N orders" text, the order-ID pattern, and the Show Items / View Details button text. Order blocks are found by content (an order-ID line plus a View Details button), not by class names. Look at `QUICKVEE_STATE_DIR/raw/orders-api-*.json` to see what the list API returns.
 4. Re-run with `--dry-run` until the run log shows the expected row counts, then update the mock portal to match and run `npm test`.
 
-Try the scraper locally against the mock: `npm run quickvee:mock` (http://localhost:4799, `demo@store.test` / `correct-horse`; `MFA=1` and `CSV=0` switch modes), then point `QUICKVEE_BASE_URL` at it.
+Try the scraper locally against the mock: `npm run quickvee:mock` (http://localhost:4799, store `cloud9-qv-store`, `qv-user-7731` / `correct-horse`; `MFA=1` and `CSV=0` switch modes), then point `QUICKVEE_BASE_URL` at it. The mock mirrors Orders Management at `/merchants/order-new` (tabs, date inputs, infinite scroll, Show Items, View Details).
 
 ### Order history to CSV (`scrape:quickvee:orders`)
 
-`npm run scrape:quickvee:orders -- --from 2026-01-01 --to 2026-11-07 --out orders.csv` (run from `retail-outreach-backend`):
+```bash
+cd retail-outreach-backend
+npx tsx --env-file=.env.local src/orders/scrapeCli.ts --from 2026-01-01 --to 2026-10-31 --out orders.csv --headed
+# same thing via npm, with the QUICKVEE_* vars in .env: npm run scrape:quickvee:orders -- --from 2026-01-01 --to 2026-10-31 --out orders.csv
+```
 
-- It logs into Quickvee with the same Playwright scraper as the `quickvee-orders` sync job: CSV export first, table crawl fallback, saved session, MFA stop, rate limit, and `QUICKVEE_CHUNK_DAYS` windows.
-- It writes the order history to a CSV in exactly the format **Data sync → Manually add (order history)** accepts. Nothing is written to the database; upload the file to import it.
+- Logs in (saved session, MFA stop) and runs the Orders Management crawler above, newest first.
+- Writes a CSV in exactly the format **Data sync → Manually add → Order history** accepts: one row per line item (one row when an order has no items), plus a `Status` column (`Refunded`). Nothing goes to the database; upload the file.
+- **Writes as it goes.** If it crashes, re-run the same command with `--resume`: orders already in the file are skipped and the crawl restarts from the oldest saved day. Files roll over to `orders.part2.csv`, `orders.part3.csv`, … before the import's 50,000-row upload limit; upload each.
+- Progress goes to stderr; the summary to stdout.
 - Flags:
-  - `--from` defaults to 30 days before `--to`
-  - `--to` defaults to today
-  - `--out` defaults to `quickvee-orders-<from>_<to>.csv`
-  - `--tz` is the store timezone for portal dates (default `America/New_York`)
-  - `--headed` shows the browser
-- Credentials come from the environment, e.g. `npx tsx --env-file=.env.local src/orders/scrapeCli.ts …`, or put `QUICKVEE_STORE_NAME`, `QUICKVEE_USERNAME`, `QUICKVEE_PASSWORD` and `QUICKVEE_BASE_URL` in your shell.
-- **First run on the real portal (headed calibration):**
-  1. Run `npm run scrape:quickvee:orders -- --from 2026-11-01 --to 2026-11-07 --out test.csv --headed` with `QUICKVEE_MIN_DELAY_MS=3000` on a machine with a display.
-  2. Complete MFA if asked; the session is saved in `QUICKVEE_STATE_DIR`.
-  3. If login or the orders page stalls, fix `src/sync/quickvee/selectors.ts` as described in *Calibrating Quickvee selectors* above.
-  4. Repeat until `test.csv` has the expected orders.
-  5. Later runs can be headless.
-- **Try it against the mock:** run `npm run quickvee:mock`, then `QUICKVEE_BASE_URL=http://localhost:4799 QUICKVEE_STORE_NAME=cloud9-qv-store QUICKVEE_USERNAME=qv-user-7731 QUICKVEE_PASSWORD=correct-horse npm run scrape:quickvee:orders -- --from 2026-09-01 --to 2026-11-07 --out orders.csv`. `test/scrape-orders.test.ts` covers both the CSV export and crawl modes, checks the output is accepted by the import, and runs the CLI.
+  - `--from` / `--to`: `YYYY-MM-DD`, default `2026-01-01` → `2026-10-31`
+  - `--out`: default `quickvee-orders-<from>_<to>.csv`
+  - `--channel in-store|online|both`: default `in-store`
+  - `--limit N`: stop after N orders (default: all). Handy for a first test run: `--limit 1000`
+  - `--resume`: continue an interrupted run
+  - `--details`: open **View Details** for each named customer to read phone/email (slow, one click per order; skip it for 21k orders unless needed)
+  - `--headed`: show the browser
+  - `--tz`: store timezone for portal dates (default `America/New_York`)
+- Rate limit: one navigation/scroll step per `QUICKVEE_MIN_DELAY_MS` (1500 ms). 21,000 orders take a while; use `--limit` for a trial first.
+- **First run on the real portal:** run with `--headed --limit 50` and watch it. If the date inputs, tab or blocks aren't found, it stops with a message naming the field; adjust `QV.ordersPage` in `src/sync/quickvee/selectors.ts`.
+- **Try it against the mock:** `npm run quickvee:mock`, then `QUICKVEE_BASE_URL=http://localhost:4799 QUICKVEE_STORE_NAME=cloud9-qv-store QUICKVEE_USERNAME=qv-user-7731 QUICKVEE_PASSWORD=correct-horse npm run scrape:quickvee:orders -- --from 2026-09-01 --to 2026-11-07 --out orders.csv`. `test/scrape-orders.test.ts` covers JSON and DOM-only list modes, both channels, `--limit`, `--resume`, file rollover and the CLI.
 - The output contains customer PII. Keep it out of git (`*.csv` in the backend is gitignored except test fixtures).
 
 ### Runtime

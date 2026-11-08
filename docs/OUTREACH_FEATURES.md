@@ -340,8 +340,10 @@ Clicking a customer calls `POST /api/customers/:id/open`, which returns their op
 **Data sync → Order history from a file → Manually add** uploads an order-history CSV, one row per line item with the order columns repeated:
 
 ```
-Order ID,Date,Customer ID,Customer name,Phone,Email,Item,SKU,Category,Brand,Qty,Unit price,Item discount,Order discount,Subtotal,Total,Payment
+Order ID,Date,Customer ID,Customer name,Phone,Email,Item,SKU,Category,Brand,Qty,Unit price,Item discount,Order discount,Subtotal,Total,Payment,Status
 ```
+
+`Status` is optional; `Refunded` marks a refunded order.
 
 This is exactly what `npm run scrape:quickvee:orders` writes (see `docs/DATA_SYNC.md`). Other exports work when their headers match the Quickvee aliases (`CSV_ALIASES`). Dates may be ISO or store-local (`11/03/2026 3:04 PM`).
 
