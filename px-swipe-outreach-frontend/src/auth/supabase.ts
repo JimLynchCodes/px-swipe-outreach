@@ -8,7 +8,7 @@ export function assertPublicKey(k: string): void {
   if (parts.length === 3) {
     try {
       const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')))
-      if (payload?.role === 'service_role') throw new Error('VITE_SUPABASE_ANON_KEY is the service_role key. Use the anon key.')
+      if (payload?.role === 'service_role') throw new Error('The Supabase key is the service_role key. Use the publishable key (sb_publishable_).')
     } catch (e) {
       if (e instanceof Error && e.message.includes('service_role')) throw e
     }
@@ -35,5 +35,5 @@ export function resolveAuthConfig(): AuthConfig {
     }
   }
   if (demoAllowed) return { mode: 'demo' }
-  return { mode: 'misconfigured', reason: 'VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY) are not set for this build.' }
+  return { mode: 'misconfigured', reason: 'VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (legacy: VITE_SUPABASE_ANON_KEY) are not set for this build.' }
 }

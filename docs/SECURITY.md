@@ -3,7 +3,7 @@
 ## Secrets
 | Secret | Where it lives | Never in |
 |---|---|---|
-| Supabase secret key `sb_secret_…` or legacy `service_role` key (`SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY`) | backend env, only when `INVITE_MAILER=supabase`; used only for the Auth invite/magic-link endpoints, never for data queries | frontend, git, logs |
+| Supabase secret key `sb_secret_…` or legacy `service_role` key (`SUPABASE_SECRET_KEY`, legacy alias `SUPABASE_SERVICE_ROLE_KEY`) | backend env, only when `INVITE_MAILER=supabase`; used only for the Auth invite/magic-link endpoints, never for data queries | frontend, git, logs |
 | `DATABASE_URL` (DB password) | backend/worker env | frontend, git, logs |
 | `SUPABASE_JWT_SECRET` (legacy HS256 only) | backend env | frontend |
 | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, SMS/email provider keys | backend env | frontend |

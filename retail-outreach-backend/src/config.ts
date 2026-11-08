@@ -84,9 +84,9 @@ const schema = z.object({
   /** console = log the invite link (dev); supabase = Supabase Auth sends the email (needs the service role key). */
   INVITE_MAILER: z.enum(["console", "supabase"]).default("console"),
   /** BACKEND SECRET. Only used to call the Supabase Auth admin API for invites. Never expose to the frontend. */
-  // Accepts the legacy service_role JWT or the new secret key (sb_secret_…). SUPABASE_SECRET_KEY is an alias.
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
+  /** The secret key (sb_secret_…). SUPABASE_SERVICE_ROLE_KEY is the legacy alias (old service_role JWT); this one wins. */
   SUPABASE_SECRET_KEY: z.string().min(20).optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
   INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(168),
   INVITE_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
   INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60),
@@ -143,7 +143,7 @@ const schema = z.object({
   if (c.DATA_STORE === "postgres" && !c.DATABASE_URL) issue("DATABASE_URL", "required when DATA_STORE=postgres");
   if (c.INVITE_MAILER === "supabase") {
     if (!c.SUPABASE_URL) issue("SUPABASE_URL", "required when INVITE_MAILER=supabase");
-    if (!c.SUPABASE_SERVICE_ROLE_KEY && !c.SUPABASE_SECRET_KEY) issue("SUPABASE_SERVICE_ROLE_KEY", "required when INVITE_MAILER=supabase (or set SUPABASE_SECRET_KEY)");
+    if (!c.SUPABASE_SERVICE_ROLE_KEY && !c.SUPABASE_SECRET_KEY) issue("SUPABASE_SECRET_KEY", "required when INVITE_MAILER=supabase (or the legacy SUPABASE_SERVICE_ROLE_KEY)");
   }
   if (c.EMAIL_PROVIDER === "smtp") {
     if (!c.SMTP_HOST) issue("SMTP_HOST", "required when EMAIL_PROVIDER=smtp");
@@ -175,7 +175,7 @@ const schema = z.object({
 }).transform(c => ({
   ...c,
   ENABLE_DEMO_RESET: c.ENABLE_DEMO_RESET ?? c.NODE_ENV !== "production",
-  SUPABASE_SERVICE_ROLE_KEY: c.SUPABASE_SERVICE_ROLE_KEY ?? c.SUPABASE_SECRET_KEY,
+  SUPABASE_SERVICE_ROLE_KEY: c.SUPABASE_SECRET_KEY ?? c.SUPABASE_SERVICE_ROLE_KEY,
   QUICKVEE_USERNAME: c.QUICKVEE_USERNAME ?? c.QUICKVEE_EMAIL,
   SUPABASE_URL: c.SUPABASE_URL?.replace(/\/+$/, ""),
   APP_URL: c.APP_URL.replace(/\/+$/, ""),

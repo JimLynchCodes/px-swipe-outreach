@@ -1,14 +1,15 @@
 # docker build -f px-swipe-outreach-frontend/Dockerfile \
 #   --build-arg VITE_SUPABASE_URL=... --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=... -t outreach-web .
-# VITE_* values are PUBLIC (baked into the bundle). Never pass the service_role key.
+# VITE_* values are PUBLIC (baked into the bundle). Never pass a secret (sb_secret_…) or service_role key.
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY px-swipe-outreach-frontend/package.json px-swipe-outreach-frontend/package-lock.json ./
 RUN npm ci
 COPY px-swipe-outreach-frontend/ ./
 ARG VITE_SUPABASE_URL=
-ARG VITE_SUPABASE_ANON_KEY=
 ARG VITE_SUPABASE_PUBLISHABLE_KEY=
+# Legacy alias for the publishable key.
+ARG VITE_SUPABASE_ANON_KEY=
 ARG VITE_API_BASE_URL=
 ARG VITE_DEMO_MODE=
 RUN npm run build

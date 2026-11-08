@@ -25,7 +25,7 @@ describe("config: Supabase key formats", () => {
       .toBe("sb_secret_abcdefghijklmnopqrstuvwxyz012345");
   });
   it("still requires a key for Supabase invites", () => {
-    expect(() => loadConfig(invites)).toThrow(/SUPABASE_SERVICE_ROLE_KEY/);
+    expect(() => loadConfig(invites)).toThrow(/SUPABASE_SECRET_KEY/);
   });
   it("does not require DATABASE_CA_CERT", () => {
     expect(loadConfig({ ...base, DATA_STORE: "postgres", DATABASE_URL: "postgres://u:p@localhost:5432/db" }).DATABASE_CA_CERT).toBeUndefined();

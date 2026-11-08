@@ -6,8 +6,8 @@ The app uses **Supabase Auth** for sign-in and **Supabase Postgres** for data, w
 1. Create a project at <https://supabase.com/dashboard>.
 2. **Project URL**: shown under **Project Settings → Data API** (also in the **Connect** dialog). Use it for `SUPABASE_URL` / `VITE_SUPABASE_URL`.
 3. **Project Settings → API Keys**:
-   - **Publishable key** (`sb_publishable_…`) → frontend `VITE_SUPABASE_PUBLISHABLE_KEY`. The legacy **anon** key (under the *Legacy API keys* tab) also works, in `VITE_SUPABASE_ANON_KEY`.
-   - **Secret key** (`sb_secret_…`) → backend `SUPABASE_SECRET_KEY` (or `SUPABASE_SERVICE_ROLE_KEY`), only needed for invite emails. The legacy **service_role** key also works.
+   - **Publishable key** (`sb_publishable_…`) → frontend `VITE_SUPABASE_PUBLISHABLE_KEY`. Legacy: the **anon** key (*Legacy API keys* tab) still works via the alias `VITE_SUPABASE_ANON_KEY`.
+   - **Secret key** (`sb_secret_…`) → backend `SUPABASE_SECRET_KEY`, only needed for invite emails. Legacy: the **service_role** key still works via the alias `SUPABASE_SERVICE_ROLE_KEY`.
 4. **Connect** (top bar) → **Connection string**: copy the URI for the backend `DATABASE_URL` (Supavisor session `:5432` or transaction `:6543`).
 5. Optional: **Project Settings → Database → SSL Configuration** → download the CA certificate for `DATABASE_CA_CERT` (verified TLS). Without it the connection is still encrypted, but the server certificate isn't verified against Supabase's CA.
 
@@ -63,7 +63,7 @@ INBOUND_EMAIL_SECRET=<openssl rand -hex 24>
 Frontend build env:
 ```
 VITE_SUPABASE_URL=https://<ref>.supabase.co
-VITE_SUPABASE_PUBLISHABLE_KEY=<sb_publishable_… key (or legacy anon key in VITE_SUPABASE_ANON_KEY)>
+VITE_SUPABASE_PUBLISHABLE_KEY=<sb_publishable_… key>   # legacy alias: VITE_SUPABASE_ANON_KEY
 ```
 
 ## How data access works
