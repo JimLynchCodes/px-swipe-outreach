@@ -241,3 +241,25 @@ curl -XPOST localhost:3000/api/outreach/opp_0001/send -H 'content-type: applicat
 Auth (JWKS/HS256 verification, issuer/audience/role checks, org resolution), hardening (CORS, headers, request IDs, rate limits, validation, error shape, log redaction) and opt-out enforcement are covered in `test/auth.test.ts` and `test/hardening.test.ts`.
 
 `npm run test:db` applies the real migrations to a scratch Postgres and checks RLS directly: cross-org isolation for every table, membership role rules, the suppression trigger, delivery uniqueness and the append-only event log.
+
+
+## Production Secrets
+
+Set the keys in two files, and each one starts as a copy of its folder's `.env.example`:
+
+- **Backend:** `retail-outreach-backend/.env`, which `npm start` reads. Plain `npm run dev` only logs messages instead of sending them, so for real texts and emails put your keys in `.env.local` and run `npm run dev:live`. Supabase mode reads `.env.supabase.local`.
+- **Frontend:** `px-swipe-outreach-frontend/.env`. These values get built into the app, so for production they have to be set before you build.
+
+
+Service	Variables	Where to get them
+Supabase (backend)	`SUPABASE_URL`, `DATABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`	In Supabase, under Project Settings: the API page (URL and service_role key) and the Database page (connection string)
+Supabase (frontend)	`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`	Same API page, but use the anon key here, never the service_role key
+AI	`OPENROUTER_API_KEY`, or `OPENAI_API_KEY`	openrouter.ai/keys. If neither is set, suggestions fall back to the built-in rules.
+Twilio	`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_FROM_NUMBER`	Twilio Console. Also set `SMS_PROVIDER=twilio`.
+Email	`SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM`	Any SMTP provider (a Gmail app password works). Also set `EMAIL_PROVIDER=smtp`.
+Unsubscribe links	`UNSUBSCRIBE_SIGNING_SECRET`	Make one with `openssl rand -base64 48`
+Quickvee	`QUICKVEE_EMAIL`, `QUICKVEE_PASSWORD`, `QUICKVEE_BASE_URL`	Your merchant login and the portal address you sign in at
+Optional data sync	`OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY`, `SENDGRID_API_KEY`	Only needed to pull detailed usage history
+
+
+For production, set the same variables in your host's environment settings. The server also won't start there unless `AUTH_MODE=supabase`, `DATA_STORE=postgres` and `INVITE_MAILER=supabase` are set, and `PUBLIC_API_URL`, `APP_URL` and `CORS_ORIGIN` all use https. The Data sync page lists any variable still missing for each source, so you can check there once they're filled in.
