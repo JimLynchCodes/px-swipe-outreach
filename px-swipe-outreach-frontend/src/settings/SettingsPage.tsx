@@ -9,6 +9,8 @@ import { charCount } from '../lib/format'
 import { categoryLabel, DAYS_SHORT, discountLabel, formatRange, rangeStatus } from '../lib/week'
 import type { BrandVoice, DealInput, OrgSettings } from '../types'
 import { OUTREACH_SETTINGS_CHANGED } from './events'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 export const SMS_SIGNATURE_MAX = 60
 export const DEFAULT_VOICE: BrandVoice = { preset: 'friendly', emoji: false, signOff: '', about: '' }
@@ -36,7 +38,7 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
   const [s, setS] = useState<OrgSettings | null>(null)
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
-  useEffect(() => { api.settings.get().then(setS, e => setStatus({ kind: 'err', text: e.message })) }, [])
+  useEffect(() => { api.settings.get().then(setS, e => setStatus({ kind: 'err', text: friendlyError(e) })) }, [])
   if (!s) return <section className="panel">{status ? <p className="error" role="alert">{status.text}</p> : <p className="muted">Loading…</p>}</section>
   const set = <K extends keyof OrgSettings>(k: K, v: OrgSettings[K]) => setS({ ...s, [k]: v })
   const voice = s.brandVoice ?? DEFAULT_VOICE
@@ -49,7 +51,7 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
       setS(await api.settings.save({ ...s!, storeName: s!.storeName?.trim() || null }))
       setStatus({ kind: 'ok', text: 'Settings saved' })
       window.dispatchEvent(new Event(OUTREACH_SETTINGS_CHANGED))
-    } catch (err) { setStatus({ kind: 'err', text: err instanceof Error ? err.message : String(err) }) }
+    } catch (err) { setStatus({ kind: 'err', text: friendlyError(err) }) }
     finally { setSaving(false) }
   }
 
@@ -102,8 +104,9 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
         </label>
         <p className="muted small">{charCount(voice.about)}/500 · the AI may use these facts for color; it never invents beyond them.</p>
       </fieldset>
-      {status && <p className={status.kind === 'err' ? 'error' : 'green'} role={status.kind === 'err' ? 'alert' : 'status'}>{status.text}</p>}
-      {canEdit && <div className="form-actions"><button className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</button></div>}
+      {status?.kind === 'ok' && <p className="green" role="status">{status.text}</p>}
+      {canEdit && <div className="form-actions btn-wrap"><button className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</button>
+        <ErrorBubble error={status?.kind === 'err' ? status.text : null} /></div>}
     </form>
   )
 }
@@ -112,7 +115,8 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
 function Promotions({ canEdit }: { canEdit: boolean }) {
   const { deals, catalog, error, create, update, remove } = useDeals()
   const [editing, setEditing] = useState<{ id: string | null; input: DealInput } | null>(null)
-  const [err, setErr] = useState<string | null>(null)
+  // Row action errors are keyed by promotion id so the bubble appears under the row's buttons.
+  const [err, setErr] = useState<{ id: string; text: string } | null>(null)
   const sectionRef = useRef<HTMLElement>(null)
   // /settings#promotions (e.g. "Manage promotions" in the deals panel) jumps here once the list has loaded.
   useEffect(() => {
@@ -121,7 +125,7 @@ function Promotions({ canEdit }: { canEdit: boolean }) {
       sectionRef.current?.focus({ preventScroll: true })
     }
   }, [deals])
-  const act = (fn: () => Promise<void>) => fn().catch(e => setErr(e instanceof Error ? e.message : String(e)))
+  const act = (id: string, fn: () => Promise<void>) => { setErr(null); return fn().catch(e => setErr({ id, text: friendlyError(e) })) }
 
   return (
     <section className="panel" id="promotions" aria-labelledby="promos-h" ref={sectionRef} tabIndex={-1}>
@@ -130,7 +134,7 @@ function Promotions({ canEdit }: { canEdit: boolean }) {
         {canEdit && !editing && <button className="btn-small" onClick={() => setEditing({ id: null, input: emptyDeal([]) })}><Plus size={14} /> Add promotion</button>}
       </div>
       <p className="muted small">Enabled promotions appear in the weekly deals panel on their days and are used by the AI suggestions.</p>
-      {(error || err) && <p className="error" role="alert">{error ?? err}</p>}
+      <ErrorBubble error={error} />
       {editing && (
         <PromotionForm initial={editing.input} catalog={catalog} onCancel={() => setEditing(null)}
           onSave={async d => { if (editing.id) await update(editing.id, d); else await create(d); setEditing(null) }} />
@@ -141,7 +145,7 @@ function Promotions({ canEdit }: { canEdit: boolean }) {
             <li key={d.id} className={`row ${d.active ? '' : 'disabled'}`}>
               <label className="row-main check">
                 <input type="checkbox" checked={d.active} disabled={!canEdit} aria-label={`Enable ${d.title}`}
-                  onChange={e => void act(() => update(d.id, { ...toInput(d), active: e.target.checked }))} />
+                  onChange={e => void act(d.id, () => update(d.id, { ...toInput(d), active: e.target.checked }))} />
                 <div>
                   <div className="row-title">{d.title} <span className="tag">{discountLabel(d)}</span></div>
                   <div className="muted small">
@@ -157,9 +161,10 @@ function Promotions({ canEdit }: { canEdit: boolean }) {
                 <div className="row-actions">
                   <button className="icon-btn" aria-label={`Edit ${d.title}`} onClick={() => setEditing({ id: d.id, input: toInput(d) })}><Pencil size={15} /></button>
                   <button className="icon-btn danger" aria-label={`Delete ${d.title}`}
-                    onClick={() => { if (window.confirm(`Delete "${d.title}"?`)) void act(() => remove(d.id)) }}><Trash2 size={15} /></button>
+                    onClick={() => { if (window.confirm(`Delete "${d.title}"?`)) void act(d.id, () => remove(d.id)) }}><Trash2 size={15} /></button>
                 </div>
               )}
+              {err?.id === d.id && <ErrorBubble error={err.text} className="row-error" />}
             </li>
           ))}
         </ul>

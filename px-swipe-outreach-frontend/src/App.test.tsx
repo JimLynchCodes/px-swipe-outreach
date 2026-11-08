@@ -185,7 +185,8 @@ describe('App', () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('Failed to fetch'))))
     render(<App />)
     const alerts = await screen.findAllByRole('alert')
-    expect(alerts[0]).toHaveTextContent('Is the backend running?')
+    expect(alerts[0]).toHaveTextContent("Can't reach the server")
+    expect(alerts[0]).toHaveClass('error-bubble')
   })
 })
 
@@ -205,5 +206,26 @@ describe('opt-out', () => {
     const call = calls.find(c => c.url.endsWith('/opt-out'))!
     expect(call.url).toContain('/api/outreach/opp_1/opt-out')
     expect(JSON.parse(String(call.init?.body))).toEqual({ channel: 'sms' })
+  })
+})
+
+describe('inline action errors', () => {
+  it('shows a send failure under the Send button and clears it on retry', async () => {
+    let fail = true
+    const base = (globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>)
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (url.endsWith('/send') && fail) { fail = false; return json({ error: 'Twilio is not configured' }, 503) }
+      return base(url, init)
+    }))
+    render(<App />)
+    await screen.findByText('Hi! (sms)')
+    const send = screen.getAllByRole('button', { name: /^Send/ })[0]
+    fireEvent.click(send)
+    const bubble = await screen.findByRole('alert')
+    expect(bubble).toHaveTextContent('Twilio is not configured')
+    expect(bubble).toHaveClass('error-bubble')
+    expect(send.closest('.action-wrap')).toContainElement(bubble)
+    fireEvent.click(send)
+    await waitFor(() => expect(screen.queryByText('Twilio is not configured')).toBeNull())
   })
 })

@@ -6,6 +6,8 @@ import { PageShell } from '../components/PageShell'
 import { initials, money, monthLabel, pct } from '../lib/format'
 import type { Period, PerformanceReport } from '../types'
 import { MetricCard } from '../components/MetricCard'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 const PERIODS: Array<{ id: Period; label: string }> = [
   { id: 'today', label: 'Today' }, { id: 'week', label: 'This week' }, { id: 'month', label: 'This month' }, { id: 'all', label: 'All time' },
@@ -17,11 +19,11 @@ export function PerformancePage() {
   const [r, setR] = useState<PerformanceReport | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [period, setPeriod] = useState<Period>('week')
-  useEffect(() => { api.metrics.performance().then(setR, e => setErr(e.message)) }, [auth.orgId])
+  useEffect(() => { api.metrics.performance().then(setR, e => setErr(friendlyError(e))) }, [auth.orgId])
   return (
     <PageShell title="Performance metrics" wide
       subtitle={r ? <>A purchase within {r.attributionDays} days of a send counts as a conversion{r.demo && <span className="pill demo">includes demo data</span>}</> : 'Revenue from outreach'}>
-      {err ? <p className="error" role="alert">{err}</p> : !r ? <p className="muted">Loading…</p> : <>
+      {err ? <ErrorBubble error={err} /> : !r ? <p className="muted">Loading…</p> : <>
         <Overview r={r} />
         <Promotions r={r} />
         <section className="panel leaderboard" aria-label="Staff leaderboard">

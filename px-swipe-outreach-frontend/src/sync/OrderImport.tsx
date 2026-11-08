@@ -4,6 +4,8 @@ import { api } from '../api'
 import { Modal } from '../components/Modal'
 import { money } from '../lib/format'
 import type { OrderImportPreview, OrderLink } from '../types'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 const MAX_BYTES = 5 * 1024 * 1024
 const LINK: Record<OrderLink, string> = { existing: 'Customer on file', new: 'New customer', unlinked: 'No customer (skipped)' }
@@ -28,7 +30,7 @@ export function OrderImport() {
     try {
       const csv = await file.text()
       setStep({ kind: 'preview', csv, fileName: file.name, preview: await api.orders.preview(csv) })
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setStep({ kind: 'idle' }) }
+    } catch (e) { setErr(friendlyError(e)); setStep({ kind: 'idle' }) }
   }
   async function submit() {
     if (step.kind !== 'preview') return
@@ -36,7 +38,7 @@ export function OrderImport() {
     try {
       const r = await api.orders.import(step.csv)
       setStep({ kind: 'done', ...r })
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setStep({ ...step, kind: 'preview' }) }
+    } catch (e) { setErr(friendlyError(e)); setStep({ ...step, kind: 'preview' }) }
   }
   const cancel = () => { setStep({ kind: 'idle' }); setErr(null) }
   const p = step.kind === 'preview' || step.kind === 'saving' ? step.preview : null
@@ -49,12 +51,14 @@ export function OrderImport() {
           <h3><ReceiptText size={17} aria-hidden /> Order history from a file</h3>
           <p className="muted small">Upload an order-history CSV (one row per item; <code>npm run scrape:quickvee:orders</code> writes this format). Orders already loaded (same order ID) are skipped. Orders feed purchase history and suggestions.</p>
         </div>
-        <button className="btn-secondary" aria-label="Manually add orders" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
-          {step.kind === 'reading' ? 'Reading…' : 'Manually add'}
-        </button>
+        <div className="btn-wrap">
+          <button className="btn-secondary" aria-label="Manually add orders" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
+            {step.kind === 'reading' ? 'Reading…' : 'Manually add'}
+          </button>
+          <ErrorBubble error={step.kind === 'idle' ? err : null} />
+        </div>
         <input ref={input} type="file" accept=".csv,text/csv" hidden aria-label="Order history CSV file" onChange={e => void onFile(e.target.files?.[0])} />
       </div>
-      {err && step.kind === 'idle' && <p className="error" role="alert">{err}</p>}
 
       {p && (step.kind === 'preview' || step.kind === 'saving') && (
         <Modal title={importable ? `Add ${importable} new order${importable === 1 ? '' : 's'}?` : 'No new orders'}
@@ -62,6 +66,7 @@ export function OrderImport() {
           actions={<>
             <button className="btn-secondary" onClick={cancel} disabled={step.kind === 'saving'}>Cancel</button>
             {importable > 0 && <button className="btn-primary" onClick={() => void submit()} disabled={step.kind === 'saving'}>{step.kind === 'saving' ? 'Saving…' : 'Submit'}</button>}
+            <ErrorBubble error={err} className="modal-error" />
           </>}>
           <p className="muted small">
             {step.fileName} · {money(p.totalCents)} in new orders
@@ -88,7 +93,6 @@ export function OrderImport() {
               <ul>{p.invalid.slice(0, 50).map(r => <li key={r.row}>Row {r.row}: {r.reason}</li>)}</ul>
             </details>
           )}
-          {err && <p className="error" role="alert">{err}</p>}
         </Modal>
       )}
 

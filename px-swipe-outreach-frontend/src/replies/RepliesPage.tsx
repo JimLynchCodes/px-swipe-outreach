@@ -7,6 +7,8 @@ import { relativeTime } from '../lib/week'
 import { navigate, ROUTES, usePathname } from '../router'
 import type { ConversationMessage, ConversationSummary, OrgSettings } from '../types'
 import { notifyRepliesChanged, POLL_MS } from './useUnread'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 const ChannelIcon = ({ channel }: { channel: 'sms' | 'email' }) =>
   channel === 'sms' ? <MessageCircle size={13} aria-label="Text" /> : <Mail size={13} aria-label="Email" />
@@ -30,7 +32,7 @@ export function RepliesPage() {
 function ConversationList() {
   const [items, setItems] = useState<ConversationSummary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  usePoll(() => { api.replies.list().then(c => { setItems(c); setError(null) }, e => setError(e.message)) }, [])
+  usePoll(() => { api.replies.list().then(c => { setItems(c); setError(null) }, e => setError(friendlyError(e))) }, [])
 
   return (
     <PageShell title="Replies" subtitle="Texts and emails from customers. Updates every 15 seconds.">
@@ -71,6 +73,7 @@ function ThreadView({ id }: { id: string }) {
   const [data, setData] = useState<{ conversation: ConversationSummary; messages: ConversationMessage[] } | null>(null)
   const [settings, setSettings] = useState<OrgSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sendError, setSendError] = useState<string | null>(null)
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
@@ -80,7 +83,7 @@ function ThreadView({ id }: { id: string }) {
     api.replies.thread(id).then(d => {
       setData(d); setError(null)
       if (d.conversation.unreadCount > 0) api.replies.markRead(id).then(notifyRepliesChanged, () => {})
-    }, e => setError(e.message))
+    }, e => setError(friendlyError(e)))
   }, [id])
   usePoll(load, [load])
   useEffect(() => { api.settings.get().then(setSettings, () => {}) }, [])
@@ -99,12 +102,12 @@ function ThreadView({ id }: { id: string }) {
   async function send(e: FormEvent) {
     e.preventDefault()
     if (!text.trim() || tooLong || c?.optedOut) return
-    setSending(true); setError(null)
+    setSending(true); setSendError(null)
     try {
       await api.replies.send(id, text.trim())
       setText('')
       load()
-    } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
+    } catch (err) { setSendError(friendlyError(err)) }
     finally { setSending(false) }
   }
 
@@ -143,6 +146,7 @@ function ThreadView({ id }: { id: string }) {
                 </span>
                 <button className="btn-send" disabled={sending || !text.trim() || tooLong}><Send size={16} /> {sending ? 'Sending…' : 'Send'}</button>
               </div>
+              <ErrorBubble error={sendError} className="composer-error" />
             </form>
           )}
         </div>
