@@ -43,7 +43,7 @@ npm run dev        # http://localhost:5173. Needs the backend on :3000 (see ../R
 | --- | --- | --- |
 | `VITE_API_BASE_URL` | *(empty)* | Leave empty to call same-origin `/api` (dev proxy or reverse proxy). Set it, e.g. to `https://api.example.com`, when the API is on another origin. The backend's `CORS_ORIGIN` must then include this app's origin |
 | `VITE_PROXY_TARGET` | `http://localhost:3000` | Backend address used by the dev/preview proxy |
-| `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (or `VITE_SUPABASE_ANON_KEY`) | *(empty)* | Enables Supabase Auth (login, magic link, sign-up). **Public anon/publishable key only.** The app refuses a service_role key |
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` (legacy alias `VITE_SUPABASE_ANON_KEY`) | *(empty)* | Enables Supabase Auth (login, magic link, sign-up). **Public anon/publishable key only.** The app refuses a service_role key |
 | `VITE_DEMO_MODE` | *(empty)* | Without Supabase config, `npm run dev` runs in demo mode. Production builds show a configuration error unless this is `true` |
 
 ### Auth
