@@ -93,3 +93,37 @@ Behavior worth knowing:
 * Deals panel slots, segment and patterns, the chosen-deal chip, age-unverified blocking, the default channel from settings, and per-channel opt-out.
 
 `src/pages.test.tsx` covers the hamburger menu and badge, Settings (save, promotions toggle/add/delete, read-only for staff), the Opt-out list (filter, search, pagination), and Replies (ordering, unread, mark read, reply with signature and count, opted-out block).
+
+---
+
+2. Exactly what is the AI responsible for?
+This is the most important part of the review.
+
+There are actually two different recommendation mechanisms.
+Stage 1 — Deterministic recommendation engine
+Traditional TypeScript logic
+- Determines customer segment.
+- Scores available promotions.
+- Considers favorite categories and brands.
+- Considers purchase history and restocking cycles.
+- Considers the customer's preferred shopping day.
+- Produces an initial recommended promotion.
+
+Stage 2 — AI recommendation and copywriting
+LLM
+- Receives customer information.
+- Receives eligible promotions.
+- Receives the recommendation from Stage 1.
+- Can choose a different promotion.
+- Writes personalized SMS and email copy.
+- Provides reasoning and confidence.
+- Suggests a send time.
+
+Stage 3 — Compliance validation
+Deterministic TypeScript logic
+- Checks for prohibited marketing claims.
+- Checks that discounts are legitimate.
+- Checks SMS length.
+- Checks that the correct customer name is used.
+- Rejects invalid messages.
+- Allows one regeneration before falling back to rules.
