@@ -14,14 +14,10 @@ export const QV = {
   },
   /** Text that only appears when signed in (any of these). */
   loggedInText: /Orders Management|Sign out|Log out|Logout/i,
-  /**
-   * The login page has three fields: Store name, Username, Password. Each is found by its label, then placeholder,
-   * then name/id attribute, so small markup changes don't break the login.
-   */
+  /** Login by position: 1st visible text/email input = store name, 2nd = username, 1st password input = password. */
   login: {
-    storeName: { label: /store\s*name|store/i, placeholder: /store/i, css: 'input[name*="store" i], input[id*="store" i]' },
-    username: { label: /user\s*name|username|email|login/i, placeholder: /user\s*name|username|email/i, css: 'input[name*="user" i], input[id*="user" i], input[name="email"], input[type="email"]' },
-    password: { label: /password/i, placeholder: /password/i, css: 'input[type="password"], input[name*="pass" i]' },
+    textInputs: 'input:not([type]), input[type="text"], input[type="email"]',
+    password: 'input[type="password"]',
     submit: 'button[type="submit"]',
     error: '[data-testid="login-error"]',
     mfa: 'input[name="otp"], [data-testid="mfa-challenge"]'

@@ -64,14 +64,14 @@ export async function startMockPortal(o: MockOptions = {}): Promise<MockPortal> 
 
     if (u.pathname === "/login" && req.method === "POST") {
       const f = await body();
-      if (f.get("store_name") !== MOCK_USER.storeName || f.get("username") !== MOCK_USER.username || f.get("password") !== MOCK_USER.password) return html(page('<p data-testid="login-error">Invalid login</p>', false), 401);
+      if (f.get("hp") || f.get("store_name") !== MOCK_USER.storeName || f.get("username") !== MOCK_USER.username || f.get("password") !== MOCK_USER.password) return html(page('<p data-testid="login-error">Invalid login</p>', false), 401);
       const id = Math.random().toString(36).slice(2);
       state.logins++;
       if (o.mfa) { pending.add(id); res.writeHead(302, { location: "/mfa", "set-cookie": `sid=${id}; Path=/; HttpOnly` }); return res.end(); }
       sessions.add(id);
       res.writeHead(302, { location: "/dashboard", "set-cookie": `sid=${id}; Path=/; HttpOnly` }); return res.end();
     }
-    if (u.pathname === "/login") return html(page(`<form method="post" action="/login"><label for="store">Store name</label><input id="store" name="store_name" placeholder="Enter store name"><label for="user">Username</label><input id="user" name="username" placeholder="Enter username"><label for="pw">Password</label><input id="pw" name="password" type="password" placeholder="Enter password"><button type="submit">Sign in</button></form>`, false));
+    if (u.pathname === "/login") return html(page(`<form method="post" action="/login"><input type="text" name="hp" style="display:none"><input type="hidden" name="csrf" value="x"><div>Store name</div><input name="store_name" class="a1"><div>Username</div><input type="text" name="username" class="b2"><div>Password</div><input name="password" type="password"><button type="submit">Sign in</button></form>`, false));
     if (u.pathname === "/mfa") return html(page('<div data-testid="mfa-challenge"><input name="otp"></div>', false));
     if (!authed) { res.writeHead(302, { location: "/login" }); return res.end(); }
 
