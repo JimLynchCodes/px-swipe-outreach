@@ -34,6 +34,7 @@ services:
       APP_URL: ${APP_URL:-http://localhost:8080}
       INVITE_MAILER: ${INVITE_MAILER:-console}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_SECRET_KEY: ${SUPABASE_SECRET_KEY:-}
       DATA_STORE: postgres
       DATABASE_URL: "postgres://postgres:postgres@postgres:5432/outreach"
       DELIVERY_MODE: queue
@@ -90,6 +91,7 @@ services:
       args:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_ANON_KEY: ${VITE_SUPABASE_ANON_KEY:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_DEMO_MODE: ${VITE_DEMO_MODE:-true}
     environment: { API_UPSTREAM: "http://api:3000" }
     ports: ["8080:8080"]

@@ -10,9 +10,14 @@ export const QV = {
     rewards: (page: number) => `/rewards?page=${page}`,
     orders: (from: string, to: string, page: number) => `/orders?from=${from}&to=${to}&page=${page}`
   },
+  /**
+   * The login page has three fields: Store name, Username, Password. Each is found by its label, then placeholder,
+   * then name/id attribute, so small markup changes don't break the login.
+   */
   login: {
-    email: 'input[name="email"]',
-    password: 'input[name="password"]',
+    storeName: { label: /store\s*name|store/i, placeholder: /store/i, css: 'input[name*="store" i], input[id*="store" i]' },
+    username: { label: /user\s*name|username|email|login/i, placeholder: /user\s*name|username|email/i, css: 'input[name*="user" i], input[id*="user" i], input[name="email"], input[type="email"]' },
+    password: { label: /password/i, placeholder: /password/i, css: 'input[type="password"], input[name*="pass" i]' },
     submit: 'button[type="submit"]',
     error: '[data-testid="login-error"]',
     mfa: 'input[name="otp"], [data-testid="mfa-challenge"]'

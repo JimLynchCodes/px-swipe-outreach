@@ -11,7 +11,7 @@ import { JOBS } from "./registry.js";
 import type { EtlRun, JobId, LogLine, Progress, RunTrigger, SyncRepo } from "./types.js";
 import { dryRunRepo } from "./dryRun.js";
 
-const SECRET_KEYS = ["OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENROUTER_API_KEY", "OPENROUTER_PROVISIONING_KEY", "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY", "QUICKVEE_PASSWORD", "QUICKVEE_EMAIL", "DATABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] as const;
+const SECRET_KEYS = ["OPENAI_API_KEY", "OPENAI_ADMIN_KEY", "OPENROUTER_API_KEY", "OPENROUTER_PROVISIONING_KEY", "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY", "QUICKVEE_PASSWORD", "QUICKVEE_EMAIL", "QUICKVEE_USERNAME", "QUICKVEE_STORE_NAME", "DATABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_SECRET_KEY"] as const;
 const MAX_LOG = 500;
 
 export type StartRun = { orgId: string; job: JobId; trigger: RunTrigger; params?: Record<string, unknown>; dryRun?: boolean; startedBy?: string | null };

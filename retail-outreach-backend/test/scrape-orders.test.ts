@@ -30,7 +30,7 @@ describe.skipIf(!chromium && !process.env.CI)("scrape:quickvee:orders (mock port
   let portal: MockPortal, crawl: MockPortal, dir: string;
   beforeAll(async () => { portal = await startMockPortal(); crawl = await startMockPortal({ csv: false, pageSize: 1 }); dir = mkdtempSync(join(tmpdir(), "qv-scrape-")); });
   afterAll(async () => { await portal?.close(); await crawl?.close(); rmSync(dir, { recursive: true, force: true }); });
-  const env = (url: string) => ({ NODE_ENV: "test", QUICKVEE_EMAIL: MOCK_USER.email, QUICKVEE_PASSWORD: MOCK_USER.password, QUICKVEE_BASE_URL: url,
+  const env = (url: string) => ({ NODE_ENV: "test", QUICKVEE_STORE_NAME: MOCK_USER.storeName, QUICKVEE_USERNAME: MOCK_USER.username, QUICKVEE_PASSWORD: MOCK_USER.password, QUICKVEE_BASE_URL: url,
     QUICKVEE_STATE_DIR: join(dir, url.replace(/\W/g, "")), QUICKVEE_MIN_DELAY_MS: "0", QUICKVEE_CHUNK_DAYS: "31", QUICKVEE_SAVE_RAW: "false",
     ...(chromium ? { QUICKVEE_CHROMIUM_PATH: chromium } : {}) });
 

@@ -55,7 +55,7 @@ describe('Data sync page', () => {
       'GET /api/sync': () => json(overview([
         src('ai-usage', 'AI usage', { lastRun: run({ job: 'ai-usage', status: 'failed', error: 'GET /api/v1/activity failed: HTTP 401' }) }),
         src('twilio', 'Twilio', { lastRun: run(), schedule: { job: 'twilio', frequency: 'daily', startLocal: '2026-11-15T10:00:00', nextRunAt: '2026-11-15T15:00:00.000Z' } }),
-        src('quickvee-rewards', 'Quickvee rewards', { configured: false, missing: ['QUICKVEE_EMAIL', 'QUICKVEE_PASSWORD'] }),
+        src('quickvee-rewards', 'Quickvee rewards', { configured: false, missing: ['QUICKVEE_STORE_NAME', 'QUICKVEE_USERNAME', 'QUICKVEE_PASSWORD'] }),
       ])),
       'GET /api/sync/runs': () => json({ runs: [run()] }),
     })
@@ -71,7 +71,7 @@ describe('Data sync page', () => {
     expect(within(ai).getByRole('alert')).toHaveTextContent('Last error: GET /api/v1/activity failed: HTTP 401')
     const qv = screen.getByRole('region', { name: 'Quickvee rewards' })
     expect(within(qv).getByText('Not configured')).toBeInTheDocument()
-    expect(within(qv).getByText('QUICKVEE_EMAIL, QUICKVEE_PASSWORD')).toBeInTheDocument()
+    expect(within(qv).getByText('QUICKVEE_STORE_NAME, QUICKVEE_USERNAME, QUICKVEE_PASSWORD')).toBeInTheDocument()
     expect(within(qv).getByRole('button', { name: /Force re-sync/ })).toBeDisabled()
     expect(within(qv).getByText('Not scheduled')).toBeInTheDocument()
   })

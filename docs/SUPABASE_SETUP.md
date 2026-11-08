@@ -4,10 +4,14 @@ The app uses **Supabase Auth** for sign-in and **Supabase Postgres** for data, w
 
 ## 1. Create the project
 1. Create a project at <https://supabase.com/dashboard>.
-2. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key (frontend).
-3. **Project Settings → Database → Connection string**: copy the URI for the backend `DATABASE_URL` (Supavisor session `:5432` or transaction `:6543`). Optionally download the CA cert for `DATABASE_CA_CERT`.
+2. **Project URL**: shown under **Project Settings → Data API** (also in the **Connect** dialog). Use it for `SUPABASE_URL` / `VITE_SUPABASE_URL`.
+3. **Project Settings → API Keys**:
+   - **Publishable key** (`sb_publishable_…`) → frontend `VITE_SUPABASE_PUBLISHABLE_KEY`. The legacy **anon** key (under the *Legacy API keys* tab) also works, in `VITE_SUPABASE_ANON_KEY`.
+   - **Secret key** (`sb_secret_…`) → backend `SUPABASE_SECRET_KEY` (or `SUPABASE_SERVICE_ROLE_KEY`), only needed for invite emails. The legacy **service_role** key also works.
+4. **Connect** (top bar) → **Connection string**: copy the URI for the backend `DATABASE_URL` (Supavisor session `:5432` or transaction `:6543`).
+5. Optional: **Project Settings → Database → SSL Configuration** → download the CA certificate for `DATABASE_CA_CERT` (verified TLS). Without it the connection is still encrypted, but the server certificate isn't verified against Supabase's CA.
 
-> 🔐 The `service_role` / `sb_secret_…` key and the DB password are **backend-only secrets**. The frontend never needs them, and it refuses to start if `VITE_SUPABASE_ANON_KEY` holds a service_role key.
+> 🔐 The `service_role` / `sb_secret_…` key and the DB password are **backend-only secrets**. The frontend never needs them, and it refuses to start if its key is a `sb_secret_…` or service_role key.
 
 ## 2. Apply the schema
 With the Supabase CLI (recommended):
@@ -49,7 +53,7 @@ DATABASE_URL=postgres://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase
 CORS_ORIGIN=https://outreach.example.com
 APP_URL=https://outreach.example.com
 INVITE_MAILER=supabase
-SUPABASE_SERVICE_ROLE_KEY=<service_role / sb_secret_ key>   # backend only, used solely to send invite emails
+SUPABASE_SECRET_KEY=<sb_secret_… key (or legacy service_role)>   # backend only, used solely to send invite emails
 PUBLIC_API_URL=https://api.outreach.example.com
 UNSUBSCRIBE_SIGNING_SECRET=<openssl rand -base64 48>
 TWILIO_AUTH_TOKEN=<twilio auth token>
@@ -59,7 +63,7 @@ INBOUND_EMAIL_SECRET=<openssl rand -hex 24>
 Frontend build env:
 ```
 VITE_SUPABASE_URL=https://<ref>.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon or publishable key>
+VITE_SUPABASE_PUBLISHABLE_KEY=<sb_publishable_… key (or legacy anon key in VITE_SUPABASE_ANON_KEY)>
 ```
 
 ## How data access works
@@ -92,7 +96,7 @@ In development `INVITE_MAILER=console` logs the link instead, and the Team scree
 | `npm run dev:supabase` | Your Supabase Postgres | Supabase login page | `retail-outreach-backend/.env.supabase.local` + `px-swipe-outreach-frontend/.env.supabase.local` |
 
 Setup once: copy both `.env.supabase.example` files to `.env.supabase.local` and fill them in (the backend file holds
-`DATABASE_URL` and the service-role key; the frontend file holds only the URL and the anon key). Then, once:
+`DATABASE_URL` and the service-role key; the frontend file holds only the URL and the publishable key). Then, once:
 ```bash
 cd retail-outreach-backend
 npx tsx --env-file=.env.supabase.local src/db/migrate.ts

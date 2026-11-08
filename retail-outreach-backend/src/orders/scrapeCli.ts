@@ -8,7 +8,7 @@ try { args = parseScrapeArgs(process.argv.slice(2)); } catch (e) {
   process.exit(2);
 }
 const config = loadConfigOrExit();
-if (!config.QUICKVEE_EMAIL || !config.QUICKVEE_PASSWORD) { console.error("Set QUICKVEE_EMAIL and QUICKVEE_PASSWORD (e.g. --env-file=.env.local)."); process.exit(2); }
+if (!config.QUICKVEE_STORE_NAME || !config.QUICKVEE_USERNAME || !config.QUICKVEE_PASSWORD) { console.error("Set QUICKVEE_STORE_NAME, QUICKVEE_USERNAME and QUICKVEE_PASSWORD (e.g. --env-file=.env.local)."); process.exit(2); }
 try {
   const { csv, orders } = await scrapeOrderHistory(config, { ...args, log: (l, m) => (l === "info" ? console.log : console.warn)(m) });
   writeFileSync(args.out, csv);

@@ -24,7 +24,7 @@ describe.skipIf(!chromium && !process.env.CI)("Quickvee scraper (mock portal, re
 
   const run = async (job: "quickvee-rewards" | "quickvee-orders", o: { url?: string; stateDir?: string; password?: string; params?: Record<string, unknown>; repo?: MemorySyncRepo } = {}) => {
     const stateDir = o.stateDir ?? mkdtempSync(path.join(tmpdir(), "qv-"));
-    const config = loadConfig({ NODE_ENV: "test", QUICKVEE_EMAIL: MOCK_USER.email, QUICKVEE_PASSWORD: o.password ?? MOCK_USER.password, QUICKVEE_BASE_URL: o.url ?? portal.url,
+    const config = loadConfig({ NODE_ENV: "test", QUICKVEE_STORE_NAME: MOCK_USER.storeName, QUICKVEE_USERNAME: MOCK_USER.username, QUICKVEE_PASSWORD: o.password ?? MOCK_USER.password, QUICKVEE_BASE_URL: o.url ?? portal.url,
       QUICKVEE_STATE_DIR: stateDir, QUICKVEE_MIN_DELAY_MS: "0", QUICKVEE_CHUNK_DAYS: "31", ...(chromium ? { QUICKVEE_CHROMIUM_PATH: chromium } : {}) });
     const repo = o.repo ?? new MemorySyncRepo();
     const runner = new SyncRunner(repo, config, { now: () => new Date("2026-11-07T17:00:00Z") });
@@ -46,7 +46,8 @@ describe.skipIf(!chromium && !process.env.CI)("Quickvee scraper (mock portal, re
     expect(again.run.status).toBe("succeeded");
     expect(portal.logins).toBe(logins); // cookie reused, no new login
     expect(JSON.stringify(again.run.log) + JSON.stringify(r.log)).not.toContain(MOCK_USER.password);
-    expect(JSON.stringify(r.log)).not.toContain(MOCK_USER.email);
+    expect(JSON.stringify(r.log)).not.toContain(MOCK_USER.username);
+    expect(JSON.stringify(r.log)).not.toContain(MOCK_USER.storeName);
   }, 60_000);
 
   it("orders: date-range backfill via CSV, walk-ins skipped, watermark untouched by backfill", async () => {

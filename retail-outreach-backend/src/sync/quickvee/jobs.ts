@@ -5,7 +5,7 @@ import { QV } from "./selectors.js";
 import { parseCsv, toOrders, toRewardsMember } from "./normalize.js";
 import type { Order, RewardsMember } from "../types.js";
 
-const missing = (c: import("../../config.js").AppConfig) => [!c.QUICKVEE_EMAIL && "QUICKVEE_EMAIL", !c.QUICKVEE_PASSWORD && "QUICKVEE_PASSWORD"].filter(Boolean) as string[];
+const missing = (c: import("../../config.js").AppConfig) => [!c.QUICKVEE_STORE_NAME && "QUICKVEE_STORE_NAME", !c.QUICKVEE_USERNAME && "QUICKVEE_USERNAME", !c.QUICKVEE_PASSWORD && "QUICKVEE_PASSWORD"].filter(Boolean) as string[];
 const MAX_PAGES = 500;
 
 async function withPortal<T>(ctx: JobContext, fn: (p: QuickveePortal) => Promise<T>): Promise<T> {

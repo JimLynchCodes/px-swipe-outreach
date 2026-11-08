@@ -2,7 +2,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import Root from '../Root'
-import { assertPublicKey } from './supabase'
+import { assertPublicKey, resolveAuthConfig } from './supabase'
 
 const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status }))
 const b64 = (o: unknown) => btoa(JSON.stringify(o)).replace(/=+$/, '')
@@ -108,5 +108,20 @@ describe('assertPublicKey', () => {
     expect(() => assertPublicKey('sb_secret_abc')).toThrow(/secret/)
     expect(() => assertPublicKey(`h.${b64({ role: 'anon' })}.s`)).not.toThrow()
     expect(() => assertPublicKey('sb_publishable_abc')).not.toThrow()
+  })
+})
+
+describe('resolveAuthConfig key names', () => {
+  afterEach(() => vi.unstubAllEnvs())
+  it('accepts VITE_SUPABASE_PUBLISHABLE_KEY with a sb_publishable_ key', () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://abc.supabase.co')
+    vi.stubEnv('VITE_SUPABASE_ANON_KEY', '')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_abc123')
+    expect(resolveAuthConfig().mode).toBe('supabase')
+  })
+  it('refuses a sb_secret_ key in either variable', () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'https://abc.supabase.co')
+    vi.stubEnv('VITE_SUPABASE_PUBLISHABLE_KEY', 'sb_secret_abc123')
+    expect(resolveAuthConfig()).toMatchObject({ mode: 'misconfigured', reason: expect.stringMatching(/secret/) })
   })
 })

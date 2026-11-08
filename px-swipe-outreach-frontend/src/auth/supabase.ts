@@ -1,11 +1,9 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 
-const url = import.meta.env.VITE_SUPABASE_URL?.trim()
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
 
 /** Refuse obviously-privileged keys so a service_role key can never ship in the bundle. */
 export function assertPublicKey(k: string): void {
-  if (k.startsWith('sb_secret_')) throw new Error('VITE_SUPABASE_ANON_KEY is a secret key. Use the anon/publishable key.')
+  if (k.startsWith('sb_secret_')) throw new Error('The Supabase key is a secret key (sb_secret_). Use the publishable key (sb_publishable_) or the legacy anon key.')
   const parts = k.split('.')
   if (parts.length === 3) {
     try {
@@ -23,6 +21,9 @@ export type AuthConfig =
   | { mode: 'misconfigured'; reason: string }
 
 export function resolveAuthConfig(): AuthConfig {
+  const url = import.meta.env.VITE_SUPABASE_URL?.trim()
+  // Either the new publishable key (sb_publishable_…) or the legacy anon JWT. VITE_SUPABASE_PUBLISHABLE_KEY is an alias.
+  const key = (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY)?.trim()
   const demoAllowed = import.meta.env.DEV || import.meta.env.VITE_DEMO_MODE === 'true'
   if (url && key) {
     try { assertPublicKey(key) } catch (e) { return { mode: 'misconfigured', reason: (e as Error).message } }
@@ -34,5 +35,5 @@ export function resolveAuthConfig(): AuthConfig {
     }
   }
   if (demoAllowed) return { mode: 'demo' }
-  return { mode: 'misconfigured', reason: 'VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are not set for this build.' }
+  return { mode: 'misconfigured', reason: 'VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY (or VITE_SUPABASE_ANON_KEY) are not set for this build.' }
 }

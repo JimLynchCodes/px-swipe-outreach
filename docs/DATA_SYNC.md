@@ -54,7 +54,8 @@ npm run sync:quickvee:orders -- --from 2023-01-01 --to 2023-12-31   # deep backf
 
 **Scrape only with the merchant's own Quickvee account.**
 
-- **Credentials.** `QUICKVEE_EMAIL` and `QUICKVEE_PASSWORD` come from the environment only. They're never logged (they're redacted even if a page echoes them), and the UI shows **Not configured** until both are set.
+- **Credentials.** The Quickvee login page has three fields, which map to `QUICKVEE_STORE_NAME`, `QUICKVEE_USERNAME` and `QUICKVEE_PASSWORD`. They come from the environment only and are never logged (they're redacted even if a page echoes them). The Data sync page shows **Not configured** and lists whichever names are missing until all three are set. `QUICKVEE_EMAIL` still works as a deprecated alias for `QUICKVEE_USERNAME`.
+- **Login selectors.** Each field is found by its label ("Store name", "Username", "Password"), then its placeholder, then its `name`/`id` (`QV.login` in `src/sync/quickvee/selectors.ts`). Small markup changes therefore don't break the login.
 - **Session.** Cookies persist in `QUICKVEE_STATE_DIR/session.json` (default `.quickvee/`, gitignored and dockerignored). The Docker image uses `/app/.quickvee`; mount a volume there.
 - **MFA.** A headless run stops with a clear error. Run once headed (below), complete MFA in the browser, and the session is saved.
 - **Polite.** At most one navigation per `QUICKVEE_MIN_DELAY_MS` (1500 ms). Orders go in `QUICKVEE_CHUNK_DAYS` windows (7).
@@ -66,7 +67,7 @@ npm run sync:quickvee:orders -- --from 2023-01-01 --to 2023-12-31   # deep backf
 
 The real portal's markup isn't documented. Every selector and path lives in `src/sync/quickvee/selectors.ts`, and the mock portal (`test/fixtures/quickveePortal.ts`) implements exactly those. To calibrate:
 
-1. On a machine with a display: `cd retail-outreach-backend && QUICKVEE_HEADLESS=false QUICKVEE_MIN_DELAY_MS=3000 npm run sync -- quickvee-rewards --dry-run` (with `QUICKVEE_EMAIL`/`QUICKVEE_PASSWORD`/`QUICKVEE_BASE_URL` in your env file).
+1. On a machine with a display: `cd retail-outreach-backend && QUICKVEE_HEADLESS=false QUICKVEE_MIN_DELAY_MS=3000 npm run sync -- quickvee-rewards --dry-run` (with `QUICKVEE_STORE_NAME`/`QUICKVEE_USERNAME`/`QUICKVEE_PASSWORD`/`QUICKVEE_BASE_URL` in your env file).
 2. Watch the login. If it stalls, inspect the page (DevTools) and update `QV.login.*`, `QV.loggedIn` and `QV.paths.*`. Complete MFA if asked; the session is then saved.
 3. On the rewards and orders pages, check that `QV.exportCsv` matches the export button. If there's no export, set the table, row and `data-col` cell selectors and `QV.nextPage`.
 4. Re-run with `--dry-run` until the run log shows the expected row counts, then update the mock portal to match and run `npm test`.
@@ -85,14 +86,14 @@ Try the scraper locally against the mock: `npm run quickvee:mock` (http://localh
   - `--out` defaults to `quickvee-orders-<from>_<to>.csv`
   - `--tz` is the store timezone for portal dates (default `America/New_York`)
   - `--headed` shows the browser
-- Credentials come from the environment, e.g. `npx tsx --env-file=.env.local src/orders/scrapeCli.ts …`, or put `QUICKVEE_EMAIL`, `QUICKVEE_PASSWORD` and `QUICKVEE_BASE_URL` in your shell.
+- Credentials come from the environment, e.g. `npx tsx --env-file=.env.local src/orders/scrapeCli.ts …`, or put `QUICKVEE_STORE_NAME`, `QUICKVEE_USERNAME`, `QUICKVEE_PASSWORD` and `QUICKVEE_BASE_URL` in your shell.
 - **First run on the real portal (headed calibration):**
   1. Run `npm run scrape:quickvee:orders -- --from 2026-11-01 --to 2026-11-07 --out test.csv --headed` with `QUICKVEE_MIN_DELAY_MS=3000` on a machine with a display.
   2. Complete MFA if asked; the session is saved in `QUICKVEE_STATE_DIR`.
   3. If login or the orders page stalls, fix `src/sync/quickvee/selectors.ts` as described in *Calibrating Quickvee selectors* above.
   4. Repeat until `test.csv` has the expected orders.
   5. Later runs can be headless.
-- **Try it against the mock:** run `npm run quickvee:mock`, then `QUICKVEE_BASE_URL=http://localhost:4799 QUICKVEE_EMAIL=demo@store.test QUICKVEE_PASSWORD=correct-horse npm run scrape:quickvee:orders -- --from 2026-09-01 --to 2026-11-07 --out orders.csv`. `test/scrape-orders.test.ts` covers both the CSV export and crawl modes, checks the output is accepted by the import, and runs the CLI.
+- **Try it against the mock:** run `npm run quickvee:mock`, then `QUICKVEE_BASE_URL=http://localhost:4799 QUICKVEE_STORE_NAME=cloud9-qv-store QUICKVEE_USERNAME=qv-user-7731 QUICKVEE_PASSWORD=correct-horse npm run scrape:quickvee:orders -- --from 2026-09-01 --to 2026-11-07 --out orders.csv`. `test/scrape-orders.test.ts` covers both the CSV export and crawl modes, checks the output is accepted by the import, and runs the CLI.
 - The output contains customer PII. Keep it out of git (`*.csv` in the backend is gitignored except test fixtures).
 
 ### Runtime

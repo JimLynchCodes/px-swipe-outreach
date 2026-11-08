@@ -3,14 +3,14 @@
 ## Secrets
 | Secret | Where it lives | Never in |
 |---|---|---|
-| Supabase `service_role` / `sb_secret_` key (`SUPABASE_SERVICE_ROLE_KEY`) | backend env, only when `INVITE_MAILER=supabase`; used only for the Auth invite/magic-link endpoints, never for data queries | frontend, git, logs |
+| Supabase secret key `sb_secret_…` or legacy `service_role` key (`SUPABASE_SERVICE_ROLE_KEY` or `SUPABASE_SECRET_KEY`) | backend env, only when `INVITE_MAILER=supabase`; used only for the Auth invite/magic-link endpoints, never for data queries | frontend, git, logs |
 | `DATABASE_URL` (DB password) | backend/worker env | frontend, git, logs |
 | `SUPABASE_JWT_SECRET` (legacy HS256 only) | backend env | frontend |
 | `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, SMS/email provider keys | backend env | frontend |
-| Data sync credentials (`OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY`, `SENDGRID_API_KEY`, `QUICKVEE_EMAIL`/`QUICKVEE_PASSWORD`) | backend env only; values redacted from run logs; the UI gets only missing env *names* | frontend, git, logs, `etl_runs.log` |
+| Data sync credentials (`OPENAI_ADMIN_KEY`, `OPENROUTER_PROVISIONING_KEY`, `SENDGRID_API_KEY`, `QUICKVEE_STORE_NAME`/`QUICKVEE_USERNAME`/`QUICKVEE_PASSWORD`) | backend env only; values redacted from run logs; the UI gets only missing env *names* | frontend, git, logs, `etl_runs.log` |
 | Quickvee session cookies + raw snapshots (`.quickvee/`) | server disk/volume, mode 0700/0600; gitignored and dockerignored (contains customer PII) | git, images |
 
-Only `VITE_SUPABASE_URL` and the anon/publishable key are shipped to browsers. The frontend refuses a service_role or secret key at startup.
+Only `VITE_SUPABASE_URL` and the publishable key (`sb_publishable_…`) or legacy anon key are shipped to browsers. The frontend refuses a service_role or secret key at startup.
 
 ## Authentication
 - Supabase Auth (email + password, magic link). Sessions persist in the browser and refresh automatically (PKCE flow). On any API `401` the app signs out.

@@ -4,7 +4,7 @@
  *
  *   npm run scrape:quickvee:orders -- --from 2026-01-01 --to 2026-11-07 --out orders.csv [--headed] [--tz America/New_York]
  *
- * Needs QUICKVEE_EMAIL / QUICKVEE_PASSWORD (and QUICKVEE_BASE_URL for the real portal) in the environment, e.g. --env-file=.env.local.
+ * Needs QUICKVEE_STORE_NAME / QUICKVEE_USERNAME / QUICKVEE_PASSWORD (and QUICKVEE_BASE_URL for the real portal) in the environment, e.g. --env-file=.env.local.
  */
 import type { AppConfig } from "../config.js";
 import { addDays, isoDay, type JobContext } from "../sync/job.js";

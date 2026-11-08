@@ -16,14 +16,14 @@ Build both images from the **repo root**:
 docker build -f retail-outreach-backend/Dockerfile -t outreach-api .
 docker build -f px-swipe-outreach-frontend/Dockerfile \
   --build-arg VITE_SUPABASE_URL=https://<ref>.supabase.co \
-  --build-arg VITE_SUPABASE_ANON_KEY=<anon key> -t outreach-web .
+  --build-arg VITE_SUPABASE_PUBLISHABLE_KEY=<sb_publishable_… key> -t outreach-web .
 ```
 
 ## Production checklist
 - `NODE_ENV=production`. Config validation then **refuses to boot** unless `AUTH_MODE=supabase`, `DATA_STORE=postgres`, `CORS_ORIGIN` lists explicit https origins, and the demo reset is off.
 - Set `PUBLIC_API_URL` (https) and `UNSUBSCRIBE_SIGNING_SECRET` (≥ 32 random chars). The server refuses to boot in production without them. Set `TWILIO_AUTH_TOKEN` before pointing Twilio at `/webhooks/twilio/sms/<orgId>`, and `INBOUND_EMAIL_DOMAIN` + `INBOUND_EMAIL_SECRET` for email replies. See [OUTREACH_FEATURES.md](OUTREACH_FEATURES.md).
 - `TRUST_PROXY=true` behind a load balancer (correct client IPs for rate limiting and logs).
-- Set `DATABASE_CA_CERT` for verified TLS to Supabase.
+- Optional: set `DATABASE_CA_CERT` for verified TLS to Supabase.
 - Tune `RATE_LIMIT_PER_MINUTE` / `SEND_RATE_LIMIT_PER_MINUTE`. Limits are in-memory per instance; use a Redis store if you run many replicas.
 - On SIGTERM the server stops accepting, drains in-flight requests, closes DB/Redis, and exits within `SHUTDOWN_TIMEOUT_MS`.
 - Logs are JSON (pino) with request IDs (`X-Request-Id` is accepted or generated, and echoed). Auth headers, cookies, phone numbers, emails and message bodies are redacted.
