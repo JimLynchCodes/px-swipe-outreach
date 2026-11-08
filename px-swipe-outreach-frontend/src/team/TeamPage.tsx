@@ -5,9 +5,11 @@ import { useAuth } from '../auth/AuthProvider'
 import { Header } from '../components/Header'
 import { navigate, ROUTES } from '../router'
 import { canManageTeam, canModify, grantableRoles, relativeExpiry, ROLE_HELP, ROLE_LABEL } from './roles'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
-type Notice = { kind: 'ok' | 'err'; text: string; link?: string } | null
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
+type Notice = { kind: 'ok' | 'err'; text: string; link?: string; key?: string } | null
+const message = (e: unknown) => friendlyError(e)
 
 export function TeamPage() {
   const auth = useAuth()
@@ -32,12 +34,16 @@ export function TeamPage() {
     setBusy(key); setNotice(null)
     try {
       const n = await fn()
-      if (n) setNotice(n)
+      if (n) setNotice(n.kind === 'err' ? { ...n, key } : n)
       await load()
+      return n?.kind !== 'err'
     } catch (e) {
-      setNotice({ kind: 'err', text: message(e) })
+      setNotice({ kind: 'err', key, text: message(e) })
+      return false
     } finally { setBusy(null) }
   }
+
+  const errFor = (key: string) => (notice?.kind === 'err' && notice.key === key ? notice.text : null)
 
   const changeRole = (m: TeamMember, role: Role) => run(`role:${m.userId}`, async () => {
     if (m.userId === myId && !window.confirm(`Change your own role to ${ROLE_LABEL[role]}? You may lose access to team settings.`)) return
@@ -83,14 +89,14 @@ export function TeamPage() {
         <p className="muted">{org?.orgName ?? 'Your organization'} · you are {me ? ROLE_LABEL[me] : '—'}</p>
       </div>
 
-      {notice && (
-        <div className={`notice ${notice.kind}`} role={notice.kind === 'err' ? 'alert' : 'status'}>
+      {notice?.kind === 'ok' && (
+        <div className="notice ok" role="status">
           <span>{notice.text}</span>
           {notice.link && <CopyLink url={notice.link} />}
         </div>
       )}
 
-      {manage && <InviteForm me={me} busy={busy === 'invite'} onInvite={(email, role) => run('invite', async () => outcome(await api.team.invite(email, role), email, 'sent'))} />}
+      {manage && <InviteForm me={me} busy={busy === 'invite'} error={errFor('invite')} onInvite={(email, role) => run('invite', async () => outcome(await api.team.invite(email, role), email, 'sent'))} />}
 
       <section className="panel" aria-labelledby="members-h">
         <h3 id="members-h" className="eyebrow">Members {members && `(${members.length})`}</h3>
@@ -122,6 +128,7 @@ export function TeamPage() {
                       </button>
                     )}
                   </div>
+                  <ErrorBubble error={errFor(`role:${m.userId}`) ?? errFor(`remove:${m.userId}`)} className="row-error" />
                 </li>
               )
             })}
@@ -157,6 +164,7 @@ export function TeamPage() {
                         </button>
                       </div>
                     )}
+                    <ErrorBubble error={errFor(`resend:${inv.id}`) ?? errFor(`revoke:${inv.id}`)} className="row-error" />
                   </li>
                 )
               })}
@@ -174,14 +182,13 @@ function outcome(r: { emailSent: boolean; acceptUrl?: string }, email: string, v
   return { kind: 'err', text: `The invitation was saved, but the email to ${email} failed to send. Try “Resend”.` }
 }
 
-function InviteForm({ me, busy, onInvite }: { me: Role | null; busy: boolean; onInvite: (email: string, role: Role) => Promise<void> }) {
+function InviteForm({ me, busy, error, onInvite }: { me: Role | null; busy: boolean; error: string | null; onInvite: (email: string, role: Role) => Promise<boolean> }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<Role>('staff')
   const roles = grantableRoles(me)
   async function submit(e: FormEvent) {
     e.preventDefault()
-    await onInvite(email.trim(), role)
-    setEmail('')
+    if (await onInvite(email.trim(), role)) setEmail('')
   }
   return (
     <form className="panel invite-form" onSubmit={submit} aria-label="Invite a teammate">
@@ -194,6 +201,7 @@ function InviteForm({ me, busy, onInvite }: { me: Role | null; busy: boolean; on
         </select>
         <button className="btn-primary" type="submit" disabled={busy || !email.trim()}>{busy ? 'Sending…' : 'Send invite'}</button>
       </div>
+      <ErrorBubble error={error} />
       <p className="muted small">{ROLE_HELP[role]}. Invitations expire after 7 days.</p>
     </form>
   )

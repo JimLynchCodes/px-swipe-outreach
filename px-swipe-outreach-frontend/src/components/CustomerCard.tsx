@@ -3,6 +3,7 @@ import {
   Pencil, Phone, ShieldAlert, ShieldCheck, ShoppingBag, Sparkles, Store, Tag, Check, Repeat, X,
 } from 'lucide-react'
 import type { Channel, OutreachCard, Suggestion } from '../types'
+import { ErrorBubble } from './ErrorBubble'
 import { charCount, daysAgo, money, shortDate, sinceShort, SMS_MAX } from '../lib/format'
 import { categoryLabel, DAYS, SEGMENT_LABEL } from '../lib/week'
 
@@ -117,7 +118,7 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
       <section className="ai" aria-live="polite">
         <h3 className="eyebrow green"><Sparkles size={14} aria-hidden /> AI Suggestion</h3>
         {draft.loading && !s && <p className="skeleton">Thinking up the best offer…</p>}
-        {draft.error && <p className="error">{draft.error} <button className="link" onClick={onRetry}>Retry</button></p>}
+        {draft.error && !s && <p className="muted small">No suggestion yet. <button className="link" onClick={onRetry}>Retry</button></p>}
         {s && (
           <>
             <h4>{s.title}</h4>
@@ -165,6 +166,8 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
         <button role="radio" aria-checked={draft.channel === 'email'} className={draft.channel === 'email' ? 'on' : ''}
           disabled={!contact.email || draft.editing} onClick={() => onChannel('email')}><Mail size={16} aria-hidden /> Email</button>
       </div>
+      {/* Suggestion errors (Text/Email switch or Retry) sit right under the channel buttons that triggered them. */}
+      <ErrorBubble error={draft.error} />
       <p className={`contact-note ${channelOk ? '' : 'warn'}`}>
         {draft.channel === 'sms' ? <Phone size={13} aria-hidden /> : <Mail size={13} aria-hidden />}
         {coolingUntil

@@ -4,6 +4,8 @@ import { api } from '../api'
 import { Modal } from '../components/Modal'
 import { money } from '../lib/format'
 import type { ImportPreview } from '../types'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 const MAX_BYTES = 5 * 1024 * 1024
 type Step =
@@ -30,7 +32,7 @@ export function ManualImport() {
       const csv = await file.text()
       const preview = await api.customers.preview(csv)
       setStep({ kind: 'preview', csv, fileName: file.name, preview })
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setStep({ kind: 'idle' }) }
+    } catch (e) { setErr(friendlyError(e)); setStep({ kind: 'idle' }) }
   }
 
   async function submit() {
@@ -39,7 +41,7 @@ export function ManualImport() {
     try {
       const r = await api.customers.import(step.csv)
       setStep({ kind: 'done', inserted: r.inserted, existing: r.existing })
-    } catch (e) { setErr(e instanceof Error ? e.message : String(e)); setStep({ ...step, kind: 'preview' }) }
+    } catch (e) { setErr(friendlyError(e)); setStep({ ...step, kind: 'preview' }) }
   }
 
   const cancel = () => { setStep({ kind: 'idle' }); setErr(null) }
@@ -57,12 +59,14 @@ export function ManualImport() {
           <h3><Upload size={17} aria-hidden /> Customers from a file</h3>
           <p className="muted small">Upload a customer CSV (e.g. Quickvee's customer export). Only customers who aren't already here (by customer ID, phone or email) are added.</p>
         </div>
-        <button className="btn-secondary" aria-label="Manually add customers" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
-          {step.kind === 'reading' ? 'Reading…' : 'Manually add'}
-        </button>
+        <div className="btn-wrap">
+          <button className="btn-secondary" aria-label="Manually add customers" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
+            {step.kind === 'reading' ? 'Reading…' : 'Manually add'}
+          </button>
+          <ErrorBubble error={step.kind === 'idle' ? err : null} />
+        </div>
         <input ref={input} type="file" accept=".csv,text/csv" hidden aria-label="Customer CSV file" onChange={e => void onFile(e.target.files?.[0])} />
       </div>
-      {err && step.kind === 'idle' && <p className="error" role="alert">{err}</p>}
 
       {p && (step.kind === 'preview' || step.kind === 'saving') && (
         <Modal title={p.newCustomers.length ? `Add ${p.newCustomers.length} new customer${p.newCustomers.length === 1 ? '' : 's'}?` : 'No new customers'}
@@ -70,6 +74,7 @@ export function ManualImport() {
           actions={<>
             <button className="btn-secondary" onClick={cancel} disabled={step.kind === 'saving'}>Cancel</button>
             {p.newCustomers.length > 0 && <button className="btn-primary" onClick={() => void submit()} disabled={step.kind === 'saving'}>{step.kind === 'saving' ? 'Saving…' : 'Submit'}</button>}
+            <ErrorBubble error={err} className="modal-error" />
           </>}>
           <p className="muted small">{step.fileName}{skipped && ` · skipped: ${skipped}`}</p>
           {p.newCustomers.length > 0 ? (
@@ -90,7 +95,6 @@ export function ManualImport() {
             </details>
           )}
           {p.newCustomers.length > 0 && <p className="muted small">They'll be added as opted in to texts and email and verified 21+ (checked at in-store signup). The consent history records this as an in-store signup via import.</p>}
-          {err && <p className="error" role="alert">{err}</p>}
         </Modal>
       )}
 

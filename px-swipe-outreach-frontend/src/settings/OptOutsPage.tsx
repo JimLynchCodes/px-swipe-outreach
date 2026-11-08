@@ -4,6 +4,8 @@ import { useAuth } from '../auth/AuthProvider'
 import { api } from '../api'
 import { PageShell } from '../components/PageShell'
 import type { Channel, ConsentEvent, ConsentSource, OptOutEntry, OptOutSource } from '../types'
+import { ErrorBubble } from '../components/ErrorBubble'
+import { friendlyError } from '../lib/errors'
 
 const SOURCE_LABEL: Record<OptOutSource, string> = { sms_stop: 'STOP reply', email_unsubscribe: 'Unsubscribe link', manual: 'Manual', provider: 'Bounce/complaint' }
 const CONSENT_SOURCE: Record<ConsentSource, string> = {
@@ -18,7 +20,7 @@ export function OptOutsPage() {
   const canRequest = auth.role === 'owner' || auth.role === 'admin'
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
-  const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string; id?: string } | null>(null)
   const [reload, setReload] = useState(0)
   const [channel, setChannel] = useState<Channel | ''>('')
   const [q, setQ] = useState('')
@@ -43,7 +45,7 @@ export function OptOutsPage() {
       await api.requestReoptIn(o.id)
       setNotice({ kind: 'ok', text: `Re-opt-in request sent to ${o.customerName ?? o.contact}` })
       setReload(n => n + 1)
-    } catch (e) { setNotice({ kind: 'err', text: e instanceof Error ? e.message : String(e) }) }
+    } catch (e) { setNotice({ kind: 'err', id: o.id, text: friendlyError(e) }) }
     finally { setBusy(null) }
   }, [])
 
@@ -60,7 +62,7 @@ export function OptOutsPage() {
           </select>
         </div>
         {error && <p className="error" role="alert">{error}</p>}
-        {notice && <p className={notice.kind === 'err' ? 'error' : 'green'} role={notice.kind === 'err' ? 'alert' : 'status'}>{notice.text}</p>}
+        {notice?.kind === 'ok' && <p className="green" role="status">{notice.text}</p>}
         {!data ? <p className="muted">Loading…</p> : data.items.length === 0 ? <p className="muted">No opt-outs{debounced || channel ? ' match these filters' : ' yet'}.</p> : (
           <table className="table">
             <thead><tr><th>Customer</th><th>Contact</th><th>Channel</th><th>Opted out</th><th>Source</th><th>Re-opt-in</th></tr></thead>
@@ -79,7 +81,8 @@ export function OptOutsPage() {
                   <td>{o.channel === 'sms' ? <><MessageCircle size={14} aria-hidden /> Text</> : <><Mail size={14} aria-hidden /> Email</>}</td>
                   <td>{new Date(o.createdAt).toLocaleDateString()}</td>
                   <td>{SOURCE_LABEL[o.source]}</td>
-                  <td><ReoptCell o={o} canRequest={canRequest} busy={busy === o.id} onRequest={() => void requestReoptIn(o)} /></td>
+                  <td><ReoptCell o={o} canRequest={canRequest} busy={busy === o.id} onRequest={() => void requestReoptIn(o)} />
+                    <ErrorBubble error={notice?.kind === 'err' && notice.id === o.id ? notice.text : null} /></td>
                 </tr>
                 {open === o.id && <tr className="history-row"><td colSpan={6}><History id={o.id} key={`${o.id}-${reload}`} /></td></tr>}
                 </Fragment>
