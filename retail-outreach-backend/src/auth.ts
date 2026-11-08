@@ -3,7 +3,8 @@ import type { AppConfig } from "./config.js";
 import type { Membership, MemberRole } from "./types.js";
 
 /** Authenticated principal, derived only from a verified token (never from client-supplied ids). */
-export type AuthUser = { id: string; email: string | null };
+/** emailVerified comes from the token (Supabase user_metadata.email_verified); the Postgres store re-checks auth.users. */
+export type AuthUser = { id: string; email: string | null; emailVerified?: boolean };
 
 /** Org context for a request, resolved from the user's memberships. */
 export type OrgContext = { orgId: string; role: MemberRole; businessName: string | null; orgName?: string };
@@ -61,7 +62,9 @@ export class SupabaseJwtAuthenticator implements Authenticator {
         throw new AuthError(401, "invalid_token", "Token has no valid subject");
       }
       if (payload.role !== "authenticated") throw new AuthError(401, "invalid_token", "Token is not for an authenticated user");
-      return { id: payload.sub, email: typeof payload.email === "string" ? payload.email : null };
+      const meta = payload.user_metadata as { email_verified?: unknown } | undefined;
+      const emailVerified = meta?.email_verified === true || payload.email_verified === true;
+      return { id: payload.sub, email: typeof payload.email === "string" ? payload.email : null, emailVerified };
     } catch (e) {
       if (e instanceof AuthError) throw e;
       if (e instanceof joseErrors.JWTExpired) throw new AuthError(401, "token_expired", "Session expired");

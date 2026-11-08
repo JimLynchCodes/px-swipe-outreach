@@ -87,6 +87,12 @@ const schema = z.object({
   /** The secret key (sb_secret_…). SUPABASE_SERVICE_ROLE_KEY is the legacy alias (old service_role JWT); this one wins. */
   SUPABASE_SECRET_KEY: z.string().min(20).optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(20).optional(),
+  /**
+   * Comma-separated emails that are approved as owners on first sign-in (case-insensitive, confirmed email only).
+   * With no membership yet they're added as owner of the default org (the oldest one, or BOOTSTRAP_ORG_NAME if none).
+   */
+  BOOTSTRAP_OWNER_EMAILS: z.string().optional().transform(v => [...new Set((v ?? "").split(/[\s,;]+/).map(s => s.trim().toLowerCase()).filter(s => s.includes("@")))]),
+  BOOTSTRAP_ORG_NAME: z.string().trim().min(1).max(200).default("My Store"),
   INVITE_TTL_HOURS: z.coerce.number().int().min(1).max(24 * 30).default(168),
   INVITE_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
   INVITE_RESEND_COOLDOWN_SECONDS: z.coerce.number().int().min(0).default(60),

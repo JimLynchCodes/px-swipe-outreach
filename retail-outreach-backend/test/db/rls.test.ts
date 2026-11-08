@@ -11,6 +11,7 @@ import { parseOrderCsv } from "../../src/orders/csvImport.js";
 import { migrate } from "../../src/db/migrate.js";
 import { seedOrg, seedUuid } from "../../src/db/seed.js";
 import { PostgresStore } from "../../src/store/postgres.js";
+import { bootstrapOwner } from "../../src/db/bootstrapOwner.js";
 import { processDelivery } from "../../src/delivery.js";
 import { ConsoleMessageProvider } from "../../src/providers/messaging.js";
 import { StoreError } from "../../src/store/types.js";
@@ -560,6 +561,34 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
       const ev = await admin.query(`select count(*)::int n from public.consent_events where org_id = $1 and source = 'import_signup' and value = '+16095550199'`, [ORG_A]);
       expect(ev.rows[0].n).toBe(1);
       expect(await store.existingOrderIds({ userId: BOB, orgId: ORG_A }, ["A-1001"])).toEqual(new Set());
+    });
+  });
+  describe("bootstrap owner", () => {
+    it("adds a confirmed auth user (case-insensitive) as owner of the oldest org; refuses unconfirmed/unknown", async () => {
+      const JIM = "d1d1d1d1-0000-4000-8000-0000000000aa", UNV = "d1d1d1d1-0000-4000-8000-0000000000bb";
+      await admin.query(`insert into auth.users (id, email, email_confirmed_at) values ($1,'MrDotJim@Gmail.com',now()),($2,'unverified@x.test',null)`, [JIM, UNV]);
+      const oldest = (await admin.query(`select id from public.organizations order by created_at, id limit 1`)).rows[0].id;
+      expect(await store.bootstrapOwner({ id: UNV, email: "unverified@x.test" }, "X")).toBe(false);
+      expect(await store.bootstrapOwner({ id: JIM, email: "mrdotjim@gmail.com" }, "X")).toBe(true);
+      expect(await store.listMemberships(JIM)).toEqual([expect.objectContaining({ orgId: oldest, role: "owner" })]);
+      expect(await store.bootstrapOwner({ id: JIM, email: "mrdotjim@gmail.com" }, "X")).toBe(true);
+      const c = await admin.connect();
+      try {
+        expect(await bootstrapOwner(c, { email: "nobody@x.test", orgName: "X" })).toEqual({ status: "no_user" });
+        expect(await bootstrapOwner(c, { email: "UNVERIFIED@x.test", orgName: "X" })).toEqual({ status: "unverified" });
+        expect(await bootstrapOwner(c, { email: "mrdotjim@gmail.com", orgName: "X" })).toEqual({ status: "already_member", orgId: oldest });
+      } finally { c.release(); }
+    });
+    it("creates the default org when none exists", async () => {
+      const c = await admin.connect();
+      try {
+        await c.query("begin");
+        await c.query("delete from public.organizations");
+        const r = await bootstrapOwner(c, { email: "mrdotjim@gmail.com", orgName: "Cloud 9" });
+        expect(r).toMatchObject({ status: "added", orgCreated: true });
+        const o = await c.query(`select name, business_name from public.organizations`);
+        expect(o.rows).toEqual([{ name: "Cloud 9", business_name: "Cloud 9" }]);
+      } finally { await c.query("rollback"); c.release(); }
     });
   });
 });

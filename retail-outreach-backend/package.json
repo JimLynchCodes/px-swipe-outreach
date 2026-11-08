@@ -15,6 +15,7 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:migrate:local": "tsx src/db/migrate.ts --bootstrap-plain-postgres",
     "db:seed": "tsx src/db/seed.ts",
+    "bootstrap:owner": "tsx src/db/bootstrapOwnerCli.ts",
     "worker": "tsx src/worker.ts",
     "test": "vitest run",
     "test:watch": "vitest",

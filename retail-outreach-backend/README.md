@@ -86,6 +86,7 @@ See [`.env.example`](.env.example) for the full annotated list. Empty values cou
 | `QUICKVEE_STORE_NAME` / `QUICKVEE_USERNAME` / `QUICKVEE_PASSWORD` | – | Quickvee rewards/orders sync: the three login fields (merchant's own login; never logged). `QUICKVEE_EMAIL` is a deprecated alias for the username. More `QUICKVEE_*` knobs in `.env.example` and [docs/DATA_SYNC.md](../docs/DATA_SYNC.md) |
 | `SMS_PROVIDER` / `EMAIL_PROVIDER` | `console` | Only `console` is implemented so far |
 | `APP_URL` | `http://localhost:5173` | Frontend origin used in invite links. Must be `https` in production |
+| `BOOTSTRAP_OWNER_EMAILS` / `BOOTSTRAP_ORG_NAME` | – / `My Store` | Comma-separated emails approved as **owner** of the default org on first sign-in (confirmed email, case-insensitive). CLI alternative: `npm run bootstrap:owner -- you@example.com`. See docs/SUPABASE_SETUP.md §4 |
 | `INVITE_MAILER` | `console` | `console` (logs the link; dev only) or `supabase` (required in production) |
 | `SUPABASE_SECRET_KEY` (legacy alias `SUPABASE_SERVICE_ROLE_KEY`) | – | Required for `INVITE_MAILER=supabase`. The secret key (`sb_secret_…`); the legacy `service_role` JWT still works. Backend secret, only used to send invite emails |
 | `INVITE_TTL_HOURS` / `INVITE_RATE_LIMIT_PER_HOUR` / `INVITE_RESEND_COOLDOWN_SECONDS` | `168` / `30` / `60` | |

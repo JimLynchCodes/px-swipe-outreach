@@ -34,8 +34,33 @@ DATABASE_URL=postgres://... npm run db:migrate
 - **Redirect URLs for invitations**: also add `https://outreach.example.com/invite/accept**` and `http://localhost:5173/invite/accept**`. Invite emails link back there with a `?token=` the backend checks.
 - **Email templates**: the *Invite user* template is used for people who have no account yet; *Magic Link* is used when the invitee already has one. Both keep `{{ .ConfirmationURL }}`; rewording them (e.g. "You've been invited to join your team on Outreach") is optional.
 
-## 4. Create the first organization
-Sign up once in the app (or invite the user in the dashboard), then:
+## 4. Create the first organization / first owner
+
+**Recommended: `BOOTSTRAP_OWNER_EMAILS`.** Put your email in the backend env (`BOOTSTRAP_OWNER_EMAILS=mrdotjim@gmail.com`;
+comma-separate several). When that person signs in with a **confirmed** email and isn't on any team yet, the API makes them
+**owner** of the default org: the oldest organization, or a new one named `BOOTSTRAP_ORG_NAME` (default "My Store") when there
+are none. The match is case-insensitive. Confirmation is checked in `auth.users.email_confirmed_at`, not trusted from the browser.
+Removing the email later doesn't remove the membership; manage that on the Team page.
+
+The login page has no sign-up link, so create the Auth user first: **Authentication → Users → Add user → Create new user**
+(email + password, tick **Auto Confirm User**). Or use **Send invitation** and set a password from the email link.
+
+**Alternative (CLI, no restart needed):** after the user exists and is confirmed:
+```bash
+cd retail-outreach-backend
+npx tsx --env-file=.env.supabase.local src/db/bootstrapOwnerCli.ts mrdotjim@gmail.com
+# or, with DATABASE_URL already in your shell / .env:
+npm run bootstrap:owner -- mrdotjim@gmail.com --org-name "Cloud 9"
+```
+**Or in SQL** (Dashboard → SQL Editor), for an existing confirmed user and an existing org:
+```sql
+insert into public.memberships (org_id, user_id, role)
+select (select id from public.organizations order by created_at limit 1), u.id, 'owner'
+from auth.users u where lower(u.email) = lower('mrdotjim@gmail.com') and u.email_confirmed_at is not null
+on conflict (org_id, user_id) do update set role = 'owner';
+```
+
+**With demo data:** sign up once in the app (or invite the user in the dashboard), then:
 ```bash
 cd retail-outreach-backend
 DATABASE_URL=postgres://... npm run db:seed -- --owner-email you@example.com
@@ -113,6 +138,7 @@ In Supabase mode everything sits behind the login page, and **only people on an 
   **auto-joined** with the invited role on first sign-in, the same as clicking the invite link
   (`public.claim_pending_invitations()`, a narrow `security definer` function). The invite is marked accepted and audited
   (`invitation_accepted`, `via: sign_in`).
+- **Bootstrap owners:** emails in `BOOTSTRAP_OWNER_EMAILS` with a confirmed email and no membership become owner of the default org on sign-in (section 4).
 - **Everyone else** sees exactly: "`<email>` has not been approved for this application. If this is in error, please contact your
   administrator." along with a Sign out button. The API answers **403 `not_approved`** on every `/api` route, including `/api/me`.
   The only exception is the invite-accept endpoint, so an invite link can still turn someone into a member.
@@ -123,4 +149,4 @@ In Supabase mode everything sits behind the login page, and **only people on an 
 
 **Sign-ups:** the login page has no "Create an account" link (invite links still let invitees create their account). **Also turn
 off open sign-ups in the dashboard**: Authentication → Sign In / Providers → uncheck *Allow new users to sign up*. Invitations
-(`auth.admin.inviteUserByEmail`) keep working. The first owner is bootstrapped with the seed script (above).
+(`auth.admin.inviteUserByEmail`) keep working. The first owner comes from `BOOTSTRAP_OWNER_EMAILS`, `npm run bootstrap:owner`, or the seed script (section 4).

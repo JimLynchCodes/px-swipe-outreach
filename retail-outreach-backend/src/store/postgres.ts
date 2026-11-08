@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { bootstrapOwner } from "../db/bootstrapOwner.js";
 import { createPool, type PoolOptions } from "../db/pool.js";
 import { ACTIONABLE_STATUSES, inDeck, maskRecipient, MIN_AGE, NO_COOLDOWN } from "../domain.js";
 import { newReplyToken } from "../replies/tokens.js";
@@ -982,6 +983,13 @@ export class PostgresStore implements OutreachStore {
   async claimPendingInvitations(user: { id: string; email: string | null }) {
     if (!isUuid(user.id) || !user.email) return 0;
     return this.asUser(user.id, async db => Number((await db.query(`select public.claim_pending_invitations() as n`)).rows[0].n), user.email.toLowerCase());
+  }
+
+  async bootstrapOwner(user: { id: string; email: string | null }, orgName: string) {
+    if (!isUuid(user.id) || !user.email) return false;
+    // Privileged: the user has no membership yet, so RLS would hide everything. Email confirmation is checked in auth.users.
+    const r = await this.tx(db => bootstrapOwner(db as pg.PoolClient, { email: user.email!, userId: user.id, orgName }));
+    return r.status === "added" || r.status === "already_member";
   }
 
   async acceptInvitation(user: { id: string; email: string | null }, tokenHash: string) {
