@@ -143,6 +143,8 @@ export interface OutreachStore {
   /** Accepts as the signed-in user; their verified email must match. */
   /** Auto-joins the user to every org with an unexpired pending invite for their email (case-insensitive). Returns orgs joined. */
   claimPendingInvitations(user: { id: string; email: string | null }): Promise<number>;
+  /** Approve a configured bootstrap owner (see BOOTSTRAP_OWNER_EMAILS): owner of the default org. True when added. */
+  bootstrapOwner(user: { id: string; email: string | null; emailVerified?: boolean }, orgName: string): Promise<boolean>;
   acceptInvitation(user: { id: string; email: string | null }, tokenHash: string): Promise<{ orgId: string; role: MemberRole; alreadyMember: boolean }>;
 
   // ── Customers (Registered users + CSV import) ──

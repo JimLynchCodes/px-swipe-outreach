@@ -127,6 +127,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       let memberships = await store.listMemberships(user.id);
       if (path !== INVITE_ACCEPT_PATH) {
         if (!memberships.length && (await store.claimPendingInvitations(user))) memberships = await store.listMemberships(user.id);
+        // Bootstrap owners (BOOTSTRAP_OWNER_EMAILS): approved on first sign-in with a confirmed email.
+        if (!memberships.length && user.email && config.BOOTSTRAP_OWNER_EMAILS.includes(user.email.trim().toLowerCase())
+          && (await store.bootstrapOwner(user, config.BOOTSTRAP_ORG_NAME))) {
+          request.log.info({ userId: user.id }, "bootstrap owner approved");
+          memberships = await store.listMemberships(user.id);
+        }
         if (!memberships.length) {
           return sendError(reply, 403, "not_approved",
             `${user.email ?? "This account"} has not been approved for this application. If this is in error, please contact your administrator.`);

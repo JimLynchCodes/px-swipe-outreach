@@ -823,6 +823,16 @@ export class MemoryStore implements OutreachStore {
     return n;
   }
 
+  async bootstrapOwner(user: { id: string; email: string | null; emailVerified?: boolean }, _orgName: string) {
+    if (!user.email || !user.emailVerified) return false;
+    if (this.roleIn(user.id, seed.DEMO_ORG_ID) === "owner") return true;
+    const meta = this.orgMeta(seed.DEMO_ORG_ID)!;
+    this.addMembership(user.id, { orgId: seed.DEMO_ORG_ID, orgName: meta.orgName, businessName: meta.businessName, role: "owner" }, user.email);
+    this.joined.set(`${seed.DEMO_ORG_ID}:${user.id}`, new Date());
+    this.audit({ userId: user.id, orgId: seed.DEMO_ORG_ID }, "bootstrap_owner_added", {});
+    return true;
+  }
+
   async acceptInvitation(user: { id: string; email: string | null }, tokenHash: string) {
     const r = this.invitations.find(x => x.tokenHash === tokenHash);
     if (!r) throw teamError("invitation_invalid");
