@@ -141,6 +141,8 @@ export type Suggestion = {
   aiAttempt?: { model: string; usage: { inputTokens: number; outputTokens: number; costUsd?: number } };
   /** Model's 0-1 confidence that the promotion fits (AI only). */
   confidence?: number;
+  /** True when AI failed and the rules template was used (shown subtly in the UI; not a personalized AI draft). */
+  template?: boolean;
   /** Deal the message uses (null = fallback offer or no discount). */
   deal: { id: string; title: string; day: number; discountLabel: string } | null;
   /** Why this outreach was chosen (short bullet points for staff). */

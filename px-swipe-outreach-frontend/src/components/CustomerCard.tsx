@@ -121,7 +121,7 @@ export function CustomerCard({ card, position, total, draft, onChannel, onMessag
         {draft.error && !s && <p className="muted small">No suggestion yet. <button className="link" onClick={onRetry}>Retry</button></p>}
         {s && (
           <>
-            <h4>{s.title}</h4>
+            <h4>{s.title}{s.template ? <span className="tag muted" title="Heuristic template — AI did not produce a personalized draft">template</span> : null}</h4>
             {s.deal && (
               <p className="deal-chip" aria-label="Chosen deal">
                 <Tag size={13} aria-hidden /> {s.deal.title} · {s.deal.discountLabel} · {DAYS[s.deal.day]}

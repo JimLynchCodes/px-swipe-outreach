@@ -65,6 +65,8 @@ export interface Suggestion {
   subject: string | null
   source: 'openai' | 'openrouter' | 'rules'
   model?: string
+  /** Rules template used after an AI failure (not a personalized model draft). */
+  template?: boolean
   deal: { id: string; title: string; day: number; discountLabel: string } | null
   reasons: string[]
   segment: Segment
