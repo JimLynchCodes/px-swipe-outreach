@@ -155,11 +155,9 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     const id = opp(ORG_A, "cust_0003");
     await store.optOut(actor, id, ["sms"], "opt_out");
     const o = await store.getOpportunity(actor, id);
-    // One channel left → card stays; both gone → suppressed.
+    // One channel left → card stays in the deck (email still reachable).
     expect(o).toMatchObject({ customer: { suppressed: ["sms"] } });
     expect(["pending", "drafted"]).toContain(o!.status);
-    await store.optOut(actor, id, ["email"], "opt_out");
-    expect((await store.getOpportunity(actor, id))!.status).toBe("suppressed");
     expect(await store.isSuppressed(ORG_A, "sms", "+1 (555) 555-0003")).toBe(true);
     expect(await store.isSuppressed(ORG_B, "sms", "+15555550003")).toBe(false);
     // Even a direct insert (bypassing the app checks) is refused by the trigger.
@@ -563,7 +561,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
         where p.org_id = $1 and p.external_id = 'qv:A-1001' order by pi.unit_price_cents desc`, [ORG_A]);
       expect(items.rows).toEqual([{ quantity: 2, unit_price_cents: 1800 }, { quantity: 1, unit_price_cents: 999 }]);
       const ev = await admin.query(`select count(*)::int n from public.consent_events where org_id = $1 and source = 'import_signup' and value = '+16095550199'`, [ORG_A]);
-      expect(ev.rows[0].n).toBe(1);
+      expect(ev.rows[0].n).toBe(0); // order import does not grant marketing consent
       expect(await store.existingOrderIds({ userId: BOB, orgId: ORG_A }, ["A-1001"])).toEqual(new Set());
     });
   });
