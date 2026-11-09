@@ -43,7 +43,9 @@ Suggestions are **cached per org + opportunity + channel** under a fingerprint o
 | Opening a card / swiping / revisiting the deck | **No** — cache hit |
 | Page navigation, re-render, remount | **No** |
 | Settings / brand voice / model / promotions change (fingerprint changes) or `refresh: true` (Retry, model picker, deals panel) | Yes — regenerate that card |
-| Explicit pick from Registered users | Yes if uncached (cooldown ignored for the pick) |
+| Explicit pick from Registered users | Yes if uncached (cooldown ignored); **blocked** with `no_marketing_consent` if they never opted in |
+
+Only customers with an active marketing opt-in on a reachable channel are in the deck; prepare/suggestion never run AI for anyone else.
 
 Demo mode keeps the cache in memory (`MemoryStore`). Supabase mode uses the `suggestion_cache` table (migration `20261109170000_suggestion_cache.sql`). Cost metrics (`ai_usage`) are recorded **only when a new suggestion is generated**, not on cache hits. Failed AI attempts before a rules fallback are still recorded.
 

@@ -3,14 +3,14 @@ import { newReplyToken } from "../replies/tokens.js";
 import * as seed from "../data/seed.js";
 import { buildDemoMetrics } from "../data/demoMetrics.js";
 import type { AiUsageInput, AiUsageRow, PurchaseRow, SendInput, SendRow, SmsCostInput, SmsCostRow } from "../metrics/types.js";
-import { daysSince, inDeck, NO_COOLDOWN, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
+import { canContact, daysSince, inDeck, NO_COOLDOWN, ACTIONABLE_STATUSES, maskRecipient, normalizeContact, recipientFor, segmentOf } from "../domain.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Customer, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics,
   Opportunity, Suggestion, SuppressionReason, TeamMember
 } from "../types.js";
 import { REOPTIN_COOLDOWN_DAYS } from "../types.js";
 import { assertCanEditDeals, assertCanManageConsent, assertReoptAllowed, assertCanGrant, assertCanManage, assertCanModify } from "../team/policy.js";
-import { IN_STORE_SIGNUP, isExisting, phoneKey, emailKey, type ImportConsent, type ImportCustomer } from "../customers/csvImport.js";
+import { isExisting, phoneKey, emailKey, type ImportConsent, type ImportCustomer } from "../customers/csvImport.js";
 import { splitName } from "../sync/quickvee/normalize.js";
 import type { Order } from "../sync/types.js";
 import { IMPORT_RATIONALE, MANUAL_CAMPAIGN, PICK_RATIONALE, toSummary } from "../customers/summary.js";
@@ -281,7 +281,9 @@ export class MemoryStore implements OutreachStore {
         this.recordConsent(actor.orgId, channel, value, "opt_out", "manual", { actorId: actor.userId, requestId: meta?.requestId });
       }
     }
-    if (this.isActionable(o)) o.status = "suppressed";
+    // Keep the card if another channel is still reachable; only leave the deck when nothing remains.
+    const next = this.withSuppressions(o);
+    if (this.isActionable(o) && !canContact(next.customer, "sms") && !canContact(next.customer, "email")) o.status = "suppressed";
     this.events.push({ orgId: actor.orgId, opportunityId, actorId: actor.userId, type: "opted_out", details: { channels, reason } });
   }
   async metrics(actor: Actor): Promise<Metrics> {
@@ -671,9 +673,13 @@ export class MemoryStore implements OutreachStore {
     this.assertMember(actor);
     const mine = this.opps.filter(o => o.orgId === actor.orgId && o.customer.id === customerId);
     if (!mine.length) return null;
+    const customer = mine[0].customer;
+    if (!canContact(customer, "sms") && !canContact(customer, "email")) {
+      throw new StoreError("forbidden", "This customer hasn't agreed to marketing messages, so no outreach card can be opened.", "no_marketing_consent");
+    }
     const open = mine.find(o => this.isActionable(o));
     if (open) return open.id;
-    const opp = this.newOpp(actor.orgId, mine[0].customer, PICK_RATIONALE);
+    const opp = this.newOpp(actor.orgId, customer, PICK_RATIONALE);
     this.opps.push(opp);
     return opp.id;
   }
@@ -704,8 +710,9 @@ export class MemoryStore implements OutreachStore {
       if (!c) {
         if (!o.customer.phone && !o.customer.email) { r.unlinked++; continue; }
         const [first, last] = splitName(o.customer.name ?? undefined);
+        // Order/POS rows are not a marketing opt-in — create the customer for purchase history only (no consent, not in the deck).
         await this.importCustomers(actor, [{ row: 0, externalId: o.customer.externalId, firstName: (first ?? "Customer").slice(0, 100), lastName: (last ?? "").slice(0, 100),
-          phone: o.customer.phone, email: o.customer.email, location: null, age: null, lastPurchaseAt: null, lifetimeSpendCents: 0, rewardsPoints: null, lifetimeOrders: null, customerSince: null }], IN_STORE_SIGNUP);
+          phone: o.customer.phone, email: o.customer.email, location: null, age: null, lastPurchaseAt: null, lifetimeSpendCents: 0, rewardsPoints: null, lifetimeOrders: null, customerSince: null }], { smsConsent: false, emailConsent: false, ageVerified: true });
         c = this.findCustomer(actor.orgId, o.customer)!;
         r.customersCreated++;
       }

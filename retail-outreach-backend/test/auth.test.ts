@@ -32,7 +32,7 @@ describe("Supabase JWT auth middleware", () => {
     const { sign } = await setup();
     const r = await app.inject({ url: "/api/outreach/queue", headers: { authorization: `Bearer ${await sign(DEMO_USER_ID)}` } });
     expect(r.statusCode).toBe(200);
-    expect(r.json().total).toBe(20);
+    expect(r.json().total).toBe(19);
   });
 
   it("rejects expired, wrong-audience, wrong-issuer and foreign-key tokens", async () => {

@@ -118,7 +118,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     const ms = await store.listMemberships(ALICE);
     expect(ms).toEqual([{ orgId: ORG_A, orgName: "Org A", businessName: "Shop A", role: "owner" }]);
     const q = await store.listQueue({ userId: ALICE, orgId: ORG_A }, 5);
-    expect(q.total).toBe(20);
+    expect(q.total).toBe(19);
     expect(q.items[0].customer).toMatchObject({ firstName: "Sarah", storesShopped: expect.arrayContaining(["Main St"]), suppressed: [], ageVerified: true,
       profile: { favoriteCategories: ["cbd"], visitsPerMonth: 1, avgBasketCents: 9800, preferredDay: 0, preferredTime: "evening" } });
     expect(q.items[0].customer.purchases[0]).toMatchObject({ brand: "Charlotte's Web", category: "cbd" });
@@ -155,7 +155,11 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     const id = opp(ORG_A, "cust_0003");
     await store.optOut(actor, id, ["sms"], "opt_out");
     const o = await store.getOpportunity(actor, id);
-    expect(o).toMatchObject({ status: "suppressed", customer: { suppressed: ["sms"] } });
+    // One channel left → card stays; both gone → suppressed.
+    expect(o).toMatchObject({ customer: { suppressed: ["sms"] } });
+    expect(["pending", "drafted"]).toContain(o!.status);
+    await store.optOut(actor, id, ["email"], "opt_out");
+    expect((await store.getOpportunity(actor, id))!.status).toBe("suppressed");
     expect(await store.isSuppressed(ORG_A, "sms", "+1 (555) 555-0003")).toBe(true);
     expect(await store.isSuppressed(ORG_B, "sms", "+15555550003")).toBe(false);
     // Even a direct insert (bypassing the app checks) is refused by the trigger.
@@ -168,7 +172,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
   it("demo reset requires owner/admin", async () => {
     await expect(store.reset({ userId: STAFF, orgId: ORG_A })).rejects.toMatchObject({ code: "forbidden" });
     await store.reset({ userId: ALICE, orgId: ORG_A });
-    expect((await store.listQueue({ userId: ALICE, orgId: ORG_A }, 1)).total).toBe(20);
+    expect((await store.listQueue({ userId: ALICE, orgId: ORG_A }, 1)).total).toBe(19);
   });
 
   // ───────────────────────── Team management ─────────────────────────

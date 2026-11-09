@@ -297,6 +297,7 @@ Summary cards (here and on Cost metrics) share a `MetricCard` layout: a small up
 - **Deck rules:**
   - A channel inside its window can't be picked on the card, and the API refuses a suggestion or send on it with `422 cooldown`.
   - If no channel is both reachable and outside its window, the customer is left out of the deck entirely (`/api/outreach/queue`, filtered in SQL, so `total` stays accurate).
+  - **Marketing consent is required for the deck.** A customer appears only when they have an active opt-in on at least one channel they can still be reached on (consent + valid contact + not suppressed + 21+). No consent → not in the deck and **no AI suggestion is generated**. Opting out of one channel still allows the other. Picking someone from Registered users who has never agreed returns `403 no_marketing_consent` with a clear error bubble (no card is opened).
   - Saving settings fires `outreach-settings:changed`, and the deck reloads with a fresh set of cards.
 - **Tamper-proofing:** signed-in users (the `authenticated` role) can't rewrite `last_*_at`; only the backend or service role can.
 - **Demo data:** Jamal was texted 3 days ago and emailed 40 days ago, Sarah was emailed 12 days ago, and Priya was texted 21 days ago. Set a 7-day text cooldown to see Jamal switch to email only.
@@ -320,7 +321,8 @@ Summary cards (here and on Cost metrics) share a `MetricCard` layout: a small up
   2. The popup lists the new customers, with **Submit** and **Cancel**.
   3. Submit calls `POST /api/customers/import`. The server re-parses and re-dedupes inside the transaction, using a per-org advisory lock, and never trusts the preview.
   4. A success modal opens; **OK** closes it.
-- **Consent and age:** imported customers are added as **opted in to texts and email and verified 21+**, because the store checks both at in-store signup. There are no checkboxes. Each import writes one `opt_in` consent event per contact with source `import_signup` (shown as in-store signup via import), and records the importing user, so the opt-out/consent history shows where consent came from. A customer verified 21+ with no birth date on file is contactable; a known age under 21 never is.
+- **Consent and age (contacts CSV only):** customers imported via **Registered users → Import** are added as **opted in to texts and email and verified 21+**, because the store checks both at in-store signup. There are no checkboxes. Each import writes one `opt_in` consent event per contact with source `import_signup` (shown as in-store signup via import), and records the importing user. They therefore appear in the outreach deck. A customer verified 21+ with no birth date on file is contactable; a known age under 21 never is.
+- **Order-history CSV and Quickvee sync do not grant marketing consent.** New customers created only from purchases are stored for history/linking with `sms_consent`/`email_consent` false and no `import_signup` events, so they stay out of the deck until they opt in through a contacts import or another consented path.
 - **Lifetime orders:** the CSV's `Lifetime orders` column is stored in `customers.lifetime_orders`. The card shows it as "Lifetime Orders" until real purchase history is loaded.
 - **Security:** imports run as the signed-in user under RLS (customer and opportunity inserts are owner/admin only). Limits are 5 MB and 5,000 rows per upload.
 - **Deck:** each imported customer gets a pending opportunity in the `manual` campaign, so they show up in the deck.

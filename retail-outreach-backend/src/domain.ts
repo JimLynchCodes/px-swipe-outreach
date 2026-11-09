@@ -54,12 +54,11 @@ export function canReachNow(customer: Customer, channel: Channel, cooldown: Cool
 }
 
 /**
- * Deck filter: a customer stays in the deck unless cooldown is the reason they can't be reached, i.e. at least one
- * channel is cooling down and no channel is both contactable and outside its window.
+ * Deck filter: only customers with an active marketing opt-in on at least one channel that is reachable now
+ * (consent + valid contact + not suppressed + 21+, and outside that channel's cooldown). No consent → not in the deck
+ * (and no AI suggestion is generated for them).
  */
 export function inDeck(customer: Customer, cooldown: CooldownDays, now = Date.now()): boolean {
-  const cooling = (["sms", "email"] as const).some(ch => cooldownUntil(customer, ch, cooldown, now));
-  if (!cooling) return true;
   return canReachNow(customer, "sms", cooldown, now) || canReachNow(customer, "email", cooldown, now);
 }
 

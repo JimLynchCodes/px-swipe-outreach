@@ -1,7 +1,7 @@
 import type pg from "pg";
 import { bootstrapOwner } from "../db/bootstrapOwner.js";
 import { createPool, type PoolOptions } from "../db/pool.js";
-import { ACTIONABLE_STATUSES, inDeck, maskRecipient, MIN_AGE, NO_COOLDOWN } from "../domain.js";
+import { ACTIONABLE_STATUSES, canContact, inDeck, maskRecipient, MIN_AGE, NO_COOLDOWN } from "../domain.js";
 import { newReplyToken } from "../replies/tokens.js";
 import type {
   Actor, CatalogProduct, Channel, ConversationMessage, ConversationSummary, Deal, DealInput, NewMessage, OptOutEntry, OptOutSource, OrgSettings, ConsentEvent, ConsentMeta, OptInSource, ReoptInRequest, Delivery, DeliveryStatus, Invitation, InvitationPreview, Membership, MemberRole, Metrics, Opportunity,
@@ -38,8 +38,8 @@ const isUuid = (s: string) => UUID_RE.test(s);
 const ACTIONABLE = `('${ACTIONABLE_STATUSES.join("','")}')`;
 
 /**
- * Deck filter in SQL (mirrors domain.inDeck): keep the customer unless a
- * channel is cooling down and no channel is both reachable (consent, contact, not suppressed, 21+) and outside its window.
+ * Deck filter in SQL (mirrors domain.inDeck): at least one channel must be reachable now
+ * (consent + contact + not suppressed + 21+) and outside its cooldown. No marketing opt-in → excluded.
  */
 const reachable = (ch: Channel) => `(cu.${ch === "sms" ? "sms_consent and cu.phone" : "email_consent and cu.email"} is not null
   and cu.age_verified and (cu.age is null or cu.age >= ${Number(MIN_AGE)})
@@ -48,7 +48,7 @@ const reachable = (ch: Channel) => `(cu.${ch === "sms" ? "sms_consent and cu.pho
 const cooling = (col: string, p: number) => `($${p}::int > 0 and cu.${col} > now() - make_interval(days => $${p}::int))`;
 const inDeckSql = (smsParam: number, emailParam: number) => {
   const sms = cooling("last_sms_at", smsParam), email = cooling("last_email_at", emailParam);
-  return `(not (${sms} or ${email}) or (${reachable("sms")} and not ${sms}) or (${reachable("email")} and not ${email}))`;
+  return `((${reachable("sms")} and not ${sms}) or (${reachable("email")} and not ${email}))`;
 };
 
 const OPP_SELECT = `
@@ -384,7 +384,10 @@ export class PostgresStore implements OutreachStore {
           [actor.orgId, ch, reason, o.customer.id, actor.userId, ch === "sms" ? o.customer.phone : o.customer.email]);
         if (added.rows[0]) await consentTx(db, actor.orgId, ch, added.rows[0].value, "opt_out", "manual", { actorId: actor.userId, requestId: meta.requestId });
       }
-      if ((ACTIONABLE_STATUSES as readonly string[]).includes(o.status)) {
+      // Only leave the deck when no channel remains reachable after these opt-outs.
+      const next = await this.findOpp(db, actor, opportunityId, true);
+      if (next && (ACTIONABLE_STATUSES as readonly string[]).includes(next.status)
+        && !canContact(next.customer, "sms") && !canContact(next.customer, "email")) {
         await db.query(`update public.outreach_opportunities set status = 'suppressed', updated_by = $3 where org_id = $1 and id = $2`,
           [actor.orgId, opportunityId, actor.userId]);
       }
@@ -519,7 +522,6 @@ export class PostgresStore implements OutreachStore {
       await db.query(`select pg_advisory_xact_lock(hashtext('order_import:' || $1))`, [actor.orgId]);
       const r = { inserted: 0, existing: 0, customersCreated: 0, unlinked: 0 };
       const touched = new Set<string>();
-      let campaign: string | null = null;
       for (const o of orders) {
         const ext = `qv:${o.externalId}`;
         if ((await db.query(`select 1 from public.purchases where org_id = $1 and external_id = $2`, [actor.orgId, ext])).rowCount) { r.existing++; continue; }
@@ -532,16 +534,10 @@ export class PostgresStore implements OutreachStore {
         if (!cid) {
           if (!o.customer.phone && !o.customer.email) { r.unlinked++; continue; }
           const [first, last] = splitName(o.customer.name ?? undefined);
+          // Purchase history only — no marketing consent (unlike the contacts CSV import). Not eligible for the deck.
           cid = (await db.query(`insert into public.customers (org_id, external_id, first_name, last_name, phone, email, sms_consent, email_consent, age_verified, source)
-            values ($1,$2,$3,$4,$5,$6,$7,$8,true,'csv') returning id`, [actor.orgId, o.customer.externalId ? `qv:${o.customer.externalId}` : null,
-            (first ?? "Customer").slice(0, 100), (last ?? "").slice(0, 100), o.customer.phone, o.customer.email, !!o.customer.phone, !!o.customer.email])).rows[0].id as string;
-          for (const [ch, contact] of [["sms", o.customer.phone], ["email", o.customer.email]] as const) {
-            if (contact) await db.query(`insert into public.consent_events (org_id, channel, value, event, source, actor_id)
-              values ($1, $2, public.normalize_contact($2::public.outreach_channel, $3), 'opt_in', 'import_signup', $4)`, [actor.orgId, ch, contact, actor.userId]);
-          }
-          campaign ??= (await db.query(`select public.manual_campaign_id($1) as id`, [actor.orgId])).rows[0].id;
-          await db.query(`insert into public.outreach_opportunities (org_id, customer_id, campaign_id, score, rationale) values ($1,$2,$3,50,$4)`,
-            [actor.orgId, cid, campaign, IMPORT_RATIONALE]);
+            values ($1,$2,$3,$4,$5,$6,false,false,true,'csv') returning id`, [actor.orgId, o.customer.externalId ? `qv:${o.customer.externalId}` : null,
+            (first ?? "Customer").slice(0, 100), (last ?? "").slice(0, 100), o.customer.phone, o.customer.email])).rows[0].id as string;
           r.customersCreated++;
         }
         const pid = (await db.query(`insert into public.purchases (org_id, customer_id, external_id, purchased_at, total_cents, discount_cents, payment_method, source)
@@ -585,8 +581,15 @@ export class PostgresStore implements OutreachStore {
   }
   async openCustomerCard(actor: Actor, customerId: string) {
     if (!isUuid(customerId)) return null;
-    return this.asUser(actor.userId, async db => (await db.query(`select public.open_customer_card($1, $2) as id`, [actor.orgId, customerId])).rows[0].id as string | null)
-      .catch(mapTeamError);
+    return this.asUser(actor.userId, async db => {
+      const id = (await db.query(`select public.open_customer_card($1, $2) as id`, [actor.orgId, customerId])).rows[0].id as string | null;
+      if (!id) return null;
+      const opened = await this.findOpp(db, actor, id);
+      if (opened && !canContact(opened.customer, "sms") && !canContact(opened.customer, "email")) {
+        throw new StoreError("forbidden", "This customer hasn't agreed to marketing messages, so no outreach card can be opened.", "no_marketing_consent");
+      }
+      return id;
+    }).catch(mapTeamError);
   }
 
   async listOptOuts(actor: Actor, q: { channel?: Channel; search?: string; limit: number; offset: number }) {

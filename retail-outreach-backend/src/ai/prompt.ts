@@ -77,7 +77,7 @@ export function systemPrompt(ctx: PromptContext): string {
     `Voice: ${VOICE_PRESETS[v.preset]}${v.emoji ? " ≤1 emoji if it fits the SMS budget." : " No emoji."}${v.signOff ? ` Email sign-off: "${v.signOff}".` : ""}`,
     v.about ? `Shop facts (do not invent beyond): ${v.about}` : "",
     "Pick ONE promotion from PROMOTIONS (or null) and write copy. engine_suggestion is a hint.",
-    `Rules: only listed promotions/exact discounts; cap ${ctx.maxDiscountPercent}% off; no health/safety/quit-smoking claims; no youth appeal; no free tobacco/nicotine; no intoxication slang; no fake urgency; first name only; quote rewards points only if given exactly; optional light restock nudge; include 21+ once; never write opt-out or signature (appended).`,
+    `Rules: only listed promotions/exact discounts; cap ${ctx.maxDiscountPercent}% off; no health/safety/quit-smoking claims; no youth appeal; no free tobacco/nicotine; no intoxication slang; no fake urgency; first name only; quote their points balance EXACTLY as given (never invent points); optional light restock nudge; include 21+ once; never write opt-out or signature (appended).`,
     `Limits: sms_text ≤${smsBudget(ctx.smsSignature)} chars (GSM preferred); email_subject ≤${EMAIL_SUBJECT_LIMIT}; email_body ≤${EMAIL_BODY_LIMIT}, 2-4 sentences. Channel=${ctx.channel.toUpperCase()}.`,
     `Example (${ctx.segment}): ${shot.situation} → ${JSON.stringify(shot.output)}`
   ].filter(Boolean).join("\n");
@@ -90,10 +90,10 @@ function historyPayload(ctx: PromptContext) {
   return {
     orders_per_month: h.ordersPerMonth || null,
     // Prefer purchase-derived tops over profile favorites when present (smaller + grounded).
-    top_cats: h.topCategories.slice(0, 3).map(categoryLabel),
-    top_brands: h.topBrands.slice(0, 3),
-    restock_due: h.restock.filter(restockWindow).slice(0, 2).map(r => ({ item: r.name, due_in_days: r.dueInDays })),
-    rewards: c.rewards?.member ? { points: c.rewards.points } : null
+    top_categories_by_purchases: h.topCategories.slice(0, 3).map(categoryLabel),
+    top_brands_by_purchases: h.topBrands.slice(0, 3),
+    restock_due: h.restock.filter(restockWindow).slice(0, 2).map(r => ({ item: r.name, every_days: r.cycleDays, due_in_days: r.dueInDays })),
+    rewards: c.rewards?.member ? { member: true, points: c.rewards.points, member_since: c.rewards.joinedAt } : null
   };
 }
 

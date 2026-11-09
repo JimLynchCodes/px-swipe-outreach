@@ -161,7 +161,7 @@ export interface OutreachStore {
   importCustomers(actor: Actor, rows: import("../customers/csvImport.js").ImportCustomer[], consent: import("../customers/csvImport.js").ImportConsent): Promise<{ inserted: number; existing: number }>;
   /** Newest first. `search` matches name, phone digits or email. */
   listCustomers(actor: Actor, q: { search?: string; limit: number; offset: number }): Promise<{ items: CustomerSummary[]; total: number }>;
-  /** Any member. The customer's actionable opportunity, creating a pending one if needed (explicit pick from Registered users). Null = unknown customer. */
+  /** Any member. The customer's actionable opportunity, creating a pending one if needed (explicit pick from Registered users). Null = unknown customer. Throws forbidden(no_marketing_consent) when they have no reachable opted-in channel. */
   openCustomerCard(actor: Actor, customerId: string): Promise<string | null>;
 
   /** Which of these order ids (POS ids, without the `qv:` prefix) are already in purchase history. */
