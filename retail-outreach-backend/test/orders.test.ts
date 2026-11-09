@@ -48,9 +48,12 @@ describe("order import API", () => {
     expect(jamal.lastPurchase).toMatchObject({ name: "Padrón 1964 Maduro" });
     const riley = (await app.inject("/api/customers?search=riley")).json().items[0];
     expect(riley).toMatchObject({ name: "Riley Newcomer", source: "csv" });
-    const card = (await app.inject(`/api/outreach/${(await post(`/api/customers/${riley.id}/open`, {})).json().opportunityId}`)).json();
-    expect(card.customer).toMatchObject({ itemsPurchased: 1, contact: { sms: true, email: true } });
-    expect(card.lastPurchase.name).toBe("Koi CBD Gummies 20ct");
+    // Order-history import does not grant marketing consent — not in the deck, open is blocked.
+    const open = await post(`/api/customers/${riley.id}/open`, {});
+    expect(open.statusCode).toBe(403);
+    expect(open.json()).toMatchObject({ code: "no_marketing_consent" });
+    const deck = (await app.inject("/api/outreach/queue?limit=100")).json();
+    expect(deck.items.find((i: any) => i.customer.firstName === "Riley")).toBeUndefined();
   });
 
   it("errors gracefully", async () => {

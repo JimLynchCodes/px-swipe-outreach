@@ -15,13 +15,13 @@ describe("outreach API", () => {
     expect(r.json()).toMatchObject({ ok: true, store: "memory", ai: "rules" });
   });
 
-  it("returns the 20-card deck with mockup fields and no raw contact details", async () => {
+  it("returns the deck with mockup fields and no raw contact details", async () => {
     ({ app } = await makeApp());
     const r = await app.inject("/api/outreach/queue");
     expect(r.statusCode).toBe(200);
     const body = r.json();
-    expect(body.total).toBe(20);
-    expect(body.items).toHaveLength(20);
+    expect(body.total).toBe(19);
+    expect(body.items).toHaveLength(19);
     const sarah = body.items[0];
     expect(sarah.segment).toBe("at_risk");
     expect(sarah.customer).toMatchObject({
@@ -32,9 +32,8 @@ describe("outreach API", () => {
     });
     expect(sarah.lastPurchase).toMatchObject({ name: "Charlotte's Web CBD Oil 1500mg", brand: "Charlotte's Web", priceCents: 8999, daysAgo: 58, alsoPurchased: ["Cornbread Hemp Gummies 30ct", "Koi CBD Gummies 20ct"] });
     expect(sarah.recentItems).toHaveLength(3);
-    // Unverified-age customer can't be contacted on any channel
-    const ryan = body.items.find((i: any) => i.customer.firstName === "Ryan");
-    expect(ryan.customer.contact).toMatchObject({ sms: false, email: false, blockedReason: "age_unverified" });
+    // Age-unverified / no marketing consent → excluded from the deck (no AI card generated)
+    expect(body.items.find((i: any) => i.customer.firstName === "Ryan")).toBeUndefined();
     expect(JSON.stringify(body)).not.toMatch(/@example\.com|\+1555/);
   });
 
@@ -69,7 +68,7 @@ describe("outreach API", () => {
     ({ app } = await makeApp());
     expect((await app.inject({ method: "POST", url: "/api/outreach/opp_0001/skip" })).statusCode).toBe(200);
     const q = (await app.inject("/api/outreach/queue")).json();
-    expect(q.total).toBe(19);
+    expect(q.total).toBe(18);
     expect(q.items[0].id).toBe("opp_0002");
     expect((await app.inject({ method: "POST", url: "/api/outreach/opp_0001/skip" })).statusCode).toBe(409);
     expect((await app.inject({ method: "POST", url: "/api/outreach/nope/skip" })).statusCode).toBe(404);
@@ -110,6 +109,6 @@ describe("outreach API", () => {
     ({ app } = await makeApp());
     await app.inject({ method: "POST", url: "/api/outreach/opp_0001/skip" });
     await app.inject({ method: "POST", url: "/api/dev/reset" });
-    expect((await app.inject("/api/outreach/queue")).json().total).toBe(20);
+    expect((await app.inject("/api/outreach/queue")).json().total).toBe(19); // full consenting deck again
   });
 });

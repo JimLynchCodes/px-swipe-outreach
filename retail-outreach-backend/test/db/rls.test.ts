@@ -118,7 +118,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     const ms = await store.listMemberships(ALICE);
     expect(ms).toEqual([{ orgId: ORG_A, orgName: "Org A", businessName: "Shop A", role: "owner" }]);
     const q = await store.listQueue({ userId: ALICE, orgId: ORG_A }, 5);
-    expect(q.total).toBe(20);
+    expect(q.total).toBe(19);
     expect(q.items[0].customer).toMatchObject({ firstName: "Sarah", storesShopped: expect.arrayContaining(["Main St"]), suppressed: [], ageVerified: true,
       profile: { favoriteCategories: ["cbd"], visitsPerMonth: 1, avgBasketCents: 9800, preferredDay: 0, preferredTime: "evening" } });
     expect(q.items[0].customer.purchases[0]).toMatchObject({ brand: "Charlotte's Web", category: "cbd" });
@@ -155,7 +155,9 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
     const id = opp(ORG_A, "cust_0003");
     await store.optOut(actor, id, ["sms"], "opt_out");
     const o = await store.getOpportunity(actor, id);
-    expect(o).toMatchObject({ status: "suppressed", customer: { suppressed: ["sms"] } });
+    // One channel left → card stays in the deck (email still reachable).
+    expect(o).toMatchObject({ customer: { suppressed: ["sms"] } });
+    expect(["pending", "drafted"]).toContain(o!.status);
     expect(await store.isSuppressed(ORG_A, "sms", "+1 (555) 555-0003")).toBe(true);
     expect(await store.isSuppressed(ORG_B, "sms", "+15555550003")).toBe(false);
     // Even a direct insert (bypassing the app checks) is refused by the trigger.
@@ -168,7 +170,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
   it("demo reset requires owner/admin", async () => {
     await expect(store.reset({ userId: STAFF, orgId: ORG_A })).rejects.toMatchObject({ code: "forbidden" });
     await store.reset({ userId: ALICE, orgId: ORG_A });
-    expect((await store.listQueue({ userId: ALICE, orgId: ORG_A }, 1)).total).toBe(20);
+    expect((await store.listQueue({ userId: ALICE, orgId: ORG_A }, 1)).total).toBe(19);
   });
 
   // ───────────────────────── Team management ─────────────────────────
@@ -559,7 +561,7 @@ describe.skipIf(!url)("Postgres store + Supabase RLS", () => {
         where p.org_id = $1 and p.external_id = 'qv:A-1001' order by pi.unit_price_cents desc`, [ORG_A]);
       expect(items.rows).toEqual([{ quantity: 2, unit_price_cents: 1800 }, { quantity: 1, unit_price_cents: 999 }]);
       const ev = await admin.query(`select count(*)::int n from public.consent_events where org_id = $1 and source = 'import_signup' and value = '+16095550199'`, [ORG_A]);
-      expect(ev.rows[0].n).toBe(1);
+      expect(ev.rows[0].n).toBe(0); // order import does not grant marketing consent
       expect(await store.existingOrderIds({ userId: BOB, orgId: ORG_A }, ["A-1001"])).toEqual(new Set());
     });
   });

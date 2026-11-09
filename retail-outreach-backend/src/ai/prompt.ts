@@ -6,7 +6,7 @@ import { categoryLabel } from "../recommend.js";
 import type { BrandVoice, Customer, Deal, Offer, Recommendation, Segment } from "../types.js";
 import { EMAIL_BODY_LIMIT, EMAIL_SUBJECT_LIMIT, SMS_LIMIT } from "./compliance.js";
 
-export const PROMPT_VERSION = "2026-11-07.1";
+export const PROMPT_VERSION = "2026-11-09.1";
 
 export const VOICE_PRESETS: Record<BrandVoice["preset"], string> = {
   friendly: "Friendly local shop: warm, neighborly, plain words, like a regular's favorite budtender texting a heads-up.",
@@ -70,27 +70,16 @@ export const smsBudget = (smsSignature: string) => SMS_LIMIT - (smsSignature.tri
 
 export function systemPrompt(ctx: PromptContext): string {
   const v = ctx.voice;
-  const shots = (Object.keys(FEW_SHOTS) as Segment[])
-    .map(s => `Example (${s}): ${FEW_SHOTS[s].situation}\n→ ${JSON.stringify(FEW_SHOTS[s].output)}`).join("\n");
+  // One few-shot for the customer's segment only (saves tokens vs all three).
+  const shot = FEW_SHOTS[ctx.segment];
   return [
-    `You write one short marketing message for ${ctx.storeName}, a licensed smoke shop (vape, CBD, glass, papers, cigars, hookah). All recipients are age-verified adults 21+ who opted in.`,
-    `Voice: ${VOICE_PRESETS[v.preset]}${v.emoji ? " At most one tasteful emoji (not in the SMS if it would push it past the length limit)." : " No emoji."}${v.signOff ? ` Email sign-off: "${v.signOff}".` : ""}`,
-    v.about ? `About the shop (use for color, never invent beyond it): ${v.about}` : "",
-    "TASK: pick the single best promotion for this customer from PROMOTIONS (or null if none fits), then write the copy. The engine's suggested pick is a hint, not a rule.",
-    "HARD RULES (copy that breaks any of these is rejected):",
-    "- Use ONLY the promotions provided, with their exact title and discount. Never invent deals, prices, stock, dates or discounts. If promotion_id is null, only the standing offer (if given) may be mentioned.",
-    `- Never exceed ${ctx.maxDiscountPercent}% off.`,
-    "- No health or medical claims of any kind (e.g. never say CBD helps anxiety, sleep, pain or stress). No claims that any product is safe, safer or healthier than smoking, or helps quit smoking.",
-    "- Nothing that appeals to minors: no youth culture, school, cartoons, toys, candy or dessert-flavor hype.",
-    "- No free tobacco/nicotine products, samples or giveaways. No 'get high', 'stoned', 'lit' or intoxication language.",
-    "- No pressure or urgency (no 'hurry', 'last chance', 'limited time'). You may state a promotion's real end date.",
-    "- Address the customer by FIRST name only. Don't mention segments, scores, analytics or how often they visit.",
-    "- Rewards: only if customer.rewards is set, you may thank them as a rewards member and quote their points balance EXACTLY as given. Never invent points, point values, multipliers or redemptions. If rewards is null, don't mention points.",
-    "- If restock_due lists an item, a light 'time to stock up on <item>?' angle is welcome (no pressure, no claims about running out).",
-    "- Include '21+' once. Do NOT write opt-out text or the store signature (both are appended automatically).",
-    `- sms_text: at most ${smsBudget(ctx.smsSignature)} characters, plain GSM characters preferred. email_subject: at most ${EMAIL_SUBJECT_LIMIT} characters. email_body: 2-4 short sentences, under ${EMAIL_BODY_LIMIT} characters, no signature.`,
-    `- Fill all fields; the requested channel is ${ctx.channel.toUpperCase()}, so make that one great.`,
-    shots
+    `Write one short outreach message for ${ctx.storeName} (licensed smoke shop). Recipients are opted-in adults 21+.`,
+    `Voice: ${VOICE_PRESETS[v.preset]}${v.emoji ? " ≤1 emoji if it fits the SMS budget." : " No emoji."}${v.signOff ? ` Email sign-off: "${v.signOff}".` : ""}`,
+    v.about ? `Shop facts (do not invent beyond): ${v.about}` : "",
+    "Pick ONE promotion from PROMOTIONS (or null) and write copy. engine_suggestion is a hint.",
+    `Rules: only listed promotions/exact discounts; cap ${ctx.maxDiscountPercent}% off; no health/safety/quit-smoking claims; no youth appeal; no free tobacco/nicotine; no intoxication slang; no fake urgency; first name only; quote their points balance EXACTLY as given (never invent points); optional light restock nudge; include 21+ once; never write opt-out or signature (appended).`,
+    `Limits: sms_text ≤${smsBudget(ctx.smsSignature)} chars (GSM preferred); email_subject ≤${EMAIL_SUBJECT_LIMIT}; email_body ≤${EMAIL_BODY_LIMIT}, 2-4 sentences. Channel=${ctx.channel.toUpperCase()}.`,
+    `Example (${ctx.segment}): ${shot.situation} → ${JSON.stringify(shot.output)}`
   ].filter(Boolean).join("\n");
 }
 
@@ -100,8 +89,9 @@ function historyPayload(ctx: PromptContext) {
   const h = purchaseInsights(c, ctx.now.getTime());
   return {
     orders_per_month: h.ordersPerMonth || null,
-    top_categories_by_purchases: h.topCategories.map(categoryLabel),
-    top_brands_by_purchases: h.topBrands,
+    // Prefer purchase-derived tops over profile favorites when present (smaller + grounded).
+    top_categories_by_purchases: h.topCategories.slice(0, 3).map(categoryLabel),
+    top_brands_by_purchases: h.topBrands.slice(0, 3),
     restock_due: h.restock.filter(restockWindow).slice(0, 2).map(r => ({ item: r.name, every_days: r.cycleDays, due_in_days: r.dueInDays })),
     rewards: c.rewards?.member ? { member: true, points: c.rewards.points, member_since: c.rewards.joinedAt } : null
   };
@@ -109,22 +99,22 @@ function historyPayload(ctx: PromptContext) {
 
 export function userPayload(ctx: PromptContext) {
   const c = ctx.customer, p = c.profile;
+  const hist = historyPayload(ctx);
   return {
     customer: {
-      first_name: c.firstName, segment: ctx.segment, days_since_last_visit: daysSince(c.lastPurchaseAt, ctx.now.getTime()),
-      favorite_categories: p.favoriteCategories.map(categoryLabel), favorite_brands: p.favoriteBrands,
+      first_name: c.firstName, segment: ctx.segment, days_since: daysSince(c.lastPurchaseAt, ctx.now.getTime()),
       visits_per_month: p.visitsPerMonth, avg_basket_usd: Math.round(p.avgBasketCents / 100),
       preferred_day: p.preferredDay === null ? null : WEEKDAYS[p.preferredDay], preferred_time: p.preferredTime,
-      recent_items: c.purchases.slice(0, 5).map(x => x.name),
-      ...historyPayload(ctx)
+      recent_items: c.purchases.slice(0, 3).map(x => x.name),
+      ...hist
     },
     today: ctx.now.toISOString().slice(0, 10),
     promotions: ctx.promotions.map(d => ({
-      id: d.id, title: d.title, description: d.description, discount: discountLabel(d),
-      when: d.schedule === "range" ? `every day ${d.startsOn} to ${d.endsOn}` : `${d.days.map(x => WEEKDAYS[x]).join(", ")}${d.endsOn ? ` until ${d.endsOn}` : ""}`,
-      categories: d.categories.map(categoryLabel)
+      id: d.id, title: d.title, discount: discountLabel(d),
+      when: d.schedule === "range" ? `${d.startsOn}..${d.endsOn}` : `${d.days.map(x => WEEKDAYS[x]).join(",")}${d.endsOn ? ` until ${d.endsOn}` : ""}`,
+      cats: d.categories.map(categoryLabel)
     })),
-    engine_suggestion: ctx.recommendation.deal ? { promotion_id: ctx.recommendation.deal.id, reasons: ctx.recommendation.reasons, send_at: ctx.recommendation.sendAt?.label ?? null } : null,
+    engine_suggestion: ctx.recommendation.deal ? { promotion_id: ctx.recommendation.deal.id, send_at: ctx.recommendation.sendAt?.label ?? null } : null,
     standing_offer: ctx.offer ? `${ctx.offer.discountPercent}% off next visit` : null,
     discount_cap_percent: ctx.maxDiscountPercent
   };

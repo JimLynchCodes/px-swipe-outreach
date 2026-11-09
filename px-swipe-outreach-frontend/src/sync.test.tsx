@@ -43,7 +43,8 @@ describe('formatting', () => {
 
 describe('Data sync page', () => {
   it('is in the menu for owners/admins only and blocks staff', async () => {
-    backend({ 'GET /api/outreach/queue': () => json({ items: [], total: 0 }), 'GET /api/ai/models': () => json({ models: [], selected: 'rules', effective: 'rules', priceTableVersion: 'x' }) }, 'staff')
+    backend({ 'GET /api/outreach/queue': () => json({ items: [], total: 0 }),
+  'POST /api/outreach/deck/prepare': () => json({ ok: true, total: 0, generated: 0, cached: 0, failed: 0 }), 'GET /api/ai/models': () => json({ models: [], selected: 'rules', effective: 'rules', priceTableVersion: 'x' }) }, 'staff')
     go('/data-sync')
     expect(await screen.findByText('Only owners and admins can manage data sync.')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Menu' }))

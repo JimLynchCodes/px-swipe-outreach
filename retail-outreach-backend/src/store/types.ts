@@ -58,6 +58,10 @@ export interface OutreachStore {
   /** Throws StoreError(not_found|conflict). */
   skip(actor: Actor, id: string): Promise<void>;
   saveSuggestion(actor: Actor, id: string, suggestion: Suggestion): Promise<void>;
+  /** Latest cached suggestion for this card+channel when `cacheKey` still matches; null = miss (generate). */
+  getCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string): Promise<Suggestion | null>;
+  /** Upsert the served suggestion under the current fingerprint (demo: memory; Supabase: suggestion_cache). */
+  putCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string, suggestion: Suggestion): Promise<void>;
   /**
    * Atomically moves the opportunity to `queued` and records a delivery.
    * Idempotent per (org, idempotencyKey): a repeat returns the existing delivery with duplicate=true.
@@ -157,7 +161,7 @@ export interface OutreachStore {
   importCustomers(actor: Actor, rows: import("../customers/csvImport.js").ImportCustomer[], consent: import("../customers/csvImport.js").ImportConsent): Promise<{ inserted: number; existing: number }>;
   /** Newest first. `search` matches name, phone digits or email. */
   listCustomers(actor: Actor, q: { search?: string; limit: number; offset: number }): Promise<{ items: CustomerSummary[]; total: number }>;
-  /** Any member. The customer's actionable opportunity, creating a pending one if needed (explicit pick from Registered users). Null = unknown customer. */
+  /** Any member. The customer's actionable opportunity, creating a pending one if needed (explicit pick from Registered users). Null = unknown customer. Throws forbidden(no_marketing_consent) when they have no reachable opted-in channel. */
   openCustomerCard(actor: Actor, customerId: string): Promise<string | null>;
 
   /** Which of these order ids (POS ids, without the `qv:` prefix) are already in purchase history. */

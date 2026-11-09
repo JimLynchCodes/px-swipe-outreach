@@ -33,13 +33,17 @@ describe("contact cooldown (domain)", () => {
     expect(inDeck(c, { sms: 7, email: 7 }, now)).toBe(false);
     expect(inDeck({ ...c, emailConsent: false }, { sms: 7, email: 0 }, now)).toBe(false);
   });
+  it("excludes customers with no marketing opt-in even when cooldowns are off", () => {
+    expect(inDeck({ ...base, smsConsent: false, emailConsent: false }, { sms: 0, email: 0 }, now)).toBe(false);
+    expect(inDeck({ ...base, smsConsent: true, emailConsent: false, phone: null }, { sms: 0, email: 0 }, now)).toBe(false);
+  });
 });
 
 describe("contact cooldown (API)", () => {
   it("shows last-sent dates on cards and defaults to no cooldown", async () => {
     ({ app } = await makeApp());
     const body = await deck();
-    expect(body.total).toBe(20);
+    expect(body.total).toBe(19);
     expect(body.cooldown).toEqual({ sms: 0, email: 0 });
     const jamal = body.items.find((i: any) => i.id === "opp_0002");
     expect(jamal.customer.contact.lastSent).toEqual({ sms: expect.any(String), email: expect.any(String) });
@@ -74,7 +78,7 @@ describe("contact cooldown (API)", () => {
     await setCooldown(7, 60);
     const body = await deck();
     expect(body.items.map((i: any) => i.id)).not.toContain("opp_0002");
-    expect(body.total).toBe(19);
+    expect(body.total).toBe(18);
   });
 
   it("stamps the channel on a successful send", async () => {

@@ -26,6 +26,7 @@ beforeEach(() => {
   current = card()
   vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
     if (url.includes('/queue')) { queueCalls++; return json({ items: [current], total: 1 }) }
+    if (url.endsWith('/deck/prepare')) return json({ ok: true, total: 1, generated: 0, cached: 1, failed: 0 })
     if (url.endsWith('/suggestion')) {
       const { channel } = JSON.parse(String(init?.body))
       return json({ suggestion: { title: 'Hi', reasoning: 'r', channel, message: 'Hi', subject: null, source: 'rules', segment: 'at_risk', deal: null, reasons: [], sendAt: null } })

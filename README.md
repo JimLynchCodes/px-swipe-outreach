@@ -32,6 +32,7 @@ Production uses **Supabase** for auth (email + password, magic links) and Postgr
 
 * [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md): create the project, apply migrations, configure auth, and create the first org.
 * [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): Docker images, the production checklist, and compose.
+* [docs/DEPLOY_SUBDOMAIN.md](docs/DEPLOY_SUBDOMAIN.md): DNS + TLS + env for **outreach.pineapplexpress.com**.
 * [docs/SECURITY.md](docs/SECURITY.md): secrets, auth, tenancy/RLS, opt-out and HTTP hardening.
 * [docs/OUTREACH_FEATURES.md](docs/OUTREACH_FEATURES.md): promotions model, settings, compliance, per-channel opt-outs (Twilio STOP webhook, email unsubscribe), and the Replies inbox.
 

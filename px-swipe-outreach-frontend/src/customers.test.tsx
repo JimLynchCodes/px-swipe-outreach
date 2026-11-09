@@ -114,6 +114,7 @@ describe('Registered users', () => {
       'POST /api/customers/c9/open': () => json({ opportunityId: 'opp_9' }),
       'GET /api/outreach/opp_9': () => json(pickedCard()),
       'GET /api/outreach/queue': () => json({ items: [], total: 0 }),
+      'POST /api/outreach/deck/prepare': () => json({ ok: true, total: 1, generated: 1, cached: 0, failed: 0 }),
       'POST /api/outreach/opp_9/suggestion': c => json({ suggestion: { title: 'Hi', reasoning: 'r', channel: c.body.channel, message: 'Hi', subject: null, source: 'rules', segment: 'loyal', deal: null, reasons: [], sendAt: null } }),
       'GET /api/settings': () => json({ settings: { storeName: null, emailSignature: '', smsSignature: '', defaultChannel: null, maxDiscountPercent: 25, aiModel: 'rules', smsCooldownDays: 7, emailCooldownDays: 0 } }),
       'GET /api/deals': () => json({ deals: [] }),

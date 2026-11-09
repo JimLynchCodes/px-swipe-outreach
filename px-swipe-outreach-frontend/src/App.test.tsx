@@ -30,6 +30,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
     calls.push({ url, init })
     if (url.includes('/queue')) return json({ items: [card('opp_1', 'Sarah'), card('opp_2', 'Maya')], total: 2 })
+    if (url.endsWith('/deck/prepare')) return json({ ok: true, total: 2, generated: 0, cached: 2, failed: 0 })
     if (url.endsWith('/suggestion')) {
       const { channel } = JSON.parse(String(init?.body))
       return json({ suggestion: {

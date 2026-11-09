@@ -215,6 +215,7 @@ const SEASONAL = [
 ]
 const deckRoutes = (deals: unknown[]) => ({
   'GET /api/outreach/queue': () => json({ items: [], total: 0 }),
+  'POST /api/outreach/deck/prepare': () => json({ ok: true, total: 0, generated: 0, cached: 0, failed: 0 }),
   'GET /api/settings': () => json({ settings: SETTINGS }),
   'GET /api/deals': () => json({ deals }),
   'GET /api/catalog': () => json({ products: [], categories: ['glass', 'papers'] }),
@@ -359,6 +360,7 @@ describe('AI model picker', () => {
     'PUT /api/settings': (c: Call) => { selected.v = (c.body as { aiModel: string }).aiModel; return json({ settings: c.body }) },
     'GET /api/deals': () => json({ deals: [] }), 'GET /api/catalog': () => json({ products: [], categories: [] }),
     'GET /api/outreach/queue': () => json({ items: [], total: 0 }),
+  'POST /api/outreach/deck/prepare': () => json({ ok: true, total: 0, generated: 0, cached: 0, failed: 0 }),
   })
 
   it('shows the current model, and owners switch it (saved to settings, event fired)', async () => {
