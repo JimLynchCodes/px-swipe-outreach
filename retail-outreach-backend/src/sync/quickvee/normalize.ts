@@ -77,10 +77,16 @@ export function toOrders(rows: Record<string, string>[], tz?: string): Order[] {
     if (!o) {
       const at = toIso(r.date, tz);
       if (!at) continue;
+      // order_total_paid (or Total) is the order amount spent — never sum line-item prices when it is present.
+      const totalCents = toCents(r.orderTotalPaid || r.total);
       o = { externalId: r.orderId, at, customer: { externalId: r.id || null, name: r.name || null, phone: normalizePhone(r.phone), email: normalizeEmail(r.email) },
-        items: [], subtotalCents: toCents(r.subtotal), discountCents: Math.abs(toCents(r.orderDiscount)), totalCents: toCents(r.total), paymentMethod: r.payment || null,
+        items: [], subtotalCents: toCents(r.subtotal), discountCents: Math.abs(toCents(r.orderDiscount)), totalCents, paymentMethod: r.payment || null,
         ...(/refund/i.test(r.status ?? "") ? { refunded: true } : {}) };
       orders.set(r.orderId, o);
+    } else if (!o.totalCents) {
+      // Later rows may carry order_total_paid if the first line omitted it.
+      const paid = toCents(r.orderTotalPaid || r.total);
+      if (paid) o.totalCents = paid;
     }
     if (r.item) o.items.push({ name: r.item, sku: r.sku || null, category: r.category || null, brand: r.brand || null,
       quantity: Math.max(1, Math.round(Number(r.qty) || 1)), unitPriceCents: Math.abs(toCents(r.unitPrice)), discountCents: Math.abs(toCents(r.itemDiscount)) });

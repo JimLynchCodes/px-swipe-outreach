@@ -6,10 +6,10 @@ import { maskRecipient } from "../domain.js";
 /**
  * The order-history CSV format: one row per line item, order columns repeated on each row. This is what
  * `npm run scrape:quickvee:orders` writes and what Data sync → Manually add (orders) accepts. Other headers work when they
- * match the Quickvee aliases (src/sync/quickvee/selectors.ts → CSV_ALIASES).
+ * match the Quickvee aliases (src/sync/quickvee/selectors.ts → CSV_ALIASES). Amount spent is `order_total_paid` (aliases: Total, order total, …); never summed from line items.
  */
 export const ORDER_CSV_HEADERS = ["Order ID", "Date", "Customer ID", "Customer name", "Phone", "Email", "Item", "SKU", "Category", "Brand",
-  "Qty", "Unit price", "Item discount", "Order discount", "Subtotal", "Total", "Payment", "Status"] as const;
+  "Qty", "Unit price", "Item discount", "Order discount", "Subtotal", "order_total_paid", "Payment", "Status"] as const;
 
 export const MAX_ORDER_ROWS = 50_000;
 export type OrderParse = { orders: Order[]; invalid: Array<{ row: number; reason: string }> };

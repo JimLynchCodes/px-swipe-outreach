@@ -62,3 +62,50 @@ describe("order import API", () => {
     expect((await post("/api/orders/import", { csv: "Order ID,Date\n,\n" })).json()).toMatchObject({ code: "nothing_to_import" });
   });
 });
+
+describe("order_total_paid column", () => {
+  const paidCsv = readFileSync(new URL("./fixtures/orders-total-paid.csv", import.meta.url), "utf8");
+  it("reads order_total_paid (currency / case / whitespace) as amount spent; does not sum line items", () => {
+    const p = parseOrderCsv(paidCsv);
+    expect(p.invalid).toEqual([]);
+    expect(p.orders).toHaveLength(2);
+    // $1,234.50 — not 50*2 + 999
+    expect(p.orders[0]).toMatchObject({ externalId: "B-2001", totalCents: 123450 });
+    expect(p.orders[0].items).toHaveLength(2);
+    expect(p.orders[1]).toMatchObject({ externalId: "B-2002", totalCents: 4200 });
+  });
+  it("accepts Total and ORDER TOTAL PAID header variants", () => {
+    const alt = "Order ID,Date,Phone,Item,Qty,Unit price,ORDER TOTAL PAID\nC-1,2026-11-07,+16095552003,X,1,5.00,\"$9.99\"\n";
+    expect(parseOrderCsv(alt).orders[0].totalCents).toBe(999);
+    const spaced = "Order ID,Date,Phone,Item, order_total_paid \nC-2,2026-11-07,+16095552004,Y, $12.00 \n";
+    expect(parseOrderCsv(spaced).orders[0].totalCents).toBe(1200);
+  });
+  it("import updates lifetime spend from order_total_paid", async () => {
+    ({ app } = await makeApp());
+    const imp = await post("/api/orders/import", { csv: paidCsv });
+    expect(imp.statusCode).toBe(201);
+    expect(imp.json()).toMatchObject({ inserted: 2, customersCreated: 2 });
+    const sam = (await app.inject("/api/customers?search=sam")).json().items[0];
+    expect(sam.lifetimeSpendCents).toBe(123450);
+    const pat = (await app.inject("/api/customers?search=pat")).json().items[0];
+    expect(pat.lifetimeSpendCents).toBe(4200);
+  });
+});
+
+describe("order import progress stream", () => {
+  it("streams NDJSON progress then done when Accept is application/x-ndjson", async () => {
+    ({ app } = await makeApp());
+    const csv = readFileSync(new URL("./fixtures/orders-total-paid.csv", import.meta.url), "utf8");
+    const res = await app.inject({
+      method: "POST", url: "/api/orders/import",
+      headers: { accept: "application/x-ndjson", "content-type": "application/json" },
+      payload: { csv },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(String(res.headers["content-type"] ?? "")).toMatch(/ndjson/);
+    const lines = res.body.trim().split("\n").map(l => JSON.parse(l));
+    expect(lines.some((l: any) => l.type === "progress" && l.phase === "writing")).toBe(true);
+    const done = lines.find((l: any) => l.type === "done");
+    expect(done).toMatchObject({ inserted: 2, customersCreated: 2 });
+  });
+});

@@ -64,7 +64,9 @@ export const CSV_ALIASES: Record<string, string[]> = {
   itemDiscount: ["itemdiscount", "linediscount"],
   orderDiscount: ["orderdiscount", "discount", "discounts", "totaldiscount"],
   subtotal: ["subtotal"],
-  total: ["total", "ordertotal", "grandtotal"],
+  /** Preferred order-level amount spent (Quickvee / exports). Takes precedence over Total / line prices. */
+  orderTotalPaid: ["ordertotalpaid", "totalpaid", "amountpaid", "amountspent", "ordertotalamount"],
+  total: ["total", "ordertotal", "grandtotal", "ordertotalpaid", "totalpaid"],
   payment: ["payment", "paymenttype", "paymentmethod", "tender"],
   status: ["status", "orderstatus", "refundstatus"]
 };

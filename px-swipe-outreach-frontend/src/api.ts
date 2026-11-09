@@ -67,6 +67,140 @@ function safeJson(text: string): unknown {
   try { return JSON.parse(text) } catch { return null }
 }
 
+export type CsvUploadProgress = {
+  phase: 'uploading' | 'parsing' | 'writing'
+  /** Bytes uploaded ratio 0–1 during uploading; row ratio during writing. */
+  ratio: number | null
+  done?: number
+  total?: number
+}
+
+/** Prefer XHR so we get real upload progress; fall back to fetch when XHR is unavailable or fetch is mocked (unit tests). */
+function prefersXhrTransport(): boolean {
+  if (typeof XMLHttpRequest === 'undefined') return false
+  try { return !('mock' in fetch) } catch { return true }
+}
+
+async function authHeaders(): Promise<Record<string, string>> {
+  const token = await hooks.getToken()
+  const orgId = hooks.getOrgId()
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(orgId ? { 'X-Org-Id': orgId } : {}),
+  }
+}
+
+function throwFromBody(status: number, data: unknown): never {
+  const body = (data && typeof data === 'object' ? data : {}) as { error?: unknown; code?: unknown; requestId?: unknown }
+  const msg = typeof body.error === 'string' && body.error ? body.error : `Request failed (${status})`
+  if (status === 401) hooks.onUnauthorized()
+  throw new ApiError(msg, status, typeof body.code === 'string' ? body.code : undefined,
+    typeof body.requestId === 'string' ? body.requestId : undefined)
+}
+
+/** POST JSON csv with XHR upload progress; optional NDJSON write-progress stream for import. */
+async function postCsv<T>(path: string, csv: string, opts: {
+  onProgress?: (p: CsvUploadProgress) => void
+  /** Request NDJSON progress events from the server (import write phase). */
+  streamProgress?: boolean
+} = {}): Promise<T> {
+  const body = JSON.stringify({ csv })
+  const headers = await authHeaders()
+  if (opts.streamProgress) headers.Accept = 'application/x-ndjson'
+  const report = (p: CsvUploadProgress) => opts.onProgress?.(p)
+
+  if (prefersXhrTransport()) {
+    return new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `${BASE}${path}`)
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v)
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) report({ phase: 'uploading', ratio: ev.loaded / Math.max(1, ev.total) })
+        else report({ phase: 'uploading', ratio: null })
+      }
+      xhr.upload.onload = () => report({ phase: opts.streamProgress ? 'writing' : 'parsing', ratio: opts.streamProgress ? 0 : null })
+      let seen = 0
+      const consume = (text: string, final: boolean) => {
+        if (!opts.streamProgress) return null as T | null
+        const parts = text.split('\n')
+        const lines = final ? parts : parts.slice(0, -1)
+        let result: T | null = null
+        for (const line of lines.slice(seen)) {
+          if (!line.trim()) continue
+          const ev = safeJson(line) as { type?: string; phase?: string; done?: number; total?: number; code?: string; error?: string } | null
+          if (!ev || typeof ev !== 'object') continue
+          if (ev.type === 'progress' && ev.total) {
+            report({ phase: 'writing', ratio: (ev.done ?? 0) / ev.total, done: ev.done, total: ev.total })
+          } else if (ev.type === 'done') {
+            const { type: _t, ...rest } = ev as { type: string } & T
+            result = rest as T
+          } else if (ev.type === 'error') {
+            throwFromBody(500, { error: ev.error, code: ev.code })
+          }
+        }
+        seen = final ? parts.length : parts.length - 1
+        return result
+      }
+      xhr.onprogress = () => { try { consume(xhr.responseText, false) } catch (e) { reject(e) } }
+      xhr.onerror = () => reject(new ApiError('Cannot reach the outreach server. Is the backend running?', 0))
+      xhr.onload = () => {
+        try {
+          if (opts.streamProgress) {
+            const result = consume(xhr.responseText, true)
+            if (xhr.status >= 400) throwFromBody(xhr.status, safeJson(xhr.responseText.split('\n').filter(Boolean).pop() ?? ''))
+            if (!result) throw new ApiError('Import finished without a result', xhr.status || 500)
+            resolve(result)
+            return
+          }
+          const data = safeJson(xhr.responseText)
+          if (xhr.status >= 400) throwFromBody(xhr.status, data)
+          report({ phase: 'parsing', ratio: 1 })
+          resolve(data as T)
+        } catch (e) { reject(e) }
+      }
+      report({ phase: 'uploading', ratio: 0 })
+      xhr.send(body)
+    })
+  }
+
+  // fetch fallback (unit tests stub fetch)
+  report({ phase: 'uploading', ratio: 0 })
+  report({ phase: 'uploading', ratio: 1 })
+  report({ phase: opts.streamProgress ? 'writing' : 'parsing', ratio: opts.streamProgress ? 0 : null })
+  if (opts.streamProgress) {
+    let res: Response
+    try {
+      res = await fetch(`${BASE}${path}`, { method: 'POST', headers, body })
+    } catch {
+      throw new ApiError('Cannot reach the outreach server. Is the backend running?', 0)
+    }
+    const text = await res.text()
+    if (!res.ok) {
+      const last = text.trim().split('\n').filter(Boolean).pop()
+      throwFromBody(res.status, last ? safeJson(last) : null)
+    }
+    let result: T | null = null
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue
+      const ev = safeJson(line) as { type?: string; done?: number; total?: number; code?: string; error?: string } | null
+      if (!ev || typeof ev !== 'object') continue
+      if (ev.type === 'progress' && ev.total) report({ phase: 'writing', ratio: (ev.done ?? 0) / ev.total, done: ev.done, total: ev.total })
+      else if (ev.type === 'done') { const { type: _t, ...rest } = ev as { type: string } & T; result = rest as T }
+      else if (ev.type === 'error') throwFromBody(500, { error: ev.error, code: ev.code })
+    }
+    if (!result) {
+      // Server may still return plain JSON when progress wasn't negotiated
+      const data = safeJson(text)
+      if (data && typeof data === 'object' && !('type' in (data as object))) return data as T
+      throw new ApiError('Import finished without a result', res.status || 500)
+    }
+    return result
+  }
+  return request<T>(path, { method: 'POST', body, headers: { Accept: 'application/json' } })
+}
+
+
 export const api = {
   me: () => request<{ user: { id: string; email: string | null }; memberships: Membership[]; authMode: string; dataStore?: 'memory' | 'postgres' }>('/api/me'),
   optOut: (id: string, channel: Channel | 'all' = 'all') =>
@@ -119,14 +253,16 @@ export const api = {
     list: (search = '', page = 1) =>
       request<{ items: CustomerSummary[]; total: number; page: number; pageSize: number }>(`/api/customers?${new URLSearchParams({ ...(search ? { search } : {}), page: String(page) })}`),
     open: (id: string) => request<{ opportunityId: string }>(`/api/customers/${encodeURIComponent(id)}/open`, { method: 'POST' }).then(r => r.opportunityId),
-    preview: (csv: string) => request<ImportPreview>('/api/customers/import/preview', { method: 'POST', body: JSON.stringify({ csv }) }),
-    import: (csv: string) =>
-      request<{ inserted: number; existing: number; invalid: number; duplicatesInFile: number }>('/api/customers/import', { method: 'POST', body: JSON.stringify({ csv }) }),
+    preview: (csv: string, onProgress?: (p: CsvUploadProgress) => void) =>
+      postCsv<ImportPreview>('/api/customers/import/preview', csv, { onProgress }),
+    import: (csv: string, onProgress?: (p: CsvUploadProgress) => void) =>
+      postCsv<{ inserted: number; existing: number; invalid: number; duplicatesInFile: number }>('/api/customers/import', csv, { onProgress, streamProgress: true }),
   },
   orders: {
-    preview: (csv: string) => request<OrderImportPreview>('/api/orders/import/preview', { method: 'POST', body: JSON.stringify({ csv }) }),
-    import: (csv: string) =>
-      request<{ inserted: number; existing: number; customersCreated: number; unlinked: number; invalid: number }>('/api/orders/import', { method: 'POST', body: JSON.stringify({ csv }) }),
+    preview: (csv: string, onProgress?: (p: CsvUploadProgress) => void) =>
+      postCsv<OrderImportPreview>('/api/orders/import/preview', csv, { onProgress }),
+    import: (csv: string, onProgress?: (p: CsvUploadProgress) => void) =>
+      postCsv<{ inserted: number; existing: number; customersCreated: number; unlinked: number; invalid: number }>('/api/orders/import', csv, { onProgress, streamProgress: true }),
   },
   settings: {
     get: () => request<{ settings: OrgSettings }>('/api/settings').then(r => r.settings),

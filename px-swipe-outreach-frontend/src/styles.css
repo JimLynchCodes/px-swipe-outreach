@@ -331,7 +331,8 @@ label.check { flex-direction: row; align-items: center; gap: 8px; }
 .sync-schedule legend, .sync-backfill legend { font-size: 12px; font-weight: 600; padding: 0 4px; }
 .sync-schedule label, .sync-backfill label, .sync-tz label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
 .sync-tz { flex-direction: row; flex-wrap: wrap; align-items: center; }
-.sync-progress { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.sync-progress, .import-progress { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+.import-progress { margin: 10px 0; }
 .sync-progress .bar { height: 6px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
 .sync-progress .bar > div { height: 100%; background: #2563eb; transition: width .4s; }
 .sync-progress .bar > div.indeterminate { animation: sync-pulse 1.2s ease-in-out infinite alternate; }

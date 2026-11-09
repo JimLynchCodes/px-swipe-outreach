@@ -59,6 +59,20 @@ describe('Data sync → Manually add', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('shows an accessible progress bar while reading/uploading the CSV', async () => {
+    let release!: (r: Response) => void
+    const gate = new Promise<Response>(r => { release = r })
+    backend({ 'POST /api/customers/import/preview': () => gate })
+    go('/data-sync')
+    await screen.findByRole('button', { name: 'Manually add customers' })
+    pickFile(CSV)
+    const bar = await screen.findByRole('progressbar')
+    expect(bar).toHaveAttribute('aria-valuetext', expect.stringMatching(/Reading|Uploading|Parsing/i))
+    release(await json(PREVIEW))
+    expect(await screen.findByRole('dialog', { name: 'Add 1 new customer?' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByRole('progressbar')).not.toBeInTheDocument())
+  })
+
   it('Cancel writes nothing', async () => {
     const calls = backend({ 'POST /api/customers/import/preview': () => json(PREVIEW) })
     go('/data-sync')

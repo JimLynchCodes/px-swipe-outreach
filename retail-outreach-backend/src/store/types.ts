@@ -158,7 +158,7 @@ export interface OutreachStore {
    * Owner/admin. Inserts the customers that still don't match an existing one (re-checked inside the transaction) and gives
    * each a pending opportunity so they reach the deck. Returns how many were inserted and how many turned out to exist.
    */
-  importCustomers(actor: Actor, rows: import("../customers/csvImport.js").ImportCustomer[], consent: import("../customers/csvImport.js").ImportConsent): Promise<{ inserted: number; existing: number }>;
+  importCustomers(actor: Actor, rows: import("../customers/csvImport.js").ImportCustomer[], consent: import("../customers/csvImport.js").ImportConsent, onProgress?: (done: number, total: number) => void): Promise<{ inserted: number; existing: number }>;
   /** Newest first. `search` matches name, phone digits or email. */
   listCustomers(actor: Actor, q: { search?: string; limit: number; offset: number }): Promise<{ items: CustomerSummary[]; total: number }>;
   /** Any member. The customer's actionable opportunity, creating a pending one if needed (explicit pick from Registered users). Null = unknown customer. Throws forbidden(no_marketing_consent) when they have no reachable opted-in channel. */
@@ -172,7 +172,7 @@ export interface OutreachStore {
    * missing customers (in-store signup consent, like the customer import); walk-ins with no contact are skipped as unlinked.
    * Buying profiles are recomputed for every touched customer.
    */
-  importOrders(actor: Actor, orders: import("../sync/types.js").Order[]): Promise<{ inserted: number; existing: number; customersCreated: number; unlinked: number }>;
+  importOrders(actor: Actor, orders: import("../sync/types.js").Order[], onProgress?: (done: number, total: number) => void): Promise<{ inserted: number; existing: number; customersCreated: number; unlinked: number }>;
 
   // System operations (no user context).
   /** Idempotent per (org, channel, contact). Audited. Returns created=false when already opted out. */
