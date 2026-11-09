@@ -6,6 +6,7 @@ import { StoreError, type OutreachStore } from "../store/types.js";
 import { ImportError } from "../customers/csvImport.js";
 import { IMPORT_BODY_LIMIT } from "../customers/routes.js";
 import { linkOf, parseOrderCsv, toOrderPreview } from "./csvImport.js";
+import { beginProgressStream, wantsProgressStream } from "../importProgress.js";
 
 type Deps = { store: OutreachStore; actorOf: (req: any) => Actor; timezone?: string;
   sendError: (reply: FastifyReply, status: number, code: string, error: string, details?: string[]) => unknown };
@@ -47,7 +48,21 @@ export async function orderRoutes(app: FastifyInstance, { store, actorOf, sendEr
     const parsed = parse(csvBody.parse(request.body ?? {}).csv, reply);
     if (!parsed) return reply;
     if (!parsed.orders.length) return sendError(reply, 422, "nothing_to_import", "No valid orders in this file.");
+    const invalid = parsed.invalid.length;
+    if (wantsProgressStream(request)) {
+      const stream = beginProgressStream(reply);
+      try {
+        const r = await store.importOrders(actor, parsed.orders, (done, total) => {
+          stream.write({ type: "progress", phase: "writing", done, total });
+        });
+        stream.write({ type: "done", ...r, invalid });
+      } catch (e) {
+        stream.write({ type: "error", code: "import_failed", error: e instanceof Error ? e.message : "Import failed" });
+      }
+      stream.end();
+      return;
+    }
     const r = await store.importOrders(actor, parsed.orders);
-    return reply.code(201).send({ ...r, invalid: parsed.invalid.length });
+    return reply.code(201).send({ ...r, invalid });
   });
 }

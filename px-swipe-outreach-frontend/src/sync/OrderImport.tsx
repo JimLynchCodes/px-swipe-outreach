@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react'
 import { ReceiptText } from 'lucide-react'
-import { api } from '../api'
+import { api, type CsvUploadProgress } from '../api'
 import { Modal } from '../components/Modal'
 import { money } from '../lib/format'
 import type { OrderImportPreview, OrderLink } from '../types'
 import { ErrorBubble } from '../components/ErrorBubble'
 import { friendlyError } from '../lib/errors'
+import { ImportProgress, type ImportProgressState } from './ImportProgress'
 
 const MAX_BYTES = 5 * 1024 * 1024
 const LINK: Record<OrderLink, string> = { existing: 'Customer on file', new: 'New customer', unlinked: 'No customer (skipped)' }
@@ -14,11 +15,25 @@ type Step =
   | { kind: 'preview' | 'saving'; csv: string; fileName: string; preview: OrderImportPreview }
   | { kind: 'done'; inserted: number; existing: number; customersCreated: number; unlinked: number }
 
+function toBar(p: CsvUploadProgress, rowTotal?: number): ImportProgressState {
+  if (p.phase === 'uploading') {
+    return { phase: 'uploading', percent: p.ratio == null ? null : Math.round(p.ratio * 100) }
+  }
+  if (p.phase === 'writing') {
+    const done = p.done ?? (p.ratio != null && rowTotal != null ? Math.round(p.ratio * rowTotal) : undefined)
+    const total = p.total ?? rowTotal
+    const percent = p.ratio != null ? Math.round(p.ratio * 100) : (total && done != null ? Math.round((done / total) * 100) : null)
+    return { phase: 'writing', percent, done, total }
+  }
+  return { phase: 'parsing', percent: null }
+}
+
 /** Data sync → Manually add (order history): preview new orders (deduped by order ID), Submit or Cancel, then a success modal. */
 export function OrderImport() {
   const input = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>({ kind: 'idle' })
   const [err, setErr] = useState<string | null>(null)
+  const [progress, setProgress] = useState<ImportProgressState | null>(null)
 
   async function onFile(file: File | undefined) {
     if (input.current) input.current.value = ''
@@ -27,38 +42,49 @@ export function OrderImport() {
     if (!/\.csv$/i.test(file.name) && file.type !== 'text/csv') { setErr('Please choose a .csv file.'); return }
     if (file.size > MAX_BYTES) { setErr('That file is over 5 MB. Export a shorter date range.'); return }
     setStep({ kind: 'reading' })
+    setProgress({ phase: 'reading', percent: null })
     try {
       const csv = await file.text()
-      setStep({ kind: 'preview', csv, fileName: file.name, preview: await api.orders.preview(csv) })
-    } catch (e) { setErr(friendlyError(e)); setStep({ kind: 'idle' }) }
+      setProgress({ phase: 'uploading', percent: 0 })
+      const preview = await api.orders.preview(csv, p => setProgress(toBar(p)))
+      setProgress(null)
+      setStep({ kind: 'preview', csv, fileName: file.name, preview })
+    } catch (e) { setErr(friendlyError(e)); setProgress(null); setStep({ kind: 'idle' }) }
   }
   async function submit() {
     if (step.kind !== 'preview') return
-    setStep({ ...step, kind: 'saving' }); setErr(null)
+    const snap = step
+    setStep({ ...snap, kind: 'saving' }); setErr(null)
+    setProgress({ phase: 'uploading', percent: 0 })
     try {
-      const r = await api.orders.import(step.csv)
+      const rowTotal = snap.preview.newOrderCount
+      const r = await api.orders.import(snap.csv, p => setProgress(toBar(p, rowTotal)))
+      setProgress(null)
       setStep({ kind: 'done', ...r })
-    } catch (e) { setErr(friendlyError(e)); setStep({ ...step, kind: 'preview' }) }
+    } catch (e) { setErr(friendlyError(e)); setProgress(null); setStep({ ...snap, kind: 'preview' }) }
   }
-  const cancel = () => { setStep({ kind: 'idle' }); setErr(null) }
+  const cancel = () => { setStep({ kind: 'idle' }); setErr(null); setProgress(null) }
   const p = step.kind === 'preview' || step.kind === 'saving' ? step.preview : null
   const importable = p ? p.newOrderCount - p.links.unlinked : 0
+  const busy = step.kind === 'reading' || step.kind === 'saving'
 
   return (
     <section className="panel" aria-label="Manually add order history">
       <div className="row-between">
         <div>
           <h3><ReceiptText size={17} aria-hidden /> Order history from a file</h3>
-          <p className="muted small">Upload an order-history CSV (one row per item; <code>npm run scrape:quickvee:orders</code> writes this format). Orders already loaded (same order ID) are skipped. Orders feed purchase history and suggestions.</p>
+          <p className="muted small">Upload an order-history CSV (one row per item; <code>npm run scrape:quickvee:orders</code> writes this format). Orders already loaded (same order ID) are skipped. Orders feed purchase history and suggestions. Amount spent comes from <code>order_total_paid</code> (or Total).</p>
         </div>
         <div className="btn-wrap">
-          <button className="btn-secondary" aria-label="Manually add orders" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
+          <button className="btn-secondary" aria-label="Manually add orders" onClick={() => input.current?.click()} disabled={busy}>
             {step.kind === 'reading' ? 'Reading…' : 'Manually add'}
           </button>
-          <ErrorBubble error={step.kind === 'idle' ? err : null} />
+          <ErrorBubble error={step.kind === 'idle' || step.kind === 'reading' ? err : null} />
         </div>
         <input ref={input} type="file" accept=".csv,text/csv" hidden aria-label="Order history CSV file" onChange={e => void onFile(e.target.files?.[0])} />
       </div>
+
+      {progress && step.kind === 'reading' && <ImportProgress progress={progress} />}
 
       {p && (step.kind === 'preview' || step.kind === 'saving') && (
         <Modal title={importable ? `Add ${importable} new order${importable === 1 ? '' : 's'}?` : 'No new orders'}
@@ -75,6 +101,7 @@ export function OrderImport() {
             {p.links.unlinked > 0 && ` · ${p.links.unlinked} with no customer phone/email (skipped)`}
             {p.invalid.length > 0 && ` · ${p.invalid.length} invalid rows`}
           </p>
+          {progress && step.kind === 'saving' && <ImportProgress progress={progress} />}
           {p.newOrders.length > 0 ? (
             <ul className="rows import-list" aria-label="New orders">
               {p.newOrders.map(o => (

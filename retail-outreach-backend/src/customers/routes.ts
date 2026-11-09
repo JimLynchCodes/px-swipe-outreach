@@ -5,6 +5,7 @@ import type { Actor } from "../types.js";
 import type { OutreachStore } from "../store/types.js";
 import { StoreError } from "../store/types.js";
 import { IN_STORE_SIGNUP, ImportError, isExisting, parseCustomerCsv, toPreview } from "./csvImport.js";
+import { beginProgressStream, wantsProgressStream } from "../importProgress.js";
 
 type Deps = { store: OutreachStore; actorOf: (req: any) => Actor; timezone?: string;
   sendError: (reply: FastifyReply, status: number, code: string, error: string, details?: string[]) => unknown };
@@ -48,9 +49,23 @@ export async function customerRoutes(app: FastifyInstance, { store, actorOf, sen
     const parsed = parse(body.csv, reply);
     if (!parsed) return reply;
     if (!parsed.customers.length) return sendError(reply, 422, "nothing_to_import", "No valid customer rows in this file.");
+    const extra = { invalid: parsed.invalid.length, duplicatesInFile: parsed.duplicatesInFile };
     // Consent + 21+ were checked at in-store signup; recorded as source import_signup in the consent history.
+    if (wantsProgressStream(request)) {
+      const stream = beginProgressStream(reply);
+      try {
+        const r = await store.importCustomers(actor, parsed.customers, IN_STORE_SIGNUP, (done, total) => {
+          stream.write({ type: "progress", phase: "writing", done, total });
+        });
+        stream.write({ type: "done", ...r, ...extra });
+      } catch (e) {
+        stream.write({ type: "error", code: "import_failed", error: e instanceof Error ? e.message : "Import failed" });
+      }
+      stream.end();
+      return;
+    }
     const r = await store.importCustomers(actor, parsed.customers, IN_STORE_SIGNUP);
-    return reply.code(201).send({ ...r, invalid: parsed.invalid.length, duplicatesInFile: parsed.duplicatesInFile });
+    return reply.code(201).send({ ...r, ...extra });
   });
 
   app.get("/api/customers", async request => {

@@ -477,16 +477,16 @@ export class PostgresStore implements OutreachStore {
   async customerKeys(actor: Actor) {
     return this.asUser(actor.userId, db => this.customerKeysTx(db, actor.orgId));
   }
-  async importCustomers(actor: Actor, rows: ImportCustomer[], consent: ImportConsent) {
+  async importCustomers(actor: Actor, rows: ImportCustomer[], consent: ImportConsent, onProgress?: (done: number, total: number) => void) {
     return this.asUser(actor.userId, async db => {
       assertCanEditDeals(await this.role(db, actor));
       // Serialize imports per org so two uploads can't both insert the same new customer.
       await db.query(`select pg_advisory_xact_lock(hashtext('customer_import:' || $1))`, [actor.orgId]);
       const keys = await this.customerKeysTx(db, actor.orgId);
       const campaign = (await db.query(`select public.manual_campaign_id($1) as id`, [actor.orgId])).rows[0].id;
-      let inserted = 0, existing = 0;
+      let inserted = 0, existing = 0, done = 0;
       for (const r of rows) {
-        if (isExisting(r, keys)) { existing++; continue; }
+        if (isExisting(r, keys)) { existing++; onProgress?.(++done, rows.length); continue; }
         const c = await db.query(`insert into public.customers (org_id, external_id, first_name, last_name, age, location, phone, email, sms_consent, email_consent,
             lifetime_spend_cents, last_purchase_at, age_verified, rewards_member, rewards_points, rewards_joined_at, lifetime_orders, source)
           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'csv') returning id`,
@@ -503,6 +503,7 @@ export class PostgresStore implements OutreachStore {
         if (phoneKey(r.phone)) keys.phones.add(phoneKey(r.phone)!);
         if (emailKey(r.email)) keys.emails.add(emailKey(r.email)!);
         inserted++;
+        onProgress?.(++done, rows.length);
       }
       await this.event(db, actor, actor.orgId, null, "customers_imported", { inserted, existing });
       return { inserted, existing };
@@ -516,15 +517,16 @@ export class PostgresStore implements OutreachStore {
       return new Set<string>(r.rows.map(x => x.id));
     });
   }
-  async importOrders(actor: Actor, orders: Order[]) {
+  async importOrders(actor: Actor, orders: Order[], onProgress?: (done: number, total: number) => void) {
     return this.asUser(actor.userId, async db => {
       assertCanEditDeals(await this.role(db, actor));
       await db.query(`select pg_advisory_xact_lock(hashtext('order_import:' || $1))`, [actor.orgId]);
       const r = { inserted: 0, existing: 0, customersCreated: 0, unlinked: 0 };
       const touched = new Set<string>();
+      let done = 0;
       for (const o of orders) {
         const ext = `qv:${o.externalId}`;
-        if ((await db.query(`select 1 from public.purchases where org_id = $1 and external_id = $2`, [actor.orgId, ext])).rowCount) { r.existing++; continue; }
+        if ((await db.query(`select 1 from public.purchases where org_id = $1 and external_id = $2`, [actor.orgId, ext])).rowCount) { r.existing++; onProgress?.(++done, orders.length); continue; }
         const found = await db.query(`select id from public.customers where org_id = $1 and (
             ($2::text is not null and external_id = $2) or
             ($3::text is not null and right(regexp_replace(coalesce(phone, ''), '\\D', '', 'g'), 10) = right(regexp_replace($3, '\\D', '', 'g'), 10)) or
@@ -532,7 +534,7 @@ export class PostgresStore implements OutreachStore {
           order by (external_id = $2) desc nulls last, created_at limit 1`, [actor.orgId, o.customer.externalId ? `qv:${o.customer.externalId}` : null, o.customer.phone, o.customer.email]);
         let cid: string | null = found.rows[0]?.id ?? null;
         if (!cid) {
-          if (!o.customer.phone && !o.customer.email) { r.unlinked++; continue; }
+          if (!o.customer.phone && !o.customer.email) { r.unlinked++; onProgress?.(++done, orders.length); continue; }
           const [first, last] = splitName(o.customer.name ?? undefined);
           // Purchase history only — no marketing consent (unlike the contacts CSV import). Not eligible for the deck.
           cid = (await db.query(`insert into public.customers (org_id, external_id, first_name, last_name, phone, email, sms_consent, email_consent, age_verified, source)
@@ -549,6 +551,7 @@ export class PostgresStore implements OutreachStore {
         }
         touched.add(cid);
         r.inserted++;
+        onProgress?.(++done, orders.length);
       }
       if (touched.size) await refreshProfiles(db, actor.orgId, [...touched]);
       await this.event(db, actor, actor.orgId, null, "orders_imported", r);

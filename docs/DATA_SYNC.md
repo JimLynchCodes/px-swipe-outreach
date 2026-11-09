@@ -69,7 +69,7 @@ npm run sync:quickvee:orders -- --from 2023-01-01 --to 2023-12-31   # deep backf
   5. clicks **Show Items** on each block and reads order ID, date/time, customer (Walk-In Customer = no customer), total, payment, the Refunded badge and line items (name, qty, price);
   6. also reads any JSON responses the page loads that contain order-like objects (matched by order ID) for phone, email, SKU, category and brand. The first 3 bodies are saved to `QUICKVEE_STATE_DIR/raw/` for calibration.
   Orders are de-duplicated by order ID. `QUICKVEE_ORDER_LIMIT` (scheduled sync) / `--limit` (CLI) stop after N orders; the default is all. A run cut short by the limit doesn't advance the incremental watermark.
-- Header aliases for CSV imports cover common export column names (`src/sync/quickvee/selectors.ts` → `CSV_ALIASES`).
+- Header aliases for CSV imports cover common export column names (`src/sync/quickvee/selectors.ts` → `CSV_ALIASES`). Order amount spent is read from **`order_total_paid`** (also Total / order total / amount paid; currency like `$1,234.50` is fine). When that column is present it is the order total — line-item prices are not summed.
 - **Raw snapshots.** CSVs are kept in `QUICKVEE_STATE_DIR/raw/` (PII, gitignored). Set `QUICKVEE_SAVE_RAW=false` to skip them.
 - **Normalization.** Phones go to E.164 (US) and emails to lowercase. Portal dates are store-local and converted with the store timezone. Customers are matched by external id (`qv:<id>`), then phone (last 10 digits), then email. Walk-in orders with no contact are skipped and counted in the log. After orders load, each touched customer's profile is recomputed from real history: lifetime spend, last purchase, AOV, visits/month (last 90 days), typical weekday and time of day, and top categories and brands.
 
@@ -93,7 +93,7 @@ npx tsx --env-file=.env.local src/orders/scrapeCli.ts --from 2026-01-01 --to 202
 ```
 
 - Logs in (saved session, MFA stop) and runs the Orders Management crawler above, newest first.
-- Writes a CSV in exactly the format **Data sync → Manually add → Order history** accepts: one row per line item (one row when an order has no items), plus a `Status` column (`Refunded`). Nothing goes to the database; upload the file.
+- Writes a CSV in exactly the format **Data sync → Manually add → Order history** accepts: one row per line item (one row when an order has no items), an **`order_total_paid`** column for amount spent, plus a `Status` column (`Refunded`). Nothing goes to the database; upload the file. The Data sync page shows an accessible progress bar for upload/parse and for Submit writes.
 - **Writes as it goes.** If it crashes, re-run the same command with `--resume`: orders already in the file are skipped and the crawl restarts from the oldest saved day. Files roll over to `orders.part2.csv`, `orders.part3.csv`, … before the import's 50,000-row upload limit; upload each.
 - Progress goes to stderr; the summary to stdout.
 - Flags:

@@ -623,14 +623,15 @@ export class MemoryStore implements OutreachStore {
     }
     return keys;
   }
-  async importCustomers(actor: Actor, rows: ImportCustomer[], consent: ImportConsent) {
+  async importCustomers(actor: Actor, rows: ImportCustomer[], consent: ImportConsent, onProgress?: (done: number, total: number) => void) {
     this.assertMember(actor);
     assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
     const keys = await this.customerKeys(actor);
     let inserted = 0, existing = 0;
     const now = new Date().toISOString();
+    let done = 0;
     for (const r of rows) {
-      if (isExisting(r, keys)) { existing++; continue; }
+      if (isExisting(r, keys)) { existing++; onProgress?.(++done, rows.length); continue; }
       const id = `cust_${randomUUID()}`;
       const customer: Customer = {
         id, externalId: r.externalId ? `qv:${r.externalId}` : null, firstName: r.firstName, lastName: r.lastName, age: r.age, gender: null,
@@ -651,6 +652,7 @@ export class MemoryStore implements OutreachStore {
       if (phoneKey(r.phone)) keys.phones.add(phoneKey(r.phone)!);
       if (emailKey(r.email)) keys.emails.add(emailKey(r.email)!);
       inserted++;
+      onProgress?.(++done, rows.length);
     }
     this.audit(actor, "customers_imported", { inserted, existing });
     return { inserted, existing };
@@ -699,16 +701,17 @@ export class MemoryStore implements OutreachStore {
     const all = this.orgCustomers(orgId);
     return (x && all.find(k => k.externalId === x)) || (p && all.find(k => phoneKey(k.phone) === p)) || (e && all.find(k => emailKey(k.email) === e)) || null;
   }
-  async importOrders(actor: Actor, orders: Order[]) {
+  async importOrders(actor: Actor, orders: Order[], onProgress?: (done: number, total: number) => void) {
     this.assertMember(actor);
     assertCanEditDeals(this.roleIn(actor.userId, actor.orgId));
     const have = this.ordersOf(actor.orgId);
     const r = { inserted: 0, existing: 0, customersCreated: 0, unlinked: 0 };
+    let done = 0;
     for (const o of orders) {
-      if (have.has(o.externalId)) { r.existing++; continue; }
+      if (have.has(o.externalId)) { r.existing++; onProgress?.(++done, orders.length); continue; }
       let c = this.findCustomer(actor.orgId, o.customer);
       if (!c) {
-        if (!o.customer.phone && !o.customer.email) { r.unlinked++; continue; }
+        if (!o.customer.phone && !o.customer.email) { r.unlinked++; onProgress?.(++done, orders.length); continue; }
         const [first, last] = splitName(o.customer.name ?? undefined);
         // Order/POS rows are not a marketing opt-in — create the customer for purchase history only (no consent, not in the deck).
         await this.importCustomers(actor, [{ row: 0, externalId: o.customer.externalId, firstName: (first ?? "Customer").slice(0, 100), lastName: (last ?? "").slice(0, 100),
@@ -731,6 +734,7 @@ export class MemoryStore implements OutreachStore {
       }
       have.add(o.externalId);
       r.inserted++;
+      onProgress?.(++done, orders.length);
     }
     this.audit(actor, "orders_imported", r);
     return r;

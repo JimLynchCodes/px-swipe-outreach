@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react'
 import { Upload } from 'lucide-react'
-import { api } from '../api'
+import { api, type CsvUploadProgress } from '../api'
 import { Modal } from '../components/Modal'
 import { money } from '../lib/format'
 import type { ImportPreview } from '../types'
 import { ErrorBubble } from '../components/ErrorBubble'
 import { friendlyError } from '../lib/errors'
+import { ImportProgress, type ImportProgressState } from './ImportProgress'
 
 const MAX_BYTES = 5 * 1024 * 1024
 type Step =
@@ -15,11 +16,25 @@ type Step =
   | { kind: 'saving'; csv: string; fileName: string; preview: ImportPreview }
   | { kind: 'done'; inserted: number; existing: number }
 
+function toBar(p: CsvUploadProgress, rowTotal?: number): ImportProgressState {
+  if (p.phase === 'uploading') {
+    return { phase: 'uploading', percent: p.ratio == null ? null : Math.round(p.ratio * 100) }
+  }
+  if (p.phase === 'writing') {
+    const done = p.done ?? (p.ratio != null && rowTotal != null ? Math.round(p.ratio * rowTotal) : undefined)
+    const total = p.total ?? rowTotal
+    const percent = p.ratio != null ? Math.round(p.ratio * 100) : (total && done != null ? Math.round((done / total) * 100) : null)
+    return { phase: 'writing', percent, done, total }
+  }
+  return { phase: 'parsing', percent: null }
+}
+
 /** "Manually add" on the Data sync page: pick a customer CSV, review only the NEW customers, Submit or Cancel. */
 export function ManualImport() {
   const input = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>({ kind: 'idle' })
   const [err, setErr] = useState<string | null>(null)
+  const [progress, setProgress] = useState<ImportProgressState | null>(null)
 
   async function onFile(file: File | undefined) {
     if (input.current) input.current.value = '' // same file can be picked again
@@ -28,24 +43,32 @@ export function ManualImport() {
     if (!/\.csv$/i.test(file.name) && file.type !== 'text/csv') { setErr('Please choose a .csv file.'); return }
     if (file.size > MAX_BYTES) { setErr('That file is over 5 MB. Split it into smaller files.'); return }
     setStep({ kind: 'reading' })
+    setProgress({ phase: 'reading', percent: null })
     try {
       const csv = await file.text()
-      const preview = await api.customers.preview(csv)
+      setProgress({ phase: 'uploading', percent: 0 })
+      const preview = await api.customers.preview(csv, p => setProgress(toBar(p)))
+      setProgress(null)
       setStep({ kind: 'preview', csv, fileName: file.name, preview })
-    } catch (e) { setErr(friendlyError(e)); setStep({ kind: 'idle' }) }
+    } catch (e) { setErr(friendlyError(e)); setProgress(null); setStep({ kind: 'idle' }) }
   }
 
   async function submit() {
     if (step.kind !== 'preview') return
-    setStep({ ...step, kind: 'saving' }); setErr(null)
+    const snap = step
+    setStep({ ...snap, kind: 'saving' }); setErr(null)
+    setProgress({ phase: 'uploading', percent: 0 })
     try {
-      const r = await api.customers.import(step.csv)
+      const rowTotal = snap.preview.newCustomers.length || snap.preview.totalRows
+      const r = await api.customers.import(snap.csv, p => setProgress(toBar(p, rowTotal)))
+      setProgress(null)
       setStep({ kind: 'done', inserted: r.inserted, existing: r.existing })
-    } catch (e) { setErr(friendlyError(e)); setStep({ ...step, kind: 'preview' }) }
+    } catch (e) { setErr(friendlyError(e)); setProgress(null); setStep({ ...snap, kind: 'preview' }) }
   }
 
-  const cancel = () => { setStep({ kind: 'idle' }); setErr(null) }
+  const cancel = () => { setStep({ kind: 'idle' }); setErr(null); setProgress(null) }
   const p = step.kind === 'preview' || step.kind === 'saving' ? step.preview : null
+  const busy = step.kind === 'reading' || step.kind === 'saving'
   const skipped = p ? [
     p.existing && `${p.existing} already in your customers`,
     p.duplicatesInFile && `${p.duplicatesInFile} repeated in the file`,
@@ -60,13 +83,15 @@ export function ManualImport() {
           <p className="muted small">Upload a customer CSV (e.g. Quickvee's customer export). Only customers who aren't already here (by customer ID, phone or email) are added.</p>
         </div>
         <div className="btn-wrap">
-          <button className="btn-secondary" aria-label="Manually add customers" onClick={() => input.current?.click()} disabled={step.kind === 'reading'}>
+          <button className="btn-secondary" aria-label="Manually add customers" onClick={() => input.current?.click()} disabled={busy}>
             {step.kind === 'reading' ? 'Reading…' : 'Manually add'}
           </button>
-          <ErrorBubble error={step.kind === 'idle' ? err : null} />
+          <ErrorBubble error={step.kind === 'idle' || step.kind === 'reading' ? err : null} />
         </div>
         <input ref={input} type="file" accept=".csv,text/csv" hidden aria-label="Customer CSV file" onChange={e => void onFile(e.target.files?.[0])} />
       </div>
+
+      {progress && step.kind === 'reading' && <ImportProgress progress={progress} />}
 
       {p && (step.kind === 'preview' || step.kind === 'saving') && (
         <Modal title={p.newCustomers.length ? `Add ${p.newCustomers.length} new customer${p.newCustomers.length === 1 ? '' : 's'}?` : 'No new customers'}
@@ -77,6 +102,7 @@ export function ManualImport() {
             <ErrorBubble error={err} className="modal-error" />
           </>}>
           <p className="muted small">{step.fileName}{skipped && ` · skipped: ${skipped}`}</p>
+          {progress && step.kind === 'saving' && <ImportProgress progress={progress} />}
           {p.newCustomers.length > 0 ? (
             <ul className="rows import-list" aria-label="New customers">
               {p.newCustomers.map(c => (

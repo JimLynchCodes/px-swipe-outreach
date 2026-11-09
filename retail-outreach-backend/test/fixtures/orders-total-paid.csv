@@ -1,0 +1,4 @@
+Order ID,Date,Customer name,Phone,Email,Item,Qty,Unit price,order_total_paid,Payment
+B-2001,2026-11-05T15:00:00.000Z,Sam Spender,+16095552001,sam@example.com,Widget A,2,50.00,"$1,234.50",Card
+B-2001,2026-11-05T15:00:00.000Z,Sam Spender,+16095552001,sam@example.com,Widget B,1,999.00,"$1,234.50",Card
+B-2002,11/06/2026 1:00 PM,Pat Buyer,6095552002,,Gadget,1,10.00,"$42.00",Cash
