@@ -76,7 +76,7 @@ export type CsvUploadProgress = {
 }
 
 /** Prefer XHR so we get real upload progress; fall back to fetch when XHR is unavailable or fetch is mocked (unit tests). */
-function useXhrTransport(): boolean {
+function prefersXhrTransport(): boolean {
   if (typeof XMLHttpRequest === 'undefined') return false
   try { return !('mock' in fetch) } catch { return true }
 }
@@ -110,7 +110,7 @@ async function postCsv<T>(path: string, csv: string, opts: {
   if (opts.streamProgress) headers.Accept = 'application/x-ndjson'
   const report = (p: CsvUploadProgress) => opts.onProgress?.(p)
 
-  if (useXhrTransport()) {
+  if (prefersXhrTransport()) {
     return new Promise<T>((resolve, reject) => {
       const xhr = new XMLHttpRequest()
       xhr.open('POST', `${BASE}${path}`)
