@@ -233,10 +233,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (!canContact(opp.customer, ch)) return { error: ["not_contactable", `Customer cannot be contacted by ${ch}`] as const };
     const until = opts.ignoreCooldown ? null : cooldownUntil(opp.customer, ch, cooldownsOf(opts.settings));
     if (until) return { error: ["cooldown", `Customer was contacted by ${ch} recently; next allowed ${until}`] as const };
-    const cacheKey = cacheKeyFromSettings(opts.settings, ch, opts.deals, opts.businessName);
+    const cacheKey = cacheKeyFromSettings(opts.settings, ch, opts.deals, opts.businessName, { opportunityId: id, customerId: opp.customer.id });
     if (!opts.refresh) {
       const hit = await store.getCachedSuggestion(actor, id, ch, cacheKey);
-      if (hit) return { suggestion: hit, cached: true as const };
+      // Never reuse a cached rules-template that was stored after an AI failure.
+      if (hit && !hit.template) return { suggestion: hit, cached: true as const };
     }
     const recommendation = recommend(opp.customer, opts.deals, { catalog: opts.catalog, maxDiscountPercent: opts.settings.maxDiscountPercent });
     const offer = opp.offer && { ...opp.offer, discountPercent: Math.min(opp.offer.discountPercent, opts.settings.maxDiscountPercent) };
@@ -245,9 +246,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       signatures: { sms: opts.settings.smsSignature, email: opts.settings.emailSignature }, model: opts.settings.aiModel,
       promotions: opts.deals, maxDiscountPercent: opts.settings.maxDiscountPercent, voice: opts.settings.brandVoice
     });
+    if (suggestion.template || (suggestion.source === "rules" && suggestion.aiAttempt)) {
+      const codes = suggestion.aiAttempt ? "after_ai_attempt" : "rules";
+      opts.log.warn({ opportunityId: id, channel: ch, model: opts.settings.aiModel, reason: codes }, "AI suggestion fell back to rules template");
+    }
     const pub = publicSuggestion(suggestion);
     await store.saveSuggestion(actor, id, { ...suggestion, aiAttempt: undefined });
-    await store.putCachedSuggestion(actor, id, ch, cacheKey, pub);
+    // Only cache successful personalized drafts. Template fallbacks must not poison the deck.
+    if (!pub.template) await store.putCachedSuggestion(actor, id, ch, cacheKey, pub);
     if (suggestion.aiAttempt) {
       const a = suggestion.aiAttempt;
       await store.recordAiUsage(actor, {

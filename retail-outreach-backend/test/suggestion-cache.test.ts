@@ -59,15 +59,16 @@ describe("suggestion cache (no AI on revisit)", () => {
     expect(ai.calls).toBe(2);
   });
 
-  it("fingerprint changes when the model changes (cache miss)", () => {
-    const a = suggestionCacheKey({
-      aiModel: "openai/gpt-4o-mini", brandVoice: DEFAULT_SETTINGS.brandVoice, maxDiscountPercent: 25,
-      smsSignature: "", emailSignature: "", storeName: "Cloud 9", promotions: [], channel: "sms"
-    });
-    const b = suggestionCacheKey({
-      aiModel: "rules", brandVoice: DEFAULT_SETTINGS.brandVoice, maxDiscountPercent: 25,
-      smsSignature: "", emailSignature: "", storeName: "Cloud 9", promotions: [], channel: "sms"
-    });
+  it("fingerprint changes when the model or customer changes (cache miss)", () => {
+    const base = {
+      brandVoice: DEFAULT_SETTINGS.brandVoice, maxDiscountPercent: 25,
+      smsSignature: "", emailSignature: "", storeName: "Cloud 9", promotions: [] as never[], channel: "sms" as const,
+      opportunityId: "opp_1", customerId: "cust_1"
+    };
+    const a = suggestionCacheKey({ ...base, aiModel: "openai/gpt-4o-mini" });
+    const b = suggestionCacheKey({ ...base, aiModel: "rules" });
+    const c = suggestionCacheKey({ ...base, aiModel: "openai/gpt-4o-mini", customerId: "cust_2", opportunityId: "opp_2" });
     expect(a).not.toBe(b);
+    expect(a).not.toBe(c);
   });
 });

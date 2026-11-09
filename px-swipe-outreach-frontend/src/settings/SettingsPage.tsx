@@ -59,7 +59,7 @@ function StoreSettings({ canEdit }: { canEdit: boolean }) {
     <form className="panel settings-form" onSubmit={save} aria-label="Store settings">
       <h3 className="eyebrow">Store</h3>
       <fieldset disabled={!canEdit}>
-        <label>Store name<input maxLength={100} value={s.storeName ?? ''} onChange={e => set('storeName', e.target.value)} placeholder="Used in messages" /></label>
+        <label>Store name<input maxLength={100} value={s.storeName ?? ''} onChange={e => set('storeName', e.target.value)} placeholder="e.g. Pineapple Xpress" /><span className="muted small">Shown in AI and template messages. Overrides the org name (bootstrap default is &quot;My Store&quot;).</span></label>
         <div className="row-fields">
           <label>Default channel
             <select value={s.defaultChannel ?? ''} onChange={e => set('defaultChannel', (e.target.value || null) as OrgSettings['defaultChannel'])}>

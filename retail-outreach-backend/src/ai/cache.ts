@@ -4,7 +4,7 @@ import { eligiblePromotions } from "../providers/ai.js";
 import type { BrandVoice, Channel, Deal, OrgSettings, Suggestion } from "../types.js";
 
 /** Bump when the prompt/shape that feeds the model changes (invalidates every cached card). */
-export const CACHE_SCHEMA = "2026-11-09.1";
+export const CACHE_SCHEMA = "2026-11-09.2";
 
 export type SuggestionCacheKeyInput = {
   aiModel: string;
@@ -16,6 +16,9 @@ export type SuggestionCacheKeyInput = {
   /** Eligible promotions only (ids + discount + schedule). */
   promotions: Deal[];
   channel: Channel;
+  /** Per-card identity so customers can never share a cached message. */
+  opportunityId: string;
+  customerId: string;
 };
 
 /** Stable fingerprint: same inputs → same key → cache hit (no new AI call). */
@@ -27,7 +30,8 @@ export function suggestionCacheKey(input: SuggestionCacheKeyInput, now = Date.no
   const raw = JSON.stringify({
     s: CACHE_SCHEMA, m: input.aiModel, ch: input.channel, cap: input.maxDiscountPercent,
     store: input.storeName ?? "", sms: input.smsSignature, email: input.emailSignature,
-    voice: { p: v.preset, e: v.emoji, so: v.signOff, a: v.about }, promos
+    voice: { p: v.preset, e: v.emoji, so: v.signOff, a: v.about }, promos,
+    opp: input.opportunityId, cust: input.customerId
   });
   return createHash("sha256").update(raw).digest("hex").slice(0, 32);
 }
@@ -39,11 +43,13 @@ export function publicSuggestion(s: Suggestion): Suggestion {
 }
 
 export function cacheKeyFromSettings(
-  settings: OrgSettings, channel: Channel, promotions: Deal[], storeName: string | null
+  settings: OrgSettings, channel: Channel, promotions: Deal[], storeName: string | null,
+  ids: { opportunityId: string; customerId: string }
 ): string {
   return suggestionCacheKey({
     aiModel: settings.aiModel, brandVoice: settings.brandVoice, maxDiscountPercent: settings.maxDiscountPercent,
     smsSignature: settings.smsSignature, emailSignature: settings.emailSignature,
-    storeName: settings.storeName ?? storeName, promotions, channel
+    storeName: settings.storeName ?? storeName, promotions, channel,
+    opportunityId: ids.opportunityId, customerId: ids.customerId
   });
 }

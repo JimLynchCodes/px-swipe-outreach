@@ -38,7 +38,7 @@ describe("OpenAI provider", () => {
     const s = await new OpenAISuggestionProvider("k", "gpt-4o-mini", { client }).suggest(c.input);
     expect(s).toMatchObject({ source: "openai", model: "gpt-4o-mini", confidence: 0.9, deal: { id: "deal_0007" }, usage: { inputTokens: 1000, outputTokens: 100 } });
     expect(s.message).toBe("Hi Jamal! Cigar Friday: 20% off cigars this Friday. 21+ w/ ID. -Cloud 9\nReply STOP to opt out.");
-    expect(calls[0]).toMatchObject({ temperature: 0.3, max_completion_tokens: 350, response_format: { type: "json_schema", json_schema: { name: "smoke_shop_outreach", strict: true } } });
+    expect(calls[0]).toMatchObject({ temperature: 0.3, max_completion_tokens: 600, response_format: { type: "json_schema", json_schema: { name: "smoke_shop_outreach", strict: true } } });
   });
 
   it("regenerates once with violation feedback, summing usage", async () => {

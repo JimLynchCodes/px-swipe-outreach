@@ -28,7 +28,7 @@ Set `OPENROUTER_API_KEY` on the backend and pick a model under **Settings → Mo
    - **User payload (JSON, trimmed):** first name, segment, days since visit, visit cadence, preferred day/time, top 3 recent items, top categories/brands from purchases, restock hints, rewards points (if any); compact promotions (id, title, discount, schedule, cats); engine pick id; standing offer; cap. Last name, phone, email and address are never sent.
 3. **Structured output.** A strict JSON schema, validated again with zod:
    `{ promotion_id | null, reason, send_time, sms_text, email_subject, email_body, confidence }`.
-4. **Request settings.** Temperature 0.3 (left out for reasoning models), `max_completion_tokens` 350, a 15 s timeout, and 2 SDK retries with exponential backoff on 429, 5xx and connection errors.
+4. **Request settings.** Temperature 0.3 (left out for reasoning models), `max_completion_tokens` 600, a 15 s timeout, and 2 SDK retries with exponential backoff on 429, 5xx and connection errors.
 5. **Compliance validator** (`src/ai/compliance.ts`). It checks the copy after generation. If the draft is rejected, it is **regenerated once**, with the violations fed back to the model. If the second draft also fails, or the call errors or times out, the suggestion **falls back to the rules engine**.
 6. **Cost metrics.** Every call is recorded. A fallback records two rows: the tokens spent on the failed AI attempt (priced), and the rules call (free).
 
@@ -47,9 +47,9 @@ Suggestions are **cached per org + opportunity + channel** under a fingerprint o
 
 Only customers with an active marketing opt-in on a reachable channel are in the deck; prepare/suggestion never run AI for anyone else.
 
-Demo mode keeps the cache in memory (`MemoryStore`). Supabase mode uses the `suggestion_cache` table (migration `20261109170000_suggestion_cache.sql`). Cost metrics (`ai_usage`) are recorded **only when a new suggestion is generated**, not on cache hits. Failed AI attempts before a rules fallback are still recorded.
+Demo mode keeps the cache in memory (`MemoryStore`). Supabase mode uses the `suggestion_cache` table (migration `20261109170000_suggestion_cache.sql`). Cost metrics (`ai_usage`) are recorded **only when a new suggestion is generated**, not on cache hits. If the model call fails (API error, truncated JSON, compliance rejection after one repair), the card falls back to the rules **template**, is marked `template: true` in the UI, and that fallback is **not** written to the suggestion cache (so the next prepare retries AI). `CACHE_SCHEMA` bumps invalidate every cached card after prompt/provider fixes — redeploy is enough; no manual cache clear. Failed AI attempts before a rules fallback are still recorded.
 
-**Prompt caching.** OpenRouter requests mark the system prompt with `cache_control: { type: "ephemeral" }` (honored by Anthropic-routed models). OpenAI caches long identical prefixes automatically on supported models. Reusing the same system text across a deck's cards is what makes that pay off.
+**Prompt caching.** OpenRouter requests mark the system prompt with `cache_control: { type: "ephemeral" }` **only for `anthropic/*` models**. Other vendors reject that content shape. OpenAI caches long identical prefixes automatically on supported models. Reusing the same system text across a deck's cards is what makes that pay off.
 
 ### Rough token estimates per deck (20 cards, gpt-4o-mini / comparable)
 
@@ -60,6 +60,10 @@ Demo mode keeps the cache in memory (`MemoryStore`). Supabase mode uses the `sug
 | Revisiting the same deck | **0** (served from `suggestion_cache`) | — | — |
 
 At gpt-4o-mini list prices that's on the order of **$0.003–$0.006 per fresh 20-card deck**, and **$0** to open it again until something invalidates the fingerprint.
+
+## Store name (Settings → Store name)
+
+Set **Store name** to the name customers should see in messages (e.g. **Pineapple Xpress**). It overrides the org `business_name` (bootstrap default is `My Store` from `BOOTSTRAP_ORG_NAME`). Prompts and rules templates use this value.
 
 ## Brand voice (Settings → Brand voice)
 

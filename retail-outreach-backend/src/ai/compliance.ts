@@ -101,7 +101,9 @@ export function checkCopy(copy: { smsText?: string; emailSubject?: string; email
   if (ctx.promotion && !new RegExp(escape(ctx.promotion.title), "i").test(all) && !all.toLowerCase().includes(discountLabel(ctx.promotion).toLowerCase())) {
     violations.push({ code: "ungrounded", message: `Name the promotion ("${ctx.promotion.title}") or its exact terms (${discountLabel(ctx.promotion)}).` });
   }
-  if (!new RegExp(`\\b${escape(ctx.firstName)}\\b`, "i").test(all)) violations.push({ code: "no_name", message: `Greet the customer by first name (${ctx.firstName}).` });
+  const first = (ctx.firstName ?? "").trim();
+  const usableName = !!first && !/^[_\-.…\s]+$/.test(first) && first !== "?" && first.toLowerCase() !== "customer";
+  if (usableName && !new RegExp(`\\b${escape(first)}\\b`, "i").test(all)) violations.push({ code: "no_name", message: `Greet the customer by first name (${first}).` });
   if (ctx.lastName && new RegExp(`\\b${escape(ctx.lastName)}\\b`, "i").test(all)) violations.push({ code: "last_name", message: "Use the first name only." });
   if (/\b(reply stop|opt out|unsubscribe)\b/i.test(all)) violations.push({ code: "self_opt_out", message: "Don't write opt-out text; it is appended automatically." });
   if (ctx.channel === "sms") {

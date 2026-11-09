@@ -45,6 +45,13 @@ export function finalizeSuggestion(
   };
 }
 
+/** Usable first name for copy, or null when missing/placeholder (never greet as "Hi ," / "Hi ____,"). */
+export function greetName(firstName: string | null | undefined): string | null {
+  const n = (firstName ?? "").trim();
+  if (!n || /^[_\-.…\s]+$/.test(n) || n === "?" || n.toLowerCase() === "customer") return null;
+  return n;
+}
+
 /** Deterministic, offline copy. Used when no OPENAI_API_KEY is set, and as a fallback on AI errors. */
 export class RulesSuggestionProvider implements SuggestionProvider {
   readonly name = "rules" as const;
@@ -52,13 +59,15 @@ export class RulesSuggestionProvider implements SuggestionProvider {
   async suggest(input: SuggestionInput): Promise<Suggestion> {
     const { opportunity, businessName, recommendation: rec } = input;
     const { customer: c, offer } = opportunity;
-    const name = c.firstName;
+    const name = greetName(c.firstName);
+    const hi = name ? `Hi ${name}` : "Hi there";
     const pr = c.profile;
     const days = daysSince(c.lastPurchaseAt);
     const favs = list(pr.favoriteCategories.map(categoryLabel));
     const brand = pr.favoriteBrands[0];
     const deal = rec.deal;
-    const habit = `${name} buys ${favs || "with us"}${pr.favoriteBrands.length ? ` (${list(pr.favoriteBrands.slice(0, 2))})` : ""} about ${pr.visitsPerMonth}×/month, ~${money(pr.avgBasketCents)} a visit`;
+    const who = name ?? "This customer";
+    const habit = `${who} buys ${favs || "with us"}${pr.favoriteBrands.length ? ` (${list(pr.favoriteBrands.slice(0, 2))})` : ""} about ${pr.visitsPerMonth}×/month, ~${money(pr.avgBasketCents)} a visit`;
 
     let title: string, reasoning: string, sms: string, subject: string;
     if (deal) {
@@ -70,21 +79,21 @@ export class RulesSuggestionProvider implements SuggestionProvider {
         : rec.segment === "at_risk" ? `Bring them in for ${deal.title} (${label})`
         : `Invite them to ${deal.title} (${label})`;
       reasoning = `${habit}. ${deal.title} lines up with that${dayMatch ? ` and runs ${day}, the day they usually shop` : ` and runs ${day}`}${rec.segment === "lapsed" ? `; it's been ${days} days, so a real discount is worth it` : ""}.`;
-      const opener = rec.segment === "lapsed" ? `Hi ${name}, it's ${businessName}. We miss you!`
-        : rec.segment === "at_risk" ? `Hi ${name}, it's ${businessName}. Haven't seen you in a bit!`
-        : `Hi ${name}, it's ${businessName}!`;
+      const opener = rec.segment === "lapsed" ? `${hi}, it's ${businessName}. We miss you!`
+        : rec.segment === "at_risk" ? `${hi}, it's ${businessName}. Haven't seen you in a bit!`
+        : `${hi}, it's ${businessName}!`;
       sms = `${opener} ${day} only: ${deal.title}. ${deal.description}${brand && rec.segment === "loyal" ? ` Your ${brand} is in stock.` : ""} 21+ w/ ID.`;
-      subject = `${deal.title} this ${day}, ${name}`;
+      subject = name ? `${deal.title} this ${day}, ${name}` : `${deal.title} this ${day}`;
     } else if (offer) {
       // offer percent is already capped by the route to the org's max discount
       title = rec.segment === "lapsed" ? `Win them back with ${offer.discountPercent}% off` : `Thank them with ${offer.discountPercent}% off`;
       reasoning = `${habit}. No weekly deal matches their favorites, so use the standing ${offer.name} offer.`;
-      sms = `Hi ${name}, it's ${businessName}! Here's ${offer.discountPercent}% off your next visit${favs ? ` — stock up on ${favs}` : ""}. 21+ w/ ID.`;
-      subject = `${offer.discountPercent}% off your next visit, ${name}`;
+      sms = `${hi}, it's ${businessName}! Here's ${offer.discountPercent}% off your next visit${favs ? ` — stock up on ${favs}` : ""}. 21+ w/ ID.`;
+      subject = name ? `${offer.discountPercent}% off your next visit, ${name}` : `${offer.discountPercent}% off your next visit`;
     } else {
       title = "Share what's new";
       reasoning = `${habit}. A friendly heads-up about new arrivals keeps a regular coming back.`;
-      sms = `Hi ${name}, it's ${businessName}! New ${favs || "arrivals"} just landed — come check them out. 21+ w/ ID.`;
+      sms = `${hi}, it's ${businessName}! New ${favs || "arrivals"} just landed — come check them out. 21+ w/ ID.`;
       subject = `New ${favs || "arrivals"} at ${businessName}`;
     }
     // Rewards members: quote their real balance when it fits the SMS budget (email always has room).
@@ -95,7 +104,7 @@ export class RulesSuggestionProvider implements SuggestionProvider {
     }
     const body = sms.replace(/^Hi [^,]+, it's [^!.]+[!.] ?/, "");
     const closing = input.signatures?.email.trim() ? "See you soon," : `See you soon,\n${businessName}`;
-    const message = input.channel === "sms" ? sms : `Hi ${name},\n\n${body}\n\n${closing}`;
+    const message = input.channel === "sms" ? sms : `${hi},\n\n${body}\n\n${closing}`;
     return finalizeSuggestion({ title, reasoning, message, subject }, input, this.name);
   }
 }
@@ -104,7 +113,7 @@ export class RulesSuggestionProvider implements SuggestionProvider {
 export type ChatCompletionClient = {
   create(params: Record<string, unknown>, opts?: { signal?: AbortSignal; timeout?: number; maxRetries?: number }): Promise<{
     id?: string;
-    choices: Array<{ message?: { content?: string | null } }>;
+    choices: Array<{ message?: { content?: string | null }; finish_reason?: string | null }>;
     /** `cost` (USD) is OpenRouter usage accounting (`usage: { include: true }`). */
     usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number } | null;
   }>;
@@ -158,7 +167,7 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
   private opts: Required<Omit<OpenAIProviderOptions, "client" | "baseURL" | "headers" | "lookupCost">> & Pick<OpenAIProviderOptions, "client" | "baseURL" | "headers" | "lookupCost">;
   private defaultModel: string;
   constructor(private apiKey: string, defaultModel?: string, opts: OpenAIProviderOptions = {}) {
-    this.opts = { timeoutMs: 15_000, maxRetries: 2, regenerations: 1, temperature: 0.3, maxCompletionTokens: 350, providerId: "openai", ...opts };
+    this.opts = { timeoutMs: 15_000, maxRetries: 2, regenerations: 1, temperature: 0.3, maxCompletionTokens: 600, providerId: "openai", ...opts };
     this.name = this.opts.providerId;
     const fallback = this.name === "openrouter" ? DEFAULT_AI_MODEL : "gpt-4o-mini";
     this.defaultModel = defaultModel && modelInfo(defaultModel)?.provider === this.name ? defaultModel : fallback;
@@ -183,8 +192,10 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
       recommendation: input.recommendation, offer: input.opportunity.offer, now
     };
     const system = systemPrompt(ctx);
+    // Prompt caching only for Anthropic on OpenRouter. Other vendors reject that content shape and fail into rules while still billing.
+    const anthropicCache = this.name === "openrouter" && model.startsWith("anthropic/");
     const messages: Array<Record<string, unknown>> = [
-      this.name === "openrouter"
+      anthropicCache
         ? { role: "system", content: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] }
         : { role: "system", content: system },
       { role: "user", content: JSON.stringify(userPayload(ctx)) }
@@ -213,7 +224,12 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
         }
         if (exactCost !== null) usage.costUsd = exactCost; else delete usage.costUsd;
         content = res.choices[0]?.message?.content;
+        const finish = res.choices[0]?.finish_reason;
+        if (finish === "length") {
+          throw new AiAttemptError(`${this.name} output truncated (finish_reason=length); raise max_completion_tokens`, model, usage, [{ code: "truncated", message: "Model output was cut off before valid JSON finished." }]);
+        }
       } catch (e) {
+        if (e instanceof AiAttemptError) throw e;
         throw new AiAttemptError(`${this.name} request failed: ${(e as Error).message}`, model, usage, [], { cause: e });
       }
       let out: AiOutput;
@@ -291,7 +307,7 @@ export class ModelRouter implements SuggestionProvider {
       }
     }
     const fallback = await this.rules.suggest(input);
-    return wasted ? { ...fallback, aiAttempt: wasted } : fallback;
+    return wasted ? { ...fallback, aiAttempt: wasted, template: true } : fallback;
   }
 }
 

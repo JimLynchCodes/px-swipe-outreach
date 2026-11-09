@@ -21,7 +21,14 @@ const app = await buildApp({
   suggestions: createSuggestionProvider({
     apiKey: config.OPENAI_API_KEY, openrouterKey: config.OPENROUTER_API_KEY, aiProvider: config.AI_PROVIDER, model: config.OPENAI_MODEL,
     appUrl: config.APP_URL, appName: config.OPENROUTER_APP_NAME,
-    onError: e => app.log.warn({ err: e }, "AI suggestion failed; using rules fallback")
+    onError: e => {
+      const err = e as { name?: string; message?: string; model?: string; violations?: { code: string }[]; usage?: { inputTokens?: number; outputTokens?: number } };
+      app.log.warn({
+        errName: err?.name, message: err?.message?.slice(0, 200), model: err?.model,
+        violationCodes: err?.violations?.map(v => v.code),
+        inputTokens: err?.usage?.inputTokens, outputTokens: err?.usage?.outputTokens
+      }, "AI suggestion failed; using rules fallback");
+    }
   }),
   messenger,
   enqueueDelivery: queue ? id => queue.enqueue(id) : undefined,
