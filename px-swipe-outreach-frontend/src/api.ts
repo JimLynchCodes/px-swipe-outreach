@@ -74,10 +74,15 @@ export const api = {
   queue: (limit = 50) => request<{ items: OutreachCard[]; total: number; cooldown?: { sms: number; email: number } }>(`/api/outreach/queue?limit=${limit}`),
   /** One card; `pick` = explicit pick from Registered users (cooldown doesn't disable channels). */
   card: (id: string, pick = false) => request<OutreachCard>(`/api/outreach/${encodeURIComponent(id)}${pick ? '?pick=1' : ''}`),
-  suggestion: (id: string, channel: Channel, ignoreCooldown = false) =>
-    request<{ suggestion: Suggestion }>(`/api/outreach/${encodeURIComponent(id)}/suggestion`, {
-      method: 'POST', body: JSON.stringify(ignoreCooldown ? { channel, ignoreCooldown } : { channel }),
+  suggestion: (id: string, channel: Channel, opts: { ignoreCooldown?: boolean; refresh?: boolean } = {}) =>
+    request<{ suggestion: Suggestion; cached?: boolean }>(`/api/outreach/${encodeURIComponent(id)}/suggestion`, {
+      method: 'POST', body: JSON.stringify({ channel, ...(opts.ignoreCooldown ? { ignoreCooldown: true } : {}), ...(opts.refresh ? { refresh: true } : {}) }),
     }).then(r => r.suggestion),
+  /** Prefill suggestion cache for the current deck (skips cards already cached under the current fingerprint). */
+  prepareDeck: (opts: { refresh?: boolean; ids?: string[]; limit?: number; channel?: Channel } = {}) =>
+    request<{ ok: true; total: number; generated: number; cached: number; failed: number }>('/api/outreach/deck/prepare', {
+      method: 'POST', body: JSON.stringify(opts),
+    }),
   skip: (id: string) => request<{ ok: true }>(`/api/outreach/${encodeURIComponent(id)}/skip`, { method: 'POST' }),
   send: (id: string, body: { channel: Channel; message: string; subject?: string | null; idempotencyKey: string; ignoreCooldown?: boolean }) =>
     request<SendResult>(`/api/outreach/${encodeURIComponent(id)}/send`, {

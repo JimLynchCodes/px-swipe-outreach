@@ -58,6 +58,10 @@ export interface OutreachStore {
   /** Throws StoreError(not_found|conflict). */
   skip(actor: Actor, id: string): Promise<void>;
   saveSuggestion(actor: Actor, id: string, suggestion: Suggestion): Promise<void>;
+  /** Latest cached suggestion for this card+channel when `cacheKey` still matches; null = miss (generate). */
+  getCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string): Promise<Suggestion | null>;
+  /** Upsert the served suggestion under the current fingerprint (demo: memory; Supabase: suggestion_cache). */
+  putCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string, suggestion: Suggestion): Promise<void>;
   /**
    * Atomically moves the opportunity to `queued` and records a delivery.
    * Idempotent per (org, idempotencyKey): a repeat returns the existing delivery with duplicate=true.

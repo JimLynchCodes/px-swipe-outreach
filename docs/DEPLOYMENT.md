@@ -1,5 +1,7 @@
 # Deployment
 
+Deploying specifically at **https://outreach.pineapplexpress.com** (DNS, TLS, env, Twilio, Supabase Auth URLs): see [DEPLOY_SUBDOMAIN.md](DEPLOY_SUBDOMAIN.md).
+
 ## Components
 | Component | Image / command | Notes |
 |---|---|---|

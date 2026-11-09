@@ -24,13 +24,40 @@ Set `OPENROUTER_API_KEY` on the backend and pick a model under **Settings → Mo
 
 1. **Promotions offered to the model.** These are the org's promotions that are enabled, run in the next 7 days, and fall within the **Max discount** cap (`eligiblePromotions`). Disabled, expired and over-cap promotions are never shown to the model.
 2. **Prompt** (`retail-outreach-backend/src/ai/prompt.ts`, `PROMPT_VERSION`):
-   - **System prompt:** store identity, brand voice, the hard compliance rules, the SMS character budget, and one few-shot example per segment (loyal, at-risk, lapsed).
-   - **User payload (JSON):** the customer's first name, segment, days since last visit, favorite categories and brands, visit cadence, preferred day/time and recent items; the eligible promotions (id, title, terms, schedule, end date); the engine's suggested pick; the standing offer; and the cap. Last name, phone, email and address are never sent.
+   - **System prompt (compact):** store identity, brand voice, hard compliance rules, SMS/email budgets, and **one** few-shot for the customer's segment only (not all three).
+   - **User payload (JSON, trimmed):** first name, segment, days since visit, visit cadence, preferred day/time, top 3 recent items, top categories/brands from purchases, restock hints, rewards points (if any); compact promotions (id, title, discount, schedule, cats); engine pick id; standing offer; cap. Last name, phone, email and address are never sent.
 3. **Structured output.** A strict JSON schema, validated again with zod:
    `{ promotion_id | null, reason, send_time, sms_text, email_subject, email_body, confidence }`.
-4. **Request settings.** Temperature 0.3 (left out for reasoning models), `max_completion_tokens` 500, a 15 s timeout, and 2 SDK retries with exponential backoff on 429, 5xx and connection errors.
+4. **Request settings.** Temperature 0.3 (left out for reasoning models), `max_completion_tokens` 350, a 15 s timeout, and 2 SDK retries with exponential backoff on 429, 5xx and connection errors.
 5. **Compliance validator** (`src/ai/compliance.ts`). It checks the copy after generation. If the draft is rejected, it is **regenerated once**, with the violations fed back to the model. If the second draft also fails, or the call errors or times out, the suggestion **falls back to the rules engine**.
 6. **Cost metrics.** Every call is recorded. A fallback records two rows: the tokens spent on the failed AI attempt (priced), and the rules call (free).
+
+
+## When AI runs (and when it doesn't)
+
+Suggestions are **cached per org + opportunity + channel** under a fingerprint of the model, brand voice, discount cap, signatures, store name, and eligible promotions (`src/ai/cache.ts`, `CACHE_SCHEMA`).
+
+| Event | AI call? |
+| --- | --- |
+| Generating a new deck (`POST /api/outreach/deck/prepare`) | Yes, only for cards missing a matching cache entry (parallel, concurrency 4) |
+| Opening a card / swiping / revisiting the deck | **No** — cache hit |
+| Page navigation, re-render, remount | **No** |
+| Settings / brand voice / model / promotions change (fingerprint changes) or `refresh: true` (Retry, model picker, deals panel) | Yes — regenerate that card |
+| Explicit pick from Registered users | Yes if uncached (cooldown ignored for the pick) |
+
+Demo mode keeps the cache in memory (`MemoryStore`). Supabase mode uses the `suggestion_cache` table (migration `20261109170000_suggestion_cache.sql`). Cost metrics (`ai_usage`) are recorded **only when a new suggestion is generated**, not on cache hits. Failed AI attempts before a rules fallback are still recorded.
+
+**Prompt caching.** OpenRouter requests mark the system prompt with `cache_control: { type: "ephemeral" }` (honored by Anthropic-routed models). OpenAI caches long identical prefixes automatically on supported models. Reusing the same system text across a deck's cards is what makes that pay off.
+
+### Rough token estimates per deck (20 cards, gpt-4o-mini / comparable)
+
+| | Input (uncached) | Input (with prompt cache) | Output |
+| --- | --- | --- | --- |
+| Per card | ~700–900 tokens (system ~450 + user ~250–400) | ~250–400 new tokens (user only; system cached) | ~120–180 tokens |
+| Full new deck (20) | ~14–18k input + ~2.5–3.5k output | ~5–8k new input after the first card warms the cache | ~2.5–3.5k |
+| Revisiting the same deck | **0** (served from `suggestion_cache`) | — | — |
+
+At gpt-4o-mini list prices that's on the order of **$0.003–$0.006 per fresh 20-card deck**, and **$0** to open it again until something invalidates the fingerprint.
 
 ## Brand voice (Settings → Brand voice)
 

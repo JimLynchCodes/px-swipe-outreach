@@ -307,6 +307,26 @@ export class PostgresStore implements OutreachStore {
     });
   }
 
+  async getCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string) {
+    return this.asUser(actor.userId, async db => {
+      const r = await db.query(`select payload from public.suggestion_cache
+        where org_id = $1 and opportunity_id = $2 and channel = $3 and cache_key = $4`, [actor.orgId, id, channel, cacheKey]);
+      return r.rows[0]?.payload as Suggestion ?? null;
+    });
+  }
+
+  async putCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string, suggestion: Suggestion) {
+    await this.asUser(actor.userId, async db => {
+      if (!(await this.findOpp(db, actor, id, true))) throw new StoreError("not_found", "Opportunity not found");
+      const { usage: _u, aiAttempt: _a, ...payload } = suggestion;
+      await db.query(`insert into public.suggestion_cache (org_id, opportunity_id, channel, cache_key, payload, model, source, updated_at)
+        values ($1,$2,$3,$4,$5::jsonb,$6,$7, now())
+        on conflict (org_id, opportunity_id, channel) do update
+          set cache_key = excluded.cache_key, payload = excluded.payload, model = excluded.model, source = excluded.source, updated_at = now()`,
+        [actor.orgId, id, channel, cacheKey, JSON.stringify(payload), suggestion.model, suggestion.source]);
+    });
+  }
+
   async createDelivery(actor: Actor, opportunityId: string, d: NewDelivery) {
     const findExisting = (db: Db) => db.query(`select * from public.message_deliveries where org_id = $1 and idempotency_key = $2`,
       [actor.orgId, d.idempotencyKey]);

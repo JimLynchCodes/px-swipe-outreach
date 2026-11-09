@@ -24,6 +24,7 @@ import type { SuggestionProvider } from "./providers/ai.js";
 import type { MessageProvider } from "./providers/messaging.js";
 import { StoreError, type OutreachStore } from "./store/types.js";
 import { costUsd, listModels, modelInfo, PRICE_TABLE_VERSION, RULES_MODEL } from "./ai/models.js";
+import { cacheKeyFromSettings, publicSuggestion } from "./ai/cache.js";
 import { costReport } from "./metrics/cost.js";
 import { DEFAULT_ATTRIBUTION_DAYS, performanceReport } from "./metrics/performance.js";
 import { ConsoleInviteMailer, SupabaseInviteMailer, type InviteMailer } from "./team/mailer.js";
@@ -222,49 +223,100 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     return toCardDto(opp, Date.now(), cooldownsOf(await store.getSettings(actorOf(request))), { bypassCooldown: !!pick });
   });
 
-  /** AI suggestion (title, reasoning, message) for a channel. */
-  app.post("/api/outreach/:id/suggestion", async (request, reply) => {
-    const { id } = idParams.parse(request.params);
-    // ignoreCooldown: an explicit pick from Registered users (the card shows the cooldown warning instead).
-    const body = z.object({ channel, ignoreCooldown: z.boolean().optional() }).strict().parse(request.body ?? {});
-    const actor = actorOf(request);
+  /** Build + persist one suggestion (AI or rules), record cost metrics. Shared by /suggestion and deck prepare. */
+  async function generateAndStore(actor: Actor, id: string, ch: "sms" | "email", opts: {
+    ignoreCooldown?: boolean; refresh?: boolean; businessName: string; deals: Awaited<ReturnType<OutreachStore["listDeals"]>>;
+    catalog: Awaited<ReturnType<OutreachStore["listCatalog"]>>; settings: OrgSettings; log: FastifyRequest["log"];
+  }) {
     const opp = await store.getOpportunity(actor, id);
-    if (!opp) return sendError(reply, 404, "not_found", "Opportunity not found");
-    if (!canContact(opp.customer, body.channel)) {
-      return sendError(reply, 422, "not_contactable", `Customer cannot be contacted by ${body.channel}`);
+    if (!opp) return { error: ["not_found", "Opportunity not found"] as const };
+    if (!canContact(opp.customer, ch)) return { error: ["not_contactable", `Customer cannot be contacted by ${ch}`] as const };
+    const until = opts.ignoreCooldown ? null : cooldownUntil(opp.customer, ch, cooldownsOf(opts.settings));
+    if (until) return { error: ["cooldown", `Customer was contacted by ${ch} recently; next allowed ${until}`] as const };
+    const cacheKey = cacheKeyFromSettings(opts.settings, ch, opts.deals, opts.businessName);
+    if (!opts.refresh) {
+      const hit = await store.getCachedSuggestion(actor, id, ch, cacheKey);
+      if (hit) return { suggestion: hit, cached: true as const };
     }
-    const [deals, catalog, settings] = await Promise.all([store.listDeals(actor), store.listCatalog(actor), store.getSettings(actor)]);
-    const until = body.ignoreCooldown ? null : cooldownUntil(opp.customer, body.channel, cooldownsOf(settings));
-    if (until) return sendError(reply, 422, "cooldown", `Customer was contacted by ${body.channel} recently; next allowed ${until}`);
-    const businessName = settings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
-    const recommendation = recommend(opp.customer, deals, { catalog, maxDiscountPercent: settings.maxDiscountPercent });
-    // The standing fallback offer never exceeds the org's discount cap.
-    const offer = opp.offer && { ...opp.offer, discountPercent: Math.min(opp.offer.discountPercent, settings.maxDiscountPercent) };
+    const recommendation = recommend(opp.customer, opts.deals, { catalog: opts.catalog, maxDiscountPercent: opts.settings.maxDiscountPercent });
+    const offer = opp.offer && { ...opp.offer, discountPercent: Math.min(opp.offer.discountPercent, opts.settings.maxDiscountPercent) };
     const suggestion = await suggestions.suggest({
-      opportunity: { ...opp, offer: offer && offer.discountPercent > 0 ? offer : null }, channel: body.channel, businessName, recommendation,
-      signatures: { sms: settings.smsSignature, email: settings.emailSignature }, model: settings.aiModel,
-      promotions: deals, maxDiscountPercent: settings.maxDiscountPercent, voice: settings.brandVoice
+      opportunity: { ...opp, offer: offer && offer.discountPercent > 0 ? offer : null }, channel: ch, businessName: opts.businessName, recommendation,
+      signatures: { sms: opts.settings.smsSignature, email: opts.settings.emailSignature }, model: opts.settings.aiModel,
+      promotions: opts.deals, maxDiscountPercent: opts.settings.maxDiscountPercent, voice: opts.settings.brandVoice
     });
+    const pub = publicSuggestion(suggestion);
     await store.saveSuggestion(actor, id, { ...suggestion, aiAttempt: undefined });
+    await store.putCachedSuggestion(actor, id, ch, cacheKey, pub);
     if (suggestion.aiAttempt) {
-      // Recorded first so the main row stays the latest (markAiUsageSent). Tokens burned by a failed/rejected AI attempt before the rules fallback still cost money.
       const a = suggestion.aiAttempt;
       await store.recordAiUsage(actor, {
         opportunityId: id, model: a.model, provider: modelInfo(a.model)?.provider ?? "openai", inputTokens: a.usage.inputTokens, outputTokens: a.usage.outputTokens,
         costUsd: a.usage.costUsd ?? costUsd(a.model, a.usage.inputTokens, a.usage.outputTokens), priceVersion: a.usage.costUsd !== undefined ? "provider-reported" : PRICE_TABLE_VERSION, dealId: null, dealTitle: null
-      }).catch(e => request.log.warn({ err: e }, "failed to record AI usage"));
+      }).catch(e => opts.log.warn({ err: e }, "failed to record AI usage"));
     }
-    // Cost metrics: one row per suggestion call (rules = $0). Never block the suggestion on metrics.
     const info = modelInfo(suggestion.model);
     await store.recordAiUsage(actor, {
       opportunityId: id, model: suggestion.model, provider: info?.provider ?? "rules",
       inputTokens: suggestion.usage?.inputTokens ?? 0, outputTokens: suggestion.usage?.outputTokens ?? 0,
-      // Exact provider-reported cost (OpenRouter usage accounting) when available; else the versioned price table.
       costUsd: suggestion.usage ? suggestion.usage.costUsd ?? costUsd(suggestion.model, suggestion.usage.inputTokens, suggestion.usage.outputTokens) : 0,
       priceVersion: suggestion.usage?.costUsd !== undefined ? "provider-reported" : PRICE_TABLE_VERSION, dealId: suggestion.deal?.id ?? null, dealTitle: suggestion.deal?.title ?? null
-    }).catch(e => request.log.warn({ err: e }, "failed to record AI usage"));
-    const { usage: _u, aiAttempt: _a, ...publicSuggestion } = suggestion;
-    return { suggestion: publicSuggestion };
+    }).catch(e => opts.log.warn({ err: e }, "failed to record AI usage"));
+    return { suggestion: pub, cached: false as const };
+  }
+
+  /** AI suggestion (title, reasoning, message) for a channel. Serves the org+deck cache when the fingerprint still matches. */
+  app.post("/api/outreach/:id/suggestion", async (request, reply) => {
+    const { id } = idParams.parse(request.params);
+    // ignoreCooldown: Registered-users pick. refresh: force a new AI call (Retry, model/settings/deals change).
+    const body = z.object({ channel, ignoreCooldown: z.boolean().optional(), refresh: z.boolean().optional() }).strict().parse(request.body ?? {});
+    const actor = actorOf(request);
+    const [deals, catalog, settings] = await Promise.all([store.listDeals(actor), store.listCatalog(actor), store.getSettings(actor)]);
+    const businessName = settings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
+    const result = await generateAndStore(actor, id, body.channel, {
+      ignoreCooldown: body.ignoreCooldown, refresh: body.refresh, businessName, deals, catalog, settings, log: request.log
+    });
+    if ("error" in result && result.error) return sendError(reply, result.error[0] === "not_found" ? 404 : 422, result.error[0], result.error[1]);
+    return { suggestion: result.suggestion, cached: result.cached };
+  });
+
+  /**
+   * Prefill the deck's suggestion cache. Generates only for cards missing a matching fingerprint (or all when refresh=true).
+   * Runs a few customers in parallel; each still gets its own model call (shared system prompt is cacheable by the provider).
+   */
+  app.post("/api/outreach/deck/prepare", async request => {
+    const body = z.object({
+      channel: channel.optional(), refresh: z.boolean().optional(),
+      ids: z.array(z.string().min(1).max(100)).max(50).optional(),
+      limit: z.coerce.number().int().min(1).max(50).default(20)
+    }).strict().parse(request.body ?? {});
+    const actor = actorOf(request);
+    const [deals, catalog, settings] = await Promise.all([store.listDeals(actor), store.listCatalog(actor), store.getSettings(actor)]);
+    const items = body.ids?.length
+      ? (await Promise.all(body.ids.map(id => store.getOpportunity(actor, id)))).filter((o): o is NonNullable<typeof o> => !!o)
+      : (await store.listQueue(actor, body.limit, cooldownsOf(settings))).items;
+    const businessName = settings.storeName ?? request.auth!.org!.businessName ?? config.BUSINESS_NAME;
+    const defaultCh = body.channel ?? settings.defaultChannel ?? "sms";
+    let generated = 0, cached = 0, failed = 0;
+    const CONCURRENCY = 4;
+    const work = items.flatMap(o => {
+      const ch: "sms" | "email" | null =
+        canContact(o.customer, defaultCh) ? defaultCh
+        : canContact(o.customer, "sms") ? "sms"
+        : canContact(o.customer, "email") ? "email" : null;
+      return ch ? [{ id: o.id, channel: ch }] : [];
+    });
+    for (let i = 0; i < work.length; i += CONCURRENCY) {
+      const results = await Promise.all(work.slice(i, i + CONCURRENCY).map(w => generateAndStore(actor, w.id, w.channel, {
+        refresh: body.refresh, businessName, deals, catalog, settings, log: request.log
+      })));
+      for (const r of results) {
+        if ("error" in r && r.error) failed++;
+        else if (r.cached) cached++;
+        else generated++;
+      }
+    }
+    return { ok: true, total: work.length, generated, cached, failed };
   });
 
   app.post("/api/outreach/:id/skip", async request => {

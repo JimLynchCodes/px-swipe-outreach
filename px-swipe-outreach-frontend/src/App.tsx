@@ -44,16 +44,20 @@ export default function App() {
 
   /** Explicit pick from Registered users (`/?customer=<opportunityId>`): shown first, cooldown doesn't block it. Read once. */
   const pickId = useRef<string | null>(new URLSearchParams(window.location.search).get('customer'))
-  const loadQueue = useCallback(async () => {
+  const loadQueue = useCallback(async (opts: { refreshSuggestions?: boolean } = {}) => {
     setLoad({ state: 'loading' })
     try {
       const pid = pickId.current
       const [q, picked] = await Promise.all([api.queue(50), pid ? api.card(pid, true).catch(() => null) : Promise.resolve(null)])
       if (pid) { pickId.current = null; window.history.replaceState(null, '', window.location.pathname) }
       const rest = picked ? q.items.filter(c => c.id !== picked.id) : q.items
-      setCards(picked ? [{ ...picked, picked: true }, ...rest] : rest)
+      const next = picked ? [{ ...picked, picked: true }, ...rest] : rest
+      setCards(next)
       setTotal(picked && rest.length === q.items.length ? q.total + 1 : q.total)
       setDone(0)
+      // Prefill AI cache for the deck once. Revisiting the page hits cache (no new AI calls).
+      const ids = next.slice(0, 20).map(c => c.id)
+      if (ids.length) await api.prepareDeck({ ids, refresh: opts.refreshSuggestions }).catch(() => null)
       setLoad({ state: 'ready' })
     } catch (e) {
       setLoad({ state: 'error', message: friendlyError(e) })
@@ -66,18 +70,18 @@ export default function App() {
   useEffect(() => {
     const onSettings = () => {
       api.settings.get().then(setSettings, () => setSettings(null))
-      void loadQueue()
+      void loadQueue({ refreshSuggestions: true })
     }
     window.addEventListener(OUTREACH_SETTINGS_CHANGED, onSettings)
     return () => window.removeEventListener(OUTREACH_SETTINGS_CHANGED, onSettings)
   }, [loadQueue])
 
   const suggestionSeq = useRef(0)
-  const fetchSuggestion = useCallback(async (card: OutreachCard, channel: Channel) => {
+  const fetchSuggestion = useCallback(async (card: OutreachCard, channel: Channel, refresh = false) => {
     const seq = ++suggestionSeq.current // ignore responses from superseded requests
     setDraft(d => d && { ...d, channel, loading: true, error: null })
     try {
-      const s = await api.suggestion(card.id, channel, !!card.picked)
+      const s = await api.suggestion(card.id, channel, { ignoreCooldown: !!card.picked, refresh })
       if (seq !== suggestionSeq.current) return
       setDraft(d => d && { ...d, suggestion: s, message: s.message, subject: s.subject ?? '', loading: false, error: null, editing: false })
     } catch (e) {
@@ -202,7 +206,7 @@ export default function App() {
 
   const draftChannel = draft?.channel
   const onDealsChanged = useCallback(() => {
-    if (current && draftChannel) void fetchSuggestion(current, draftChannel)
+    if (current && draftChannel) void fetchSuggestion(current, draftChannel, true)
   }, [current, draftChannel, fetchSuggestion])
 
   // Model changed in the header picker → re-run the current card's suggestion with the new model.
@@ -260,7 +264,7 @@ export default function App() {
                 onEdit={() => setDraft(d => d && { ...d, editing: true, saved: { message: d.message, subject: d.subject } })}
                 onSaveEdit={() => setDraft(d => d && (d.message.trim() ? { ...d, editing: false, saved: undefined } : d))}
                 onCancelEdit={() => setDraft(d => d && { ...d, editing: false, message: d.saved?.message ?? d.message, subject: d.saved?.subject ?? d.subject, saved: undefined })}
-                onRetry={() => void fetchSuggestion(current, draft.channel)}
+                onRetry={() => void fetchSuggestion(current, draft.channel, true)}
               />
             </div>
           </div>

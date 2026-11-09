@@ -26,7 +26,7 @@ describe("OpenAI provider", () => {
     const ctx = { storeName: "Cloud 9", voice: { preset: "premium" as const, emoji: false, signOff: "Cheers", about: "Since 2014" }, channel: "sms" as const, smsSignature: "-Cloud 9",
       maxDiscountPercent: 25, customer: c.input.opportunity.customer, segment: c.input.recommendation.segment, promotions: evalPromotions().slice(1, 3), recommendation: c.input.recommendation, offer: null, now: new Date() };
     const sys = systemPrompt(ctx);
-    for (const s of ["health or medical", "safer", "minors", "giveaways", "get high", "urgency", "25% off", "FIRST name", "No emoji", "Premium lounge", "Since 2014", "Example (lapsed)", `at most ${smsBudget("-Cloud 9")} characters`]) expect(sys).toContain(s);
+    for (const s of ["health/safety", "youth appeal", "free tobacco", "intoxication", "fake urgency", "25% off", "first name", "No emoji", "Premium lounge", "Since 2014", `Example (${ctx.segment})`, `sms_text ≤${smsBudget("-Cloud 9")}`]) expect(sys).toContain(s);
     const user = userPayload(ctx);
     expect(user.customer).not.toHaveProperty("last_name");
     expect(JSON.stringify(user)).not.toMatch(/Carter|@|\+1/);
@@ -38,7 +38,7 @@ describe("OpenAI provider", () => {
     const s = await new OpenAISuggestionProvider("k", "gpt-4o-mini", { client }).suggest(c.input);
     expect(s).toMatchObject({ source: "openai", model: "gpt-4o-mini", confidence: 0.9, deal: { id: "deal_0007" }, usage: { inputTokens: 1000, outputTokens: 100 } });
     expect(s.message).toBe("Hi Jamal! Cigar Friday: 20% off cigars this Friday. 21+ w/ ID. -Cloud 9\nReply STOP to opt out.");
-    expect(calls[0]).toMatchObject({ temperature: 0.3, max_completion_tokens: 500, response_format: { type: "json_schema", json_schema: { name: "smoke_shop_outreach", strict: true } } });
+    expect(calls[0]).toMatchObject({ temperature: 0.3, max_completion_tokens: 350, response_format: { type: "json_schema", json_schema: { name: "smoke_shop_outreach", strict: true } } });
   });
 
   it("regenerates once with violation feedback, summing usage", async () => {

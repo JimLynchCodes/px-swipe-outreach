@@ -158,7 +158,7 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
   private opts: Required<Omit<OpenAIProviderOptions, "client" | "baseURL" | "headers" | "lookupCost">> & Pick<OpenAIProviderOptions, "client" | "baseURL" | "headers" | "lookupCost">;
   private defaultModel: string;
   constructor(private apiKey: string, defaultModel?: string, opts: OpenAIProviderOptions = {}) {
-    this.opts = { timeoutMs: 15_000, maxRetries: 2, regenerations: 1, temperature: 0.3, maxCompletionTokens: 500, providerId: "openai", ...opts };
+    this.opts = { timeoutMs: 15_000, maxRetries: 2, regenerations: 1, temperature: 0.3, maxCompletionTokens: 350, providerId: "openai", ...opts };
     this.name = this.opts.providerId;
     const fallback = this.name === "openrouter" ? DEFAULT_AI_MODEL : "gpt-4o-mini";
     this.defaultModel = defaultModel && modelInfo(defaultModel)?.provider === this.name ? defaultModel : fallback;
@@ -182,8 +182,11 @@ export class OpenAISuggestionProvider implements SuggestionProvider {
       maxDiscountPercent: cap, customer: c, segment: input.recommendation.segment, promotions,
       recommendation: input.recommendation, offer: input.opportunity.offer, now
     };
-    const messages: Array<{ role: string; content: string }> = [
-      { role: "system", content: systemPrompt(ctx) },
+    const system = systemPrompt(ctx);
+    const messages: Array<Record<string, unknown>> = [
+      this.name === "openrouter"
+        ? { role: "system", content: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] }
+        : { role: "system", content: system },
       { role: "user", content: JSON.stringify(userPayload(ctx)) }
     ];
     const client = await this.client();

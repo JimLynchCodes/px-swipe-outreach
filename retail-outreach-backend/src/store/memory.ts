@@ -120,6 +120,8 @@ export class MemoryStore implements OutreachStore {
   private deliveries = new Map<string, Delivery>();
   private suppressions: Suppression[] = [];
   private aiUsage: Array<AiUsageRow & { orgId: string }> = [];
+  /** orgId|oppId|channel → cached suggestion (served until fingerprint changes). */
+  private suggestionCache = new Map<string, { cacheKey: string; suggestion: Suggestion }>();
   private sendLedger: Array<SendRow & { orgId: string }> = [];
   private demoPurchases: Array<PurchaseRow & { orgId: string }> = [];
   private smsCosts: Array<SmsCostRow & { orgId: string; updatedAt: string }> = [];
@@ -228,6 +230,18 @@ export class MemoryStore implements OutreachStore {
     if (o.status === "pending") o.status = "drafted";
     this.events.push({ orgId: actor.orgId, opportunityId: id, actorId: actor.userId, type: "draft_generated", details: { channel: s.channel, source: s.source } });
   }
+  private cacheKeyOf(actor: Actor, id: string, channel: Channel) { return `${actor.orgId}|${id}|${channel}`; }
+  async getCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string) {
+    this.assertMember(actor);
+    const hit = this.suggestionCache.get(this.cacheKeyOf(actor, id, channel));
+    return hit && hit.cacheKey === cacheKey ? structuredClone(hit.suggestion) : null;
+  }
+  async putCachedSuggestion(actor: Actor, id: string, channel: Channel, cacheKey: string, suggestion: Suggestion) {
+    this.assertMember(actor);
+    if (!this.find(actor, id)) throw new StoreError("not_found", "Opportunity not found");
+    const { usage: _u, aiAttempt: _a, ...payload } = suggestion;
+    this.suggestionCache.set(this.cacheKeyOf(actor, id, channel), { cacheKey, suggestion: structuredClone(payload) });
+  }
   async createDelivery(actor: Actor, opportunityId: string, d: NewDelivery) {
     this.assertMember(actor);
     const existing = [...this.deliveries.values()].find(x => x.orgId === actor.orgId && x.idempotencyKey === d.idempotencyKey);
@@ -334,6 +348,7 @@ export class MemoryStore implements OutreachStore {
     this.consent = this.consent.filter(e => e.orgId !== actor.orgId);
     this.reoptins = this.reoptins.filter(r => r.orgId !== actor.orgId);
     if (actor.orgId === seed.DEMO_ORG_ID) this.seedReplies(actor.orgId);
+    for (const k of [...this.suggestionCache.keys()]) if (k.startsWith(actor.orgId + "|")) this.suggestionCache.delete(k);
   }
 
   readonly systemEvents: Array<{ orgId: string; type: string; details: unknown }> = [];
